@@ -67,6 +67,14 @@ else
                             }
                         </div>
                         <div class="detail-row"><strong>Created:</strong> @p.CreatedAt.ToString("yyyy-MM-dd")</div>
+                        @{ var costRange = GetTypicalCostRange(p.Type); }
+                        @if (costRange is not null)
+                        {
+                            <div class="detail-row" style="margin-top: 0.25rem;">
+                                <strong>Typical cost:</strong>
+                                <span style="color: var(--accent);">@costRange</span>
+                            </div>
+                        }
                     </div>
                 </div>
                 <div class="card-footer">
@@ -162,6 +170,25 @@ else
         "Rivoli" => "bi bi-hdd-rack",
         "Ssh" => "bi bi-terminal",
         "AzureAci" or "AzureAca" or "AzureAcp" => "bi bi-cloud",
+        "GcpCloudRun" => "bi bi-cloud",
+        "AwsFargate" => "bi bi-cloud",
+        "FlyIo" => "bi bi-rocket-takeoff",
+        "Hetzner" => "bi bi-hdd-network",
+        "DigitalOcean" => "bi bi-droplet",
+        "Civo" => "bi bi-cloud",
         _ => "bi bi-hdd-rack"
+    };
+
+    private static string? GetTypicalCostRange(string type) => type switch
+    {
+        "Docker" or "AppleContainer" => "Free (local)",
+        "Hetzner" => "$4 - $29/mo",
+        "Civo" => "$5 - $80/mo",
+        "DigitalOcean" => "$6 - $96/mo",
+        "FlyIo" => "$4 - $52/mo",
+        "AwsFargate" => "$72 - $600/mo",
+        "AzureAci" or "AzureAca" or "AzureAcp" => "$88 - $700/mo",
+        "GcpCloudRun" => "$153 - $800/mo",
+        _ => null
     };
 }

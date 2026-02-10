@@ -57,13 +57,49 @@
                 }
                 else
                 {
-                    <InputSelect id="provider" class="form-control" @bind-Value="_model.ProviderId">
+                    <InputSelect id="provider" class="form-control" @bind-Value="_model.ProviderId"
+                                 @bind-Value:after="OnProviderChangedAsync">
                         <option value="">Auto-select</option>
                         @foreach (var p in _providers)
                         {
                             <option value="@p.Id">@p.Name (@p.Type, @p.Region)</option>
                         }
                     </InputSelect>
+                }
+
+                @if (_costLoading)
+                {
+                    <div style="margin-top: 0.5rem;"><span class="spinner-sm"></span> Loading cost estimate...</div>
+                }
+                else if (_costEstimate is not null)
+                {
+                    <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--surface-2); border-radius: 6px; border: 1px solid var(--border);">
+                        <div style="display: flex; gap: 1.5rem; align-items: baseline; margin-bottom: 0.5rem;">
+                            <div>
+                                <span style="font-size: 0.8rem; color: var(--text-muted);">Hourly</span>
+                                <div style="font-size: 1.1rem; font-weight: 600;">$@_costEstimate.HourlyCostUsd.ToString("F3")</div>
+                            </div>
+                            <div>
+                                <span style="font-size: 0.8rem; color: var(--text-muted);">Monthly (est.)</span>
+                                <div style="font-size: 1.1rem; font-weight: 600;">$@_costEstimate.MonthlyCostUsd.ToString("F2")</div>
+                            </div>
+                        </div>
+                        @if (_costEstimate.Breakdown is { Length: > 0 })
+                        {
+                            <div style="font-size: 0.8rem; color: var(--text-muted);">
+                                @foreach (var b in _costEstimate.Breakdown)
+                                {
+                                    <span style="margin-right: 1rem;">@b.Component: $@b.HourlyCostUsd.ToString("F4")/hr</span>
+                                }
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(_costEstimate.FreeTierNote))
+                        {
+                            <div style="font-size: 0.8rem; color: var(--success); margin-top: 0.25rem;">
+                                @_costEstimate.FreeTierNote
+                            </div>
+                        }
+                    </div>
                 }
             </div>
 
@@ -104,6 +140,8 @@
     private bool _loadingProviders = true;
     private bool _submitting;
     private string? _error;
+    private CostEstimateDto? _costEstimate;
+    private bool _costLoading;
 
     protected override async Task OnInitializedAsync()
     {
@@ -131,6 +169,25 @@
         }
         catch { /* silently fail, dropdown will be empty */ }
         finally { _loadingProviders = false; }
+    }
+
+    private async Task OnProviderChangedAsync()
+    {
+        _costEstimate = null;
+        if (!Guid.TryParse(_model.ProviderId, out var providerId)) return;
+
+        _costLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _costEstimate = await Api.GetCostEstimateAsync(providerId);
+        }
+        catch { /* silently fail */ }
+        finally
+        {
+            _costLoading = false;
+        }
     }
 
     private async Task HandleSubmitAsync()

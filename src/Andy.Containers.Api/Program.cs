@@ -40,6 +40,7 @@ try
     builder.Services.AddScoped<IContainerService, ContainerOrchestrationService>();
     builder.Services.AddScoped<IInfrastructureRoutingService, InfrastructureRoutingService>();
     builder.Services.AddSingleton<IInfrastructureProviderFactory, InfrastructureProviderFactory>();
+    builder.Services.AddSingleton<ICostEstimationService, CostEstimationService>();
 
     // MCP
     builder.Services.AddMcpServer()

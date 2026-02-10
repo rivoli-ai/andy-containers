@@ -1,3 +1,4 @@
+using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -12,11 +13,16 @@ public class ProvidersController : ControllerBase
 {
     private readonly ContainersDbContext _db;
     private readonly IInfrastructureProviderFactory _providerFactory;
+    private readonly ICostEstimationService _costService;
 
-    public ProvidersController(ContainersDbContext db, IInfrastructureProviderFactory providerFactory)
+    public ProvidersController(
+        ContainersDbContext db,
+        IInfrastructureProviderFactory providerFactory,
+        ICostEstimationService costService)
     {
         _db = db;
         _providerFactory = providerFactory;
+        _costService = costService;
     }
 
     [HttpGet]
@@ -65,6 +71,28 @@ public class ProvidersController : ControllerBase
             await _db.SaveChangesAsync(ct);
             return Ok(new { status = ProviderHealth.Unreachable, error = ex.Message });
         }
+    }
+
+    [HttpGet("{id:guid}/cost-estimate")]
+    public async Task<IActionResult> CostEstimate(
+        Guid id,
+        [FromQuery] double cpuCores = 2,
+        [FromQuery] int memoryMb = 4096,
+        [FromQuery] int diskGb = 20,
+        CancellationToken ct = default)
+    {
+        var provider = await _db.Providers.FindAsync([id], ct);
+        if (provider is null) return NotFound();
+
+        var resources = new ResourceSpec
+        {
+            CpuCores = cpuCores,
+            MemoryMb = memoryMb,
+            DiskGb = diskGb
+        };
+
+        var estimate = _costService.Estimate(provider.Type, resources, provider.Region);
+        return Ok(estimate);
     }
 
     [HttpDelete("{id:guid}")]

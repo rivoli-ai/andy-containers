@@ -16,7 +16,7 @@ public class InfrastructureRoutingServiceTests : IDisposable
     public InfrastructureRoutingServiceTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _service = new InfrastructureRoutingService(_db);
+        _service = new InfrastructureRoutingService(_db, new CostEstimationService());
     }
 
     public void Dispose()

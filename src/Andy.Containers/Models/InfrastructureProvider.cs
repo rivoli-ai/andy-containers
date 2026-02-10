@@ -25,7 +25,13 @@ public enum ProviderType
     Ssh,
     AzureAci,
     AzureAca,
-    AzureAcp
+    AzureAcp,
+    GcpCloudRun,
+    AwsFargate,
+    FlyIo,
+    Hetzner,
+    DigitalOcean,
+    Civo
 }
 
 public enum ProviderHealth

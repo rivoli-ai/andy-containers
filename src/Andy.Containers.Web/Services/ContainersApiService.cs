@@ -47,6 +47,26 @@ public class ContainersApiService
         await _http.DeleteAsync($"api/containers/{id}");
     }
 
+    public async Task<ConnectionInfoDto?> GetConnectionInfoAsync(Guid id)
+    {
+        return await _http.GetFromJsonAsync<ConnectionInfoDto>(
+            $"api/containers/{id}/connection", JsonOptions);
+    }
+
+    public async Task<ExecResultDto?> ExecAsync(Guid id, ExecRequestDto request)
+    {
+        var response = await _http.PostAsJsonAsync($"api/containers/{id}/exec", request, JsonOptions);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ExecResultDto>(JsonOptions);
+    }
+
+    public async Task<List<ContainerEventDto>> GetContainerEventsAsync(Guid id)
+    {
+        var response = await _http.GetFromJsonAsync<List<ContainerEventDto>>(
+            $"api/containers/{id}/events", JsonOptions);
+        return response ?? [];
+    }
+
     public async Task<ContainerDto?> CreateContainerAsync(CreateContainerRequest request)
     {
         var response = await _http.PostAsJsonAsync("api/containers", request, JsonOptions);
@@ -70,6 +90,19 @@ public class ContainersApiService
         return await _http.GetFromJsonAsync<TemplateDto>($"api/templates/{id}", JsonOptions);
     }
 
+    public async Task<TemplateDefinitionDto?> GetTemplateDefinitionAsync(Guid id)
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<TemplateDefinitionDto>(
+                $"api/templates/{id}/definition", JsonOptions);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
     // ---------- Providers ----------
 
     public async Task<List<ProviderDto>> GetProvidersAsync()
@@ -88,6 +121,12 @@ public class ContainersApiService
         var response = await _http.GetFromJsonAsync<ProviderHealthResult>(
             $"api/providers/{id}/health", JsonOptions);
         return response;
+    }
+
+    public async Task<CostEstimateDto?> GetCostEstimateAsync(Guid providerId, double cpuCores = 2, int memoryMb = 4096)
+    {
+        return await _http.GetFromJsonAsync<CostEstimateDto>(
+            $"api/providers/{providerId}/cost-estimate?cpuCores={cpuCores}&memoryMb={memoryMb}", JsonOptions);
     }
 
     // ---------- Workspaces ----------
@@ -198,4 +237,58 @@ public class GitRepositoryConfig
 {
     public required string Url { get; set; }
     public string? Branch { get; set; }
+}
+
+public class ConnectionInfoDto
+{
+    public string? IpAddress { get; set; }
+    public Dictionary<int, int>? PortMappings { get; set; }
+    public string? IdeEndpoint { get; set; }
+    public string? VncEndpoint { get; set; }
+    public string? SshEndpoint { get; set; }
+    public string? AgentEndpoint { get; set; }
+}
+
+public class ExecResultDto
+{
+    public int ExitCode { get; set; }
+    public string? StdOut { get; set; }
+    public string? StdErr { get; set; }
+}
+
+public class ExecRequestDto
+{
+    public required string Command { get; set; }
+    public int TimeoutSeconds { get; set; } = 30;
+}
+
+public class ContainerEventDto
+{
+    public Guid Id { get; set; }
+    public Guid ContainerId { get; set; }
+    public string EventType { get; set; } = "";
+    public string? SubjectId { get; set; }
+    public string? Details { get; set; }
+    public DateTime Timestamp { get; set; }
+}
+
+public class TemplateDefinitionDto
+{
+    public string Code { get; set; } = "";
+    public string Content { get; set; } = "";
+}
+
+public class CostEstimateDto
+{
+    public decimal HourlyCostUsd { get; set; }
+    public decimal MonthlyCostUsd { get; set; }
+    public string? FreeTierNote { get; set; }
+    public CostBreakdownDto[]? Breakdown { get; set; }
+}
+
+public class CostBreakdownDto
+{
+    public string Component { get; set; } = "";
+    public decimal HourlyCostUsd { get; set; }
+    public string? Unit { get; set; }
 }

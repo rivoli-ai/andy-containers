@@ -34,6 +34,11 @@
     <PackageVersion Include="Azure.ResourceManager.ContainerInstance" Version="1.2.1" />
     <PackageVersion Include="Azure.ResourceManager.AppContainers" Version="1.2.0" />
     <PackageVersion Include="Azure.Identity" Version="1.13.1" />
+    <!-- GCP -->
+    <PackageVersion Include="Google.Cloud.Run.V2" Version="2.10.0" />
+    <!-- AWS -->
+    <PackageVersion Include="AWSSDK.ECS" Version="3.7.402.11" />
+    <PackageVersion Include="AWSSDK.EC2" Version="3.7.403.3" />
     <!-- SSH -->
     <PackageVersion Include="SSH.NET" Version="2024.2.0" />
     <!-- MCP -->
