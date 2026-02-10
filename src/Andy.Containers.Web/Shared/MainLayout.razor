@@ -1,0 +1,61 @@
+@inherits LayoutComponentBase
+
+<div class="app-layout">
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">
+                <i class="bi bi-box-seam"></i>
+            </div>
+            <span class="sidebar-brand">Andy Containers</span>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Overview</div>
+                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                    <i class="bi bi-speedometer2"></i> Dashboard
+                </NavLink>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Resources</div>
+                <NavLink class="nav-link" href="containers">
+                    <i class="bi bi-box"></i> Containers
+                </NavLink>
+                <NavLink class="nav-link" href="workspaces">
+                    <i class="bi bi-folder2-open"></i> Workspaces
+                </NavLink>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Configuration</div>
+                <NavLink class="nav-link" href="templates">
+                    <i class="bi bi-file-earmark-code"></i> Templates
+                </NavLink>
+                <NavLink class="nav-link" href="providers">
+                    <i class="bi bi-hdd-rack"></i> Providers
+                </NavLink>
+            </div>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar">A</div>
+                <div>
+                    <div class="user-name">Admin</div>
+                    <div class="user-role">Administrator</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <div class="main-wrapper">
+        <header class="main-header">
+            <span class="main-header-title">Container Management</span>
+        </header>
+
+        <main class="main-content">
+            @Body
+        </main>
+    </div>
+</div>

@@ -1,0 +1,791 @@
+openapi: 3.0.3
+info:
+  title: Andy Containers API
+  description: |
+    Development container management platform for the Andy ecosystem.
+    Manages containers, workspaces, templates, infrastructure providers, and container images
+    across heterogeneous infrastructure (Docker, Apple Containers, Azure, SSH, Rivoli-managed).
+  version: 0.1.0-alpha
+  contact:
+    name: Rivoli AI
+    url: https://github.com/rivoli-ai/andy-containers
+
+servers:
+  - url: https://containers.rivoli.ai
+    description: Production
+  - url: https://containers-uat.rivoli.ai
+    description: UAT
+  - url: https://localhost:5200
+    description: Local Development
+
+security:
+  - bearerAuth: []
+
+paths:
+  # --- Containers ---
+  /api/containers:
+    get:
+      tags: [Containers]
+      summary: List containers
+      parameters:
+        - name: ownerId
+          in: query
+          schema: { type: string }
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: teamId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: workspaceId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [Pending, Creating, Running, Stopping, Stopped, Failed, Destroying, Destroyed] }
+        - name: skip
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: take
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: List of containers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Container' }
+                  totalCount: { type: integer }
+    post:
+      tags: [Containers]
+      summary: Create a new container
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateContainerRequest' }
+      responses:
+        '201':
+          description: Container created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Container' }
+
+  /api/containers/{id}:
+    get:
+      tags: [Containers]
+      summary: Get container details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Container details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Container' }
+    delete:
+      tags: [Containers]
+      summary: Destroy a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Container destroyed
+
+  /api/containers/{id}/start:
+    post:
+      tags: [Containers]
+      summary: Start a stopped container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Container started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Container' }
+
+  /api/containers/{id}/stop:
+    post:
+      tags: [Containers]
+      summary: Stop a running container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Container stopped
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Container' }
+
+  /api/containers/{id}/exec:
+    post:
+      tags: [Containers]
+      summary: Execute a command in a container
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command: { type: string }
+                timeoutSeconds: { type: integer, default: 30 }
+      responses:
+        '200':
+          description: Command result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecResult' }
+
+  /api/containers/{id}/connection:
+    get:
+      tags: [Containers]
+      summary: Get container connection info (IDE, VNC, SSH endpoints)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Connection info
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConnectionInfo' }
+
+  # --- Workspaces ---
+  /api/workspaces:
+    get:
+      tags: [Workspaces]
+      summary: List workspaces
+      parameters:
+        - name: ownerId
+          in: query
+          schema: { type: string }
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [Active, Suspended, Archived] }
+        - name: skip
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: take
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: List of workspaces
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Workspace' }
+                  totalCount: { type: integer }
+    post:
+      tags: [Workspaces]
+      summary: Create a new workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkspaceRequest' }
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+
+  /api/workspaces/{id}:
+    get:
+      tags: [Workspaces]
+      summary: Get workspace details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Workspace details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+    put:
+      tags: [Workspaces]
+      summary: Update a workspace
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateWorkspaceRequest' }
+      responses:
+        '200':
+          description: Workspace updated
+    delete:
+      tags: [Workspaces]
+      summary: Delete a workspace
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Workspace deleted
+
+  # --- Templates (Catalog) ---
+  /api/templates:
+    get:
+      tags: [Templates]
+      summary: Browse the template catalog
+      parameters:
+        - name: scope
+          in: query
+          schema: { type: string, enum: [Global, Organization, Team, User] }
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: teamId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: tags
+          in: query
+          schema: { type: array, items: { type: string } }
+        - name: gpuRequired
+          in: query
+          schema: { type: boolean }
+        - name: ideType
+          in: query
+          schema: { type: string, enum: [None, CodeServer, Zed, Both] }
+        - name: skip
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: take
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Template catalog listing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ContainerTemplate' }
+                  totalCount: { type: integer }
+    post:
+      tags: [Templates]
+      summary: Create a new template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTemplateRequest' }
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContainerTemplate' }
+
+  /api/templates/{id}:
+    get:
+      tags: [Templates]
+      summary: Get template details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContainerTemplate' }
+    put:
+      tags: [Templates]
+      summary: Update a template
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTemplateRequest' }
+      responses:
+        '200':
+          description: Template updated
+    delete:
+      tags: [Templates]
+      summary: Delete a template
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Template deleted
+
+  /api/templates/{id}/publish:
+    post:
+      tags: [Templates]
+      summary: Publish a template to the catalog
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Template published
+
+  # --- Images ---
+  /api/images/{templateId}:
+    get:
+      tags: [Images]
+      summary: List built images for a template
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: List of images
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ContainerImage' }
+
+  /api/images/{templateId}/build:
+    post:
+      tags: [Images]
+      summary: Trigger image build for a template
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                offline: { type: boolean, default: false }
+                force: { type: boolean, default: false }
+      responses:
+        '202':
+          description: Build started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContainerImage' }
+
+  /api/images/{templateId}/latest:
+    get:
+      tags: [Images]
+      summary: Get the latest built image for a template
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Latest image
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContainerImage' }
+
+  /api/images/diff:
+    get:
+      tags: [Images]
+      summary: Diff two images
+      parameters:
+        - name: fromImageId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: toImageId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Image diff
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageDiff' }
+
+  # --- Providers ---
+  /api/providers:
+    get:
+      tags: [Providers]
+      summary: List infrastructure providers
+      responses:
+        '200':
+          description: List of providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/InfrastructureProvider' }
+    post:
+      tags: [Providers]
+      summary: Register a new infrastructure provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProviderRequest' }
+      responses:
+        '201':
+          description: Provider registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InfrastructureProvider' }
+
+  /api/providers/{id}/health:
+    get:
+      tags: [Providers]
+      summary: Check provider health
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Provider health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [Healthy, Degraded, Unreachable] }
+                  capabilities: { $ref: '#/components/schemas/ProviderCapabilities' }
+
+  # --- Health ---
+  /health:
+    get:
+      tags: [Health]
+      summary: Service health check
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Container:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        templateId: { type: string, format: uuid }
+        providerId: { type: string, format: uuid }
+        externalId: { type: string }
+        status: { type: string, enum: [Pending, Creating, Running, Stopping, Stopped, Failed, Destroying, Destroyed] }
+        ownerId: { type: string }
+        organizationId: { type: string, format: uuid }
+        teamId: { type: string, format: uuid }
+        ideEndpoint: { type: string }
+        vncEndpoint: { type: string }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        stoppedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+
+    CreateContainerRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        templateId: { type: string, format: uuid }
+        templateCode: { type: string }
+        providerId: { type: string, format: uuid }
+        providerCode: { type: string }
+        workspaceId: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        teamId: { type: string, format: uuid }
+        resources:
+          $ref: '#/components/schemas/ResourceSpec'
+        gpu:
+          $ref: '#/components/schemas/GpuSpec'
+        gitRepository:
+          $ref: '#/components/schemas/GitRepositoryConfig'
+        environmentVariables:
+          type: object
+          additionalProperties: { type: string }
+        expiresAfterSeconds: { type: integer }
+
+    ResourceSpec:
+      type: object
+      properties:
+        cpuCores: { type: number, default: 2 }
+        memoryMb: { type: integer, default: 4096 }
+        diskGb: { type: integer, default: 20 }
+
+    GpuSpec:
+      type: object
+      properties:
+        required: { type: boolean }
+        vendor: { type: string }
+        minMemoryMb: { type: integer }
+        count: { type: integer, default: 1 }
+
+    GitRepositoryConfig:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string }
+        branch: { type: string }
+        credentialRef: { type: string }
+
+    ExecResult:
+      type: object
+      properties:
+        exitCode: { type: integer }
+        stdout: { type: string }
+        stderr: { type: string }
+
+    ConnectionInfo:
+      type: object
+      properties:
+        ipAddress: { type: string }
+        portMappings:
+          type: object
+          additionalProperties: { type: integer }
+        ideEndpoint: { type: string }
+        vncEndpoint: { type: string }
+        sshEndpoint: { type: string }
+        agentEndpoint: { type: string }
+
+    Workspace:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        ownerId: { type: string }
+        status: { type: string, enum: [Active, Suspended, Archived] }
+        defaultContainerId: { type: string, format: uuid }
+        gitRepositoryUrl: { type: string }
+        gitBranch: { type: string }
+        createdAt: { type: string, format: date-time }
+        lastAccessedAt: { type: string, format: date-time }
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        organizationId: { type: string, format: uuid }
+        teamId: { type: string, format: uuid }
+        gitRepositoryUrl: { type: string }
+        gitBranch: { type: string }
+        templateId: { type: string, format: uuid }
+        templateCode: { type: string }
+
+    UpdateWorkspaceRequest:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        gitBranch: { type: string }
+
+    ContainerTemplate:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        version: { type: string }
+        baseImage: { type: string }
+        catalogScope: { type: string, enum: [Global, Organization, Team, User] }
+        ideType: { type: string, enum: [None, CodeServer, Zed, Both] }
+        gpuRequired: { type: boolean }
+        gpuPreferred: { type: boolean }
+        tags: { type: array, items: { type: string } }
+        isPublished: { type: boolean }
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/DependencySpec' }
+        createdAt: { type: string, format: date-time }
+
+    CreateTemplateRequest:
+      type: object
+      required: [code, name, version, baseImage]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        version: { type: string }
+        baseImage: { type: string }
+        catalogScope: { type: string, enum: [Global, Organization, Team, User] }
+        organizationId: { type: string, format: uuid }
+        teamId: { type: string, format: uuid }
+        ideType: { type: string, enum: [None, CodeServer, Zed, Both] }
+        gpuRequired: { type: boolean }
+        gpuPreferred: { type: boolean }
+        parentTemplateId: { type: string, format: uuid }
+        tags: { type: array, items: { type: string } }
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/DependencySpec' }
+
+    UpdateTemplateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        version: { type: string }
+        ideType: { type: string, enum: [None, CodeServer, Zed, Both] }
+        tags: { type: array, items: { type: string } }
+
+    DependencySpec:
+      type: object
+      required: [type, name, versionConstraint]
+      properties:
+        type: { type: string, enum: [Compiler, Runtime, Sdk, Tool, OsPackage, Library, Extension, Image] }
+        name: { type: string }
+        ecosystem: { type: string }
+        versionConstraint: { type: string }
+        autoUpdate: { type: boolean, default: true }
+        updatePolicy: { type: string, enum: [SecurityOnly, Patch, Minor, Major, Manual], default: Minor }
+
+    ContainerImage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        contentHash: { type: string }
+        tag: { type: string }
+        templateId: { type: string, format: uuid }
+        imageReference: { type: string }
+        buildNumber: { type: integer }
+        buildStatus: { type: string, enum: [Pending, Building, Succeeded, Failed] }
+        imageSizeBytes: { type: integer, format: int64 }
+        builtOffline: { type: boolean }
+        changelog: { type: string }
+        createdAt: { type: string, format: date-time }
+        resolvedDependencies:
+          type: array
+          items: { $ref: '#/components/schemas/ResolvedDependency' }
+
+    ResolvedDependency:
+      type: object
+      properties:
+        dependencyName: { type: string }
+        dependencyType: { type: string }
+        resolvedVersion: { type: string }
+        source: { type: string }
+        artifactHash: { type: string }
+
+    ImageDiff:
+      type: object
+      properties:
+        fromImageId: { type: string, format: uuid }
+        toImageId: { type: string, format: uuid }
+        dependencyChanges:
+          type: array
+          items:
+            type: object
+            properties:
+              dependencyName: { type: string }
+              dependencyType: { type: string }
+              previousVersion: { type: string }
+              newVersion: { type: string }
+              changeType: { type: string, enum: [Added, Removed, VersionChanged, Unchanged] }
+        baseImageChanged: { type: string }
+
+    InfrastructureProvider:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [Docker, AppleContainer, Rivoli, Ssh, AzureAci, AzureAca, AzureAcp] }
+        region: { type: string }
+        isEnabled: { type: boolean }
+        healthStatus: { type: string, enum: [Unknown, Healthy, Degraded, Unreachable] }
+        lastHealthCheck: { type: string, format: date-time }
+
+    CreateProviderRequest:
+      type: object
+      required: [code, name, type]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [Docker, AppleContainer, Rivoli, Ssh, AzureAci, AzureAca, AzureAcp] }
+        connectionConfig: { type: object }
+        region: { type: string }
+        organizationId: { type: string, format: uuid }
+
+    ProviderCapabilities:
+      type: object
+      properties:
+        type: { type: string }
+        supportedArchitectures: { type: array, items: { type: string } }
+        supportedOperatingSystems: { type: array, items: { type: string } }
+        maxCpuCores: { type: integer }
+        maxMemoryMb: { type: integer }
+        maxDiskGb: { type: integer }
+        supportsGpu: { type: boolean }
+        supportsVolumeMount: { type: boolean }
+        supportsPortForwarding: { type: boolean }
+        supportsExec: { type: boolean }
+        supportsOfflineBuild: { type: boolean }

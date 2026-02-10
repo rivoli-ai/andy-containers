@@ -1,0 +1,8 @@
+@* Reusable status badge — matches andy-auth design *@
+
+<span class="status-badge @Status.ToLowerInvariant()">@Status</span>
+
+@code {
+    [Parameter]
+    public string Status { get; set; } = "";
+}

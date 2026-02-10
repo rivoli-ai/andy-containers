@@ -1,0 +1,56 @@
+code: andy-cli-dev
+name: Andy CLI Development
+description: Pre-installed Andy CLI environment for AI-powered code assistance
+version: "1.0.0"
+base_image: ubuntu:24.04
+catalog_scope: global
+ide_type: code-server
+
+gpu:
+  required: false
+  preferred: false
+
+resources:
+  cpu_cores: 2
+  memory_mb: 4096
+  disk_gb: 20
+
+dependencies:
+  - type: sdk
+    name: dotnet-sdk
+    version: "8.0.*"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: andy-cli
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+  - type: tool
+    name: git
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: code-server
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+environment:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+ports:
+  8080: code-server
+
+scripts:
+  init: |
+    git config --global init.defaultBranch main
+
+tags:
+  - andy-cli
+  - dotnet
+  - ai

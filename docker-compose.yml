@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: andy-containers-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: andy_containers
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: src/Andy.Containers.Api/Dockerfile
+    container_name: andy-containers-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:8443
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=devcert
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=postgres
+      - Auth__Authority=https://localhost:7001
+      - Auth__Audience=andy-containers
+      - Cors__Origins__0=https://localhost:5280
+      - Cors__Origins__1=https://localhost:3000
+    ports:
+      - "5200:8443"
+    volumes:
+      - ${HOME}/.aspnet/https:/https:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://localhost:8443/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: src/Andy.Containers.Web/Dockerfile
+    container_name: andy-containers-web
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:8443
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=devcert
+      - Containers__ApiBaseUrl=https://api:8443
+      - Auth__Authority=https://localhost:7001
+      - Auth__Audience=andy-containers-web
+    ports:
+      - "5280:8443"
+    volumes:
+      - ${HOME}/.aspnet/https:/https:ro
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:

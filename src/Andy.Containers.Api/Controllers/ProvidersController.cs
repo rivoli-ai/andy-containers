@@ -1,0 +1,79 @@
+using Andy.Containers.Api.Services;
+using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace Andy.Containers.Api.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class ProvidersController : ControllerBase
+{
+    private readonly ContainersDbContext _db;
+    private readonly IInfrastructureProviderFactory _providerFactory;
+
+    public ProvidersController(ContainersDbContext db, IInfrastructureProviderFactory providerFactory)
+    {
+        _db = db;
+        _providerFactory = providerFactory;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        var providers = await _db.Providers.OrderBy(p => p.Name).ToListAsync(ct);
+        return Ok(providers);
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> Get(Guid id, CancellationToken ct)
+    {
+        var provider = await _db.Providers.FindAsync([id], ct);
+        return provider is null ? NotFound() : Ok(provider);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] InfrastructureProvider provider, CancellationToken ct)
+    {
+        _db.Providers.Add(provider);
+        await _db.SaveChangesAsync(ct);
+        return CreatedAtAction(nameof(Get), new { id = provider.Id }, provider);
+    }
+
+    [HttpGet("{id:guid}/health")]
+    public async Task<IActionResult> HealthCheck(Guid id, CancellationToken ct)
+    {
+        var provider = await _db.Providers.FindAsync([id], ct);
+        if (provider is null) return NotFound();
+
+        try
+        {
+            var infra = _providerFactory.GetProvider(provider);
+            var health = await infra.HealthCheckAsync(ct);
+            provider.HealthStatus = health;
+            provider.LastHealthCheck = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+
+            var capabilities = await infra.GetCapabilitiesAsync(ct);
+            return Ok(new { status = health, capabilities });
+        }
+        catch (Exception ex)
+        {
+            provider.HealthStatus = ProviderHealth.Unreachable;
+            provider.LastHealthCheck = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return Ok(new { status = ProviderHealth.Unreachable, error = ex.Message });
+        }
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        var provider = await _db.Providers.FindAsync([id], ct);
+        if (provider is null) return NotFound();
+        _db.Providers.Remove(provider);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+}

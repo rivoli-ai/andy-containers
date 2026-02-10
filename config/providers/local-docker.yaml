@@ -1,0 +1,21 @@
+code: local-docker
+name: Local Docker
+type: docker
+region: local
+enabled: true
+
+connection:
+  endpoint: unix:///var/run/docker.sock
+
+capabilities:
+  architectures: [arm64, amd64]
+  operating_systems: [linux]
+  max_cpu_cores: 8
+  max_memory_mb: 16384
+  max_disk_gb: 100
+  gpu: false
+  volume_mount: true
+  port_forwarding: true
+  exec: true
+  streaming: true
+  offline_build: true

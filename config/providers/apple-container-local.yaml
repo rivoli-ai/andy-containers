@@ -1,0 +1,21 @@
+code: apple-container-local
+name: Local Apple Container
+type: apple-container
+region: local
+enabled: true
+
+connection:
+  cli_path: /usr/local/bin/container
+
+capabilities:
+  architectures: [arm64]
+  operating_systems: [linux]
+  max_cpu_cores: 8
+  max_memory_mb: 16384
+  max_disk_gb: 50
+  gpu: false
+  volume_mount: true
+  port_forwarding: true
+  exec: true
+  streaming: true
+  offline_build: true

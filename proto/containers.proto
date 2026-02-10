@@ -1,0 +1,281 @@
+syntax = "proto3";
+
+option csharp_namespace = "Andy.Containers.Grpc";
+
+package andy.containers;
+
+// High-performance container management API for service-to-service communication.
+// Primary consumer: Andy-DevPilot for agent container spawning.
+service ContainerService {
+  // Container lifecycle
+  rpc CreateContainer (CreateContainerRequest) returns (ContainerResponse);
+  rpc GetContainer (GetContainerRequest) returns (ContainerResponse);
+  rpc ListContainers (ListContainersRequest) returns (ListContainersResponse);
+  rpc StartContainer (ContainerIdRequest) returns (ContainerResponse);
+  rpc StopContainer (ContainerIdRequest) returns (ContainerResponse);
+  rpc DestroyContainer (ContainerIdRequest) returns (ContainerResponse);
+
+  // Execution
+  rpc ExecCommand (ExecRequest) returns (ExecResponse);
+
+  // Streaming
+  rpc StreamLogs (ContainerIdRequest) returns (stream LogEntry);
+
+  // Connection info
+  rpc GetConnectionInfo (ContainerIdRequest) returns (ConnectionInfoResponse);
+
+  // Workspaces
+  rpc CreateWorkspace (CreateWorkspaceRequest) returns (WorkspaceResponse);
+  rpc GetWorkspace (GetWorkspaceRequest) returns (WorkspaceResponse);
+  rpc ListWorkspaces (ListWorkspacesRequest) returns (ListWorkspacesResponse);
+
+  // Templates
+  rpc GetTemplate (GetTemplateRequest) returns (TemplateResponse);
+  rpc ListTemplates (ListTemplatesRequest) returns (ListTemplatesResponse);
+
+  // Images
+  rpc BuildImage (BuildImageRequest) returns (ImageResponse);
+  rpc GetLatestImage (GetLatestImageRequest) returns (ImageResponse);
+  rpc DiffImages (DiffImagesRequest) returns (ImageDiffResponse);
+}
+
+// --- Container Messages ---
+
+message CreateContainerRequest {
+  string name = 1;
+  string template_id = 2;       // UUID
+  string template_code = 3;     // Alternative: by code
+  string provider_id = 4;       // UUID, optional
+  string provider_code = 5;     // Alternative: by code
+  string workspace_id = 6;      // UUID, optional
+  string organization_id = 7;   // UUID, optional
+  string team_id = 8;           // UUID, optional
+  ResourceSpec resources = 9;
+  GpuSpec gpu = 10;
+  GitRepositoryConfig git_repository = 11;
+  map<string, string> environment_variables = 12;
+  int64 expires_after_seconds = 13;
+}
+
+message ContainerIdRequest {
+  string container_id = 1;
+}
+
+message GetContainerRequest {
+  string container_id = 1;
+}
+
+message ListContainersRequest {
+  string owner_id = 1;
+  string organization_id = 2;
+  string team_id = 3;
+  string workspace_id = 4;
+  string status = 5;
+  string template_id = 6;
+  string provider_id = 7;
+  int32 skip = 8;
+  int32 take = 9;
+}
+
+message ListContainersResponse {
+  repeated ContainerResponse containers = 1;
+  int32 total_count = 2;
+}
+
+message ContainerResponse {
+  string id = 1;
+  string name = 2;
+  string template_id = 3;
+  string provider_id = 4;
+  string external_id = 5;
+  string status = 6;
+  string owner_id = 7;
+  string organization_id = 8;
+  string team_id = 9;
+  string ide_endpoint = 10;
+  string vnc_endpoint = 11;
+  string created_at = 12;
+  string started_at = 13;
+  string stopped_at = 14;
+  string expires_at = 15;
+}
+
+message ResourceSpec {
+  double cpu_cores = 1;
+  int32 memory_mb = 2;
+  int32 disk_gb = 3;
+}
+
+message GpuSpec {
+  bool required = 1;
+  string vendor = 2;
+  int32 min_memory_mb = 3;
+  int32 count = 4;
+}
+
+message GitRepositoryConfig {
+  string url = 1;
+  string branch = 2;
+  string credential_ref = 3;
+}
+
+// --- Execution Messages ---
+
+message ExecRequest {
+  string container_id = 1;
+  string command = 2;
+  int32 timeout_seconds = 3;
+}
+
+message ExecResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+
+message LogEntry {
+  string timestamp = 1;
+  string stream = 2;    // "stdout" or "stderr"
+  string message = 3;
+}
+
+// --- Connection Messages ---
+
+message ConnectionInfoResponse {
+  string ip_address = 1;
+  map<int32, int32> port_mappings = 2;
+  string ide_endpoint = 3;
+  string vnc_endpoint = 4;
+  string ssh_endpoint = 5;
+  string agent_endpoint = 6;
+}
+
+// --- Workspace Messages ---
+
+message CreateWorkspaceRequest {
+  string name = 1;
+  string description = 2;
+  string organization_id = 3;
+  string team_id = 4;
+  string git_repository_url = 5;
+  string git_branch = 6;
+  string template_id = 7;
+  string template_code = 8;
+}
+
+message GetWorkspaceRequest {
+  string workspace_id = 1;
+}
+
+message ListWorkspacesRequest {
+  string owner_id = 1;
+  string organization_id = 2;
+  string team_id = 3;
+  string status = 4;
+  int32 skip = 5;
+  int32 take = 6;
+}
+
+message WorkspaceResponse {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string owner_id = 4;
+  string status = 5;
+  string default_container_id = 6;
+  string git_repository_url = 7;
+  string git_branch = 8;
+  string created_at = 9;
+  string last_accessed_at = 10;
+}
+
+message ListWorkspacesResponse {
+  repeated WorkspaceResponse workspaces = 1;
+  int32 total_count = 2;
+}
+
+// --- Template Messages ---
+
+message GetTemplateRequest {
+  string template_id = 1;
+  string template_code = 2;
+}
+
+message ListTemplatesRequest {
+  string scope = 1;
+  string organization_id = 2;
+  string team_id = 3;
+  string search_term = 4;
+  repeated string tags = 5;
+  bool gpu_required = 6;
+  int32 skip = 7;
+  int32 take = 8;
+}
+
+message TemplateResponse {
+  string id = 1;
+  string code = 2;
+  string name = 3;
+  string description = 4;
+  string version = 5;
+  string base_image = 6;
+  string catalog_scope = 7;
+  string ide_type = 8;
+  bool gpu_required = 9;
+  bool gpu_preferred = 10;
+  repeated string tags = 11;
+  bool is_published = 12;
+  string created_at = 13;
+}
+
+message ListTemplatesResponse {
+  repeated TemplateResponse templates = 1;
+  int32 total_count = 2;
+}
+
+// --- Image Messages ---
+
+message BuildImageRequest {
+  string template_id = 1;
+  bool offline = 2;
+  bool force = 3;
+  string provider_id = 4;
+}
+
+message GetLatestImageRequest {
+  string template_id = 1;
+}
+
+message ImageResponse {
+  string id = 1;
+  string content_hash = 2;
+  string tag = 3;
+  string template_id = 4;
+  string image_reference = 5;
+  int32 build_number = 6;
+  string build_status = 7;
+  int64 image_size_bytes = 8;
+  bool built_offline = 9;
+  string changelog = 10;
+  string created_at = 11;
+}
+
+message DiffImagesRequest {
+  string from_image_id = 1;
+  string to_image_id = 2;
+}
+
+message ImageDiffResponse {
+  string from_image_id = 1;
+  string to_image_id = 2;
+  repeated DependencyChangeEntry dependency_changes = 3;
+  string base_image_changed = 4;
+}
+
+message DependencyChangeEntry {
+  string dependency_name = 1;
+  string dependency_type = 2;
+  string previous_version = 3;
+  string new_version = 4;
+  string change_type = 5;
+}

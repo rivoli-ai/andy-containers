@@ -1,0 +1,81 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers", "src\Andy.Containers\Andy.Containers.csproj", "{10000001-0001-0001-0001-000000000001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Api", "src\Andy.Containers.Api\Andy.Containers.Api.csproj", "{10000002-0002-0002-0002-000000000002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Client", "src\Andy.Containers.Client\Andy.Containers.Client.csproj", "{10000003-0003-0003-0003-000000000003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Infrastructure", "src\Andy.Containers.Infrastructure\Andy.Containers.Infrastructure.csproj", "{10000004-0004-0004-0004-000000000004}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Web", "src\Andy.Containers.Web\Andy.Containers.Web.csproj", "{10000005-0005-0005-0005-000000000005}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Cli", "src\Andy.Containers.Cli\Andy.Containers.Cli.csproj", "{10000006-0006-0006-0006-000000000006}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{20000000-0000-0000-0000-000000000000}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Tests", "tests\Andy.Containers.Tests\Andy.Containers.Tests.csproj", "{30000001-0001-0001-0001-000000000001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Api.Tests", "tests\Andy.Containers.Api.Tests\Andy.Containers.Api.Tests.csproj", "{30000002-0002-0002-0002-000000000002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Client.Tests", "tests\Andy.Containers.Client.Tests\Andy.Containers.Client.Tests.csproj", "{30000003-0003-0003-0003-000000000003}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{10000001-0001-0001-0001-000000000001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10000001-0001-0001-0001-000000000001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10000001-0001-0001-0001-000000000001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10000001-0001-0001-0001-000000000001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{10000002-0002-0002-0002-000000000002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10000002-0002-0002-0002-000000000002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10000002-0002-0002-0002-000000000002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10000002-0002-0002-0002-000000000002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{10000003-0003-0003-0003-000000000003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10000003-0003-0003-0003-000000000003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10000003-0003-0003-0003-000000000003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10000003-0003-0003-0003-000000000003}.Release|Any CPU.Build.0 = Release|Any CPU
+		{10000004-0004-0004-0004-000000000004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10000004-0004-0004-0004-000000000004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10000004-0004-0004-0004-000000000004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10000004-0004-0004-0004-000000000004}.Release|Any CPU.Build.0 = Release|Any CPU
+		{10000005-0005-0005-0005-000000000005}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10000005-0005-0005-0005-000000000005}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10000005-0005-0005-0005-000000000005}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10000005-0005-0005-0005-000000000005}.Release|Any CPU.Build.0 = Release|Any CPU
+		{10000006-0006-0006-0006-000000000006}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10000006-0006-0006-0006-000000000006}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10000006-0006-0006-0006-000000000006}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10000006-0006-0006-0006-000000000006}.Release|Any CPU.Build.0 = Release|Any CPU
+		{30000001-0001-0001-0001-000000000001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{30000001-0001-0001-0001-000000000001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{30000001-0001-0001-0001-000000000001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{30000001-0001-0001-0001-000000000001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{30000002-0002-0002-0002-000000000002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{30000002-0002-0002-0002-000000000002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{30000002-0002-0002-0002-000000000002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{30000002-0002-0002-0002-000000000002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{30000003-0003-0003-0003-000000000003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{30000003-0003-0003-0003-000000000003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{30000003-0003-0003-0003-000000000003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{30000003-0003-0003-0003-000000000003}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{10000001-0001-0001-0001-000000000001} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+		{10000002-0002-0002-0002-000000000002} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+		{10000003-0003-0003-0003-000000000003} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+		{10000004-0004-0004-0004-000000000004} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+		{10000005-0005-0005-0005-000000000005} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+		{10000006-0006-0006-0006-000000000006} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+		{30000001-0001-0001-0001-000000000001} = {20000000-0000-0000-0000-000000000000}
+		{30000002-0002-0002-0002-000000000002} = {20000000-0000-0000-0000-000000000000}
+		{30000003-0003-0003-0003-000000000003} = {20000000-0000-0000-0000-000000000000}
+	EndGlobalSection
+EndGlobal

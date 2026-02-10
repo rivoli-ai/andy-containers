@@ -1,0 +1,140 @@
+@page "/"
+@inject ContainersApiService Api
+
+<PageTitle>Dashboard - Andy Containers</PageTitle>
+
+<div class="page-header">
+    <h1>Dashboard</h1>
+</div>
+
+@if (_loading)
+{
+    <div class="loading-spinner"><div class="spinner"></div></div>
+}
+else if (_error is not null)
+{
+    <div class="alert alert-error">
+        <i class="bi bi-exclamation-triangle"></i>
+        Failed to load dashboard data: @_error
+        <button class="btn btn-sm btn-secondary" @onclick="LoadDataAsync">Retry</button>
+    </div>
+}
+else
+{
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon containers"><i class="bi bi-box"></i></div>
+            <div>
+                <div class="stat-value">@_containerCount</div>
+                <div class="stat-label">Containers</div>
+                <a href="containers" class="stat-link">View all &rarr;</a>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon providers"><i class="bi bi-hdd-rack"></i></div>
+            <div>
+                <div class="stat-value">@_providerCount</div>
+                <div class="stat-label">Providers</div>
+                <a href="providers" class="stat-link">View all &rarr;</a>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon templates"><i class="bi bi-file-earmark-code"></i></div>
+            <div>
+                <div class="stat-value">@_templateCount</div>
+                <div class="stat-label">Templates</div>
+                <a href="templates" class="stat-link">View all &rarr;</a>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon workspaces"><i class="bi bi-folder2-open"></i></div>
+            <div>
+                <div class="stat-value">@_workspaceCount</div>
+                <div class="stat-label">Workspaces</div>
+                <a href="workspaces" class="stat-link">View all &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    @if (_recentContainers.Any())
+    {
+        <h3>Recent Containers</h3>
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Owner</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in _recentContainers.Take(5))
+                    {
+                        <tr>
+                            <td>
+                                <i class="bi bi-box" style="color: var(--text-muted); margin-right: 0.5rem;"></i>
+                                @c.Name
+                            </td>
+                            <td><StatusBadge Status="@c.Status" /></td>
+                            <td class="text-muted">@c.OwnerId</td>
+                            <td class="text-muted">@c.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private string? _error;
+    private int _containerCount;
+    private int _providerCount;
+    private int _templateCount;
+    private int _workspaceCount;
+    private List<ContainerDto> _recentContainers = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            var containersTask = Api.GetContainersAsync(take: 5);
+            var providersTask = Api.GetProvidersAsync();
+            var templatesTask = Api.GetTemplatesAsync(take: 1);
+            var workspacesTask = Api.GetWorkspacesAsync(take: 1);
+
+            await Task.WhenAll(containersTask, providersTask, templatesTask, workspacesTask);
+
+            var containers = await containersTask;
+            var providers = await providersTask;
+            var templates = await templatesTask;
+            var workspaces = await workspacesTask;
+
+            _containerCount = containers.TotalCount;
+            _providerCount = providers.Count;
+            _templateCount = templates.TotalCount;
+            _workspaceCount = workspaces.TotalCount;
+            _recentContainers = containers.Items;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

@@ -1,0 +1,15 @@
+**/.vs
+**/.vscode
+**/.idea
+**/bin
+**/obj
+**/publish
+**/node_modules
+**/.git
+**/.DS_Store
+**/TestResults
+**/coverage
+*.md
+LICENSE
+.gitignore
+.dockerignore

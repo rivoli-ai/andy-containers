@@ -1,0 +1,232 @@
+@page "/containers"
+@inject ContainersApiService Api
+
+<PageTitle>Containers - Andy Containers</PageTitle>
+
+<div class="page-header">
+    <h1>Containers</h1>
+    <button class="btn btn-secondary btn-sm" @onclick="LoadDataAsync" disabled="@_loading">
+        <i class="bi bi-arrow-clockwise"></i> Refresh
+    </button>
+</div>
+
+@if (_loading)
+{
+    <div class="loading-spinner"><div class="spinner"></div></div>
+}
+else if (_error is not null)
+{
+    <div class="alert alert-error">
+        <i class="bi bi-exclamation-triangle"></i>
+        Failed to load containers: @_error
+        <button class="btn btn-sm btn-secondary" @onclick="LoadDataAsync">Retry</button>
+    </div>
+}
+else if (!_containers.Any())
+{
+    <div class="empty-state">
+        <i class="bi bi-box"></i>
+        <p>No containers found.</p>
+    </div>
+}
+else
+{
+    <div class="data-table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Owner</th>
+                    <th>Created</th>
+                    <th>Last Activity</th>
+                    <th>Endpoints</th>
+                    <th style="text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in _containers)
+                {
+                    <tr>
+                        <td>
+                            <strong>@c.Name</strong>
+                            <br />
+                            <small class="text-muted text-mono">@c.Id.ToString()[..8]...</small>
+                        </td>
+                        <td><StatusBadge Status="@c.Status" /></td>
+                        <td class="text-muted">@c.OwnerId</td>
+                        <td class="text-muted">@c.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td class="text-muted">
+                            @if (c.LastActivityAt.HasValue)
+                            {
+                                @c.LastActivityAt.Value.ToString("yyyy-MM-dd HH:mm")
+                            }
+                            else
+                            {
+                                <span>&mdash;</span>
+                            }
+                        </td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(c.IdeEndpoint))
+                            {
+                                <a href="@c.IdeEndpoint" target="_blank" class="endpoint-link" title="Open IDE">
+                                    <i class="bi bi-code-square"></i> IDE
+                                </a>
+                            }
+                            @if (!string.IsNullOrEmpty(c.VncEndpoint))
+                            {
+                                <a href="@c.VncEndpoint" target="_blank" class="endpoint-link" title="Open VNC">
+                                    <i class="bi bi-display"></i> VNC
+                                </a>
+                            }
+                        </td>
+                        <td style="text-align: right; white-space: nowrap;">
+                            @if (c.Status is "Stopped" or "Pending" or "Failed")
+                            {
+                                <button class="btn-action btn-success"
+                                        @onclick="() => StartAsync(c)"
+                                        disabled="@(c == _actionTarget)"
+                                        title="Start">
+                                    <i class="bi bi-play-fill"></i>
+                                </button>
+                            }
+                            @if (c.Status is "Running")
+                            {
+                                <button class="btn-action btn-warning"
+                                        @onclick="() => StopAsync(c)"
+                                        disabled="@(c == _actionTarget)"
+                                        title="Stop">
+                                    <i class="bi bi-stop-fill"></i>
+                                </button>
+                            }
+                            @if (c.Status is not "Destroying" and not "Destroyed")
+                            {
+                                <button class="btn-action btn-danger"
+                                        @onclick="() => DestroyAsync(c)"
+                                        disabled="@(c == _actionTarget)"
+                                        title="Destroy">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (_totalCount > _containers.Count)
+    {
+        <div class="pagination-info">
+            Showing @_containers.Count of @_totalCount containers.
+        </div>
+    }
+}
+
+@if (_actionError is not null)
+{
+    <div class="alert alert-error" style="margin-top: 1.5rem;">
+        <i class="bi bi-exclamation-triangle"></i>
+        @_actionError
+        <button class="alert-dismiss" @onclick="() => _actionError = null"><i class="bi bi-x-lg"></i></button>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private string? _error;
+    private string? _actionError;
+    private List<ContainerDto> _containers = [];
+    private int _totalCount;
+    private ContainerDto? _actionTarget;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await Api.GetContainersAsync(take: 100);
+            _containers = result.Items;
+            _totalCount = result.TotalCount;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task StartAsync(ContainerDto container)
+    {
+        _actionTarget = container;
+        _actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            await Api.StartContainerAsync(container.Id);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _actionError = $"Failed to start '{container.Name}': {ex.Message}";
+        }
+        finally
+        {
+            _actionTarget = null;
+        }
+    }
+
+    private async Task StopAsync(ContainerDto container)
+    {
+        _actionTarget = container;
+        _actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            await Api.StopContainerAsync(container.Id);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _actionError = $"Failed to stop '{container.Name}': {ex.Message}";
+        }
+        finally
+        {
+            _actionTarget = null;
+        }
+    }
+
+    private async Task DestroyAsync(ContainerDto container)
+    {
+        _actionTarget = container;
+        _actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            await Api.DestroyContainerAsync(container.Id);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _actionError = $"Failed to destroy '{container.Name}': {ex.Message}";
+        }
+        finally
+        {
+            _actionTarget = null;
+        }
+    }
+}

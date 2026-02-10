@@ -1,0 +1,103 @@
+code: agent-sandbox-ui
+name: Agent Sandbox with UI
+description: Development environment for DevPilot AI agents with remote desktop and IDE access
+version: "1.0.0"
+base_image: ubuntu:24.04
+catalog_scope: global
+ide_type: both
+
+gpu:
+  required: false
+  preferred: true
+
+resources:
+  cpu_cores: 4
+  memory_mb: 8192
+  disk_gb: 30
+
+dependencies:
+  - type: sdk
+    name: dotnet-sdk
+    version: "8.0.*"
+    auto_update: true
+    update_policy: patch
+
+  - type: runtime
+    name: python
+    version: ">=3.12,<4.0"
+    auto_update: true
+    update_policy: minor
+
+  - type: tool
+    name: node
+    version: "20.x"
+    auto_update: true
+    update_policy: minor
+
+  - type: tool
+    name: git
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: code-server
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+  - type: tool
+    name: zed
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+  - type: os_package
+    name: xfce4
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: x11vnc
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: novnc
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+  - type: tool
+    name: xvfb
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+environment:
+  DISPLAY: ":0"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+ports:
+  6080: novnc
+  8080: code-server
+  5900: vnc
+
+scripts:
+  init: |
+    git config --global init.defaultBranch main
+  setup: |
+    Xvfb :0 -screen 0 1920x1080x24 &
+    x11vnc -display :0 -forever -nopw &
+    /usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 &
+    startxfce4 &
+
+tags:
+  - agent
+  - devpilot
+  - ui
+  - vnc
+  - zed
+  - vscode
