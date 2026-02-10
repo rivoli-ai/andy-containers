@@ -16,6 +16,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
     private readonly Mock<IInfrastructureRoutingService> _mockRouting;
     private readonly Mock<IInfrastructureProviderFactory> _mockFactory;
     private readonly Mock<IInfrastructureProvider> _mockInfraProvider;
+    private readonly ContainerProvisioningQueue _queue;
     private readonly ContainerOrchestrationService _service;
 
     public ContainerOrchestrationServiceTests()
@@ -24,12 +25,13 @@ public class ContainerOrchestrationServiceTests : IDisposable
         _mockRouting = new Mock<IInfrastructureRoutingService>();
         _mockFactory = new Mock<IInfrastructureProviderFactory>();
         _mockInfraProvider = new Mock<IInfrastructureProvider>();
+        _queue = new ContainerProvisioningQueue();
         var logger = new Mock<ILogger<ContainerOrchestrationService>>();
 
         _mockFactory.Setup(f => f.GetProvider(It.IsAny<InfrastructureProvider>()))
             .Returns(_mockInfraProvider.Object);
 
-        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, logger.Object);
+        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, logger.Object);
     }
 
     public void Dispose()

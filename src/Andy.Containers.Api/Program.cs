@@ -42,6 +42,10 @@ try
     builder.Services.AddSingleton<IInfrastructureProviderFactory, InfrastructureProviderFactory>();
     builder.Services.AddSingleton<ICostEstimationService, CostEstimationService>();
 
+    // Container provisioning queue + background worker
+    builder.Services.AddSingleton<ContainerProvisioningQueue>();
+    builder.Services.AddHostedService<ContainerProvisioningWorker>();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()

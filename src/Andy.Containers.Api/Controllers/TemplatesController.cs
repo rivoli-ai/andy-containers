@@ -10,10 +10,12 @@ namespace Andy.Containers.Api.Controllers;
 public class TemplatesController : ControllerBase
 {
     private readonly ContainersDbContext _db;
+    private readonly IWebHostEnvironment _env;
 
-    public TemplatesController(ContainersDbContext db)
+    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env)
     {
         _db = db;
+        _env = env;
     }
 
     [HttpGet]
@@ -37,7 +39,11 @@ public class TemplatesController : ControllerBase
         if (teamId.HasValue)
             query = query.Where(t => t.TeamId == teamId || t.CatalogScope <= CatalogScope.Organization);
         if (!string.IsNullOrEmpty(search))
-            query = query.Where(t => t.Name.Contains(search) || (t.Description != null && t.Description.Contains(search)) || t.Code.Contains(search));
+            query = query.Where(t =>
+                t.Name.Contains(search)
+                || (t.Description != null && t.Description.Contains(search))
+                || t.Code.Contains(search)
+                || (t.Tags != null && t.Tags.Contains(search)));
         if (gpuRequired.HasValue)
             query = query.Where(t => t.GpuRequired == gpuRequired);
         if (ideType.HasValue)
@@ -61,6 +67,83 @@ public class TemplatesController : ControllerBase
     {
         var template = await _db.Templates.FirstOrDefaultAsync(t => t.Code == code, ct);
         return template is null ? NotFound() : Ok(template);
+    }
+
+    [HttpGet("{id:guid}/definition")]
+    public async Task<IActionResult> GetDefinition(Guid id, CancellationToken ct)
+    {
+        var template = await _db.Templates.FindAsync([id], ct);
+        if (template is null) return NotFound();
+
+        // Search for the YAML file in config/templates directories
+        // Try multiple possible root locations to be resilient to different working directories
+        string[] candidates = [];
+        foreach (var root in GetConfigSearchPaths())
+        {
+            if (Directory.Exists(root))
+            {
+                candidates = Directory.GetFiles(root, $"{template.Code}.yaml", SearchOption.AllDirectories);
+                if (candidates.Length > 0) break;
+            }
+        }
+
+        if (candidates.Length > 0)
+        {
+            var yaml = await System.IO.File.ReadAllTextAsync(candidates[0], ct);
+            return Ok(new { code = template.Code, content = yaml });
+        }
+
+        // No YAML file on disk — generate a synthetic definition from DB fields
+        var syntheticYaml = GenerateSyntheticYaml(template);
+        return Ok(new { code = template.Code, content = syntheticYaml });
+    }
+
+    private IEnumerable<string> GetConfigSearchPaths()
+    {
+        // From ContentRootPath (project dir when using dotnet run)
+        yield return Path.GetFullPath(Path.Combine(_env.ContentRootPath, "..", "..", "config", "templates"));
+        // From ContentRootPath (if run from repo root)
+        yield return Path.Combine(_env.ContentRootPath, "config", "templates");
+        // Walk up from ContentRootPath to find config/templates
+        var dir = _env.ContentRootPath;
+        for (var i = 0; i < 5; i++)
+        {
+            var parent = Directory.GetParent(dir)?.FullName;
+            if (parent is null) break;
+            var candidate = Path.Combine(parent, "config", "templates");
+            if (Directory.Exists(candidate))
+            {
+                yield return candidate;
+                break;
+            }
+            dir = parent;
+        }
+    }
+
+    private static string GenerateSyntheticYaml(ContainerTemplate template)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"code: {template.Code}");
+        sb.AppendLine($"name: {template.Name}");
+        if (!string.IsNullOrEmpty(template.Description))
+            sb.AppendLine($"description: \"{template.Description}\"");
+        sb.AppendLine($"version: {template.Version}");
+        sb.AppendLine($"base_image: {template.BaseImage}");
+        sb.AppendLine($"ide_type: {template.IdeType}");
+        sb.AppendLine($"scope: {template.CatalogScope}");
+        if (template.GpuRequired) sb.AppendLine("gpu_required: true");
+        if (template.GpuPreferred) sb.AppendLine("gpu_preferred: true");
+        if (!string.IsNullOrEmpty(template.DefaultResources))
+            sb.AppendLine($"resources: {template.DefaultResources}");
+        if (!string.IsNullOrEmpty(template.Ports))
+            sb.AppendLine($"ports: {template.Ports}");
+        if (!string.IsNullOrEmpty(template.EnvironmentVariables))
+            sb.AppendLine($"environment: {template.EnvironmentVariables}");
+        if (!string.IsNullOrEmpty(template.Scripts))
+            sb.AppendLine($"scripts: {template.Scripts}");
+        if (template.Tags is { Length: > 0 })
+            sb.AppendLine($"tags: [{string.Join(", ", template.Tags)}]");
+        return sb.ToString();
     }
 
     [HttpPost]

@@ -12,17 +12,20 @@ public class ContainerOrchestrationService : IContainerService
     private readonly ContainersDbContext _db;
     private readonly IInfrastructureRoutingService _routing;
     private readonly IInfrastructureProviderFactory _providerFactory;
+    private readonly ContainerProvisioningQueue _queue;
     private readonly ILogger<ContainerOrchestrationService> _logger;
 
     public ContainerOrchestrationService(
         ContainersDbContext db,
         IInfrastructureRoutingService routing,
         IInfrastructureProviderFactory providerFactory,
+        ContainerProvisioningQueue queue,
         ILogger<ContainerOrchestrationService> logger)
     {
         _db = db;
         _routing = routing;
         _providerFactory = providerFactory;
+        _queue = queue;
         _logger = logger;
     }
 
@@ -92,58 +95,20 @@ public class ContainerOrchestrationService : IContainerService
 
         await _db.SaveChangesAsync(ct);
 
-        // Provision asynchronously
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                container.Status = ContainerStatus.Creating;
-                await _db.SaveChangesAsync(CancellationToken.None);
+        // Enqueue the provisioning job for the background worker
+        var job = new ContainerProvisionJob(
+            ContainerId: container.Id,
+            ProviderId: provider.Id,
+            ProviderCode: provider.Code,
+            TemplateBaseImage: template.BaseImage,
+            ContainerName: container.Name,
+            OwnerId: container.OwnerId,
+            Resources: request.Resources,
+            Gpu: request.Gpu);
 
-                var infra = _providerFactory.GetProvider(provider);
-                var spec = new ContainerSpec
-                {
-                    ImageReference = template.BaseImage,
-                    Name = container.Name,
-                    Resources = request.Resources ?? new ResourceSpec(),
-                    Gpu = request.Gpu
-                };
-
-                var result = await infra.CreateContainerAsync(spec, CancellationToken.None);
-                container.ExternalId = result.ExternalId;
-                container.Status = ContainerStatus.Running;
-                container.StartedAt = DateTime.UtcNow;
-
-                if (result.ConnectionInfo is not null)
-                {
-                    container.IdeEndpoint = result.ConnectionInfo.IdeEndpoint;
-                    container.VncEndpoint = result.ConnectionInfo.VncEndpoint;
-                    container.NetworkConfig = System.Text.Json.JsonSerializer.Serialize(result.ConnectionInfo);
-                }
-
-                _db.Events.Add(new ContainerEvent
-                {
-                    ContainerId = container.Id,
-                    EventType = ContainerEventType.Started,
-                    SubjectId = container.OwnerId
-                });
-
-                await _db.SaveChangesAsync(CancellationToken.None);
-                _logger.LogInformation("Container {ContainerId} provisioned on {Provider}", container.Id, provider.Code);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to provision container {ContainerId}", container.Id);
-                container.Status = ContainerStatus.Failed;
-                _db.Events.Add(new ContainerEvent
-                {
-                    ContainerId = container.Id,
-                    EventType = ContainerEventType.Failed,
-                    Details = System.Text.Json.JsonSerializer.Serialize(new { error = ex.Message })
-                });
-                await _db.SaveChangesAsync(CancellationToken.None);
-            }
-        }, ct);
+        await _queue.EnqueueAsync(job, ct);
+        _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",
+            container.Id, provider.Code);
 
         return container;
     }

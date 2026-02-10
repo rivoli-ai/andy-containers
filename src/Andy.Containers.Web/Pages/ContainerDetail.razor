@@ -43,7 +43,7 @@ else if (_container is not null)
         {
             <div class="alert alert-success" style="margin-bottom: 1.5rem; background: rgba(0, 164, 220, 0.1); border-color: rgba(0, 164, 220, 0.3); color: var(--accent);">
                 <i class="bi bi-hourglass-split"></i>
-                Container is being provisioned... <button class="btn btn-secondary btn-sm" @onclick="LoadContainerAsync" style="margin-left: 0.5rem;"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+                Container is being provisioned... (auto-refreshing)
             </div>
         }
     }
@@ -401,6 +401,8 @@ else if (_container is not null)
     </div>
 }
 
+@implements IDisposable
+
 @code {
     [Parameter]
     public Guid Id { get; set; }
@@ -432,9 +434,52 @@ else if (_container is not null)
     private bool _eventsLoading;
     private string? _eventsError;
 
+    // Auto-refresh polling
+    private Timer? _pollTimer;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadContainerAsync();
+        StartPollingIfNeeded();
+    }
+
+    public void Dispose()
+    {
+        _pollTimer?.Dispose();
+    }
+
+    private void StartPollingIfNeeded()
+    {
+        if (_container?.Status is "Pending" or "Creating")
+        {
+            _pollTimer ??= new Timer(async _ =>
+            {
+                try
+                {
+                    var updated = await Api.GetContainerAsync(Id);
+                    if (updated is not null)
+                    {
+                        _container = updated;
+                        if (updated.Status is not "Pending" and not "Creating")
+                        {
+                            StopPolling();
+                            // Load connection info and events now that status changed
+                            if (updated.Status is "Running")
+                                _ = LoadConnectionInfoAsync();
+                            _ = LoadEventsAsync();
+                        }
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+                catch { /* ignore transient errors during polling */ }
+            }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+        }
+    }
+
+    private void StopPolling()
+    {
+        _pollTimer?.Dispose();
+        _pollTimer = null;
     }
 
     private async Task LoadContainerAsync()
@@ -449,6 +494,7 @@ else if (_container is not null)
             if (_container is null)
             {
                 _error = "Container not found.";
+                StopPolling();
             }
             else
             {
@@ -458,7 +504,16 @@ else if (_container is not null)
 
                 if (_container.Status is "Running")
                 {
+                    StopPolling();
                     await LoadConnectionInfoAsync();
+                }
+                else if (_container.Status is "Pending" or "Creating")
+                {
+                    StartPollingIfNeeded();
+                }
+                else
+                {
+                    StopPolling();
                 }
             }
         }
