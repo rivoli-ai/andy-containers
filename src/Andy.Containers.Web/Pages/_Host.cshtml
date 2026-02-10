@@ -45,7 +45,7 @@
             letter-spacing: -0.01em;
         }
 
-        h1 { font-size: 2rem; font-weight: 700; margin: 0 0 1rem; }
+        h1 { font-size: 2rem; font-weight: 700; margin: 0 0 1rem; outline: none; }
         h2 { font-size: 1.75rem; font-weight: 700; margin: 0 0 1rem; }
         h3 { font-size: 1.5rem; font-weight: 600; margin: 0 0 0.75rem; }
         h5 { font-size: 1.15rem; font-weight: 600; margin: 0 0 0.5rem; }
@@ -484,6 +484,58 @@
             transition: all 0.2s; text-decoration: none;
         }
         .endpoint-link:hover { background: rgba(0, 102, 204, 0.1); }
+
+        /* ───── Forms (create page) ───── */
+        .form-group { margin-bottom: 1.25rem; }
+
+        .form-label {
+            display: block; font-size: 0.85rem; font-weight: 600;
+            margin-bottom: 0.35rem; color: var(--text);
+        }
+
+        .form-control {
+            width: 100%; max-width: 480px;
+            padding: 0.625rem 0.75rem;
+            border: 1px solid var(--border); border-radius: 6px;
+            font-size: 0.9rem; font-family: inherit;
+            outline: none; transition: border-color 0.2s;
+            background: var(--surface); color: var(--text);
+        }
+        .form-control:focus { border-color: var(--primary); }
+
+        select.form-control { appearance: auto; }
+
+        .form-actions {
+            display: flex; gap: 0.75rem; align-items: center;
+            margin-top: 1.5rem; padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .text-danger { color: var(--danger); }
+
+        .validation-message { font-size: 0.8rem; color: var(--danger); margin-top: 0.25rem; }
+
+        /* ───── Auth buttons ───── */
+        .btn-logout {
+            display: flex; align-items: center; gap: 0.5rem;
+            width: 100%; padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border); border-radius: 6px;
+            background: var(--surface); color: var(--text-muted);
+            font-size: 0.85rem; font-weight: 500; font-family: inherit;
+            cursor: pointer; transition: all 0.2s;
+            margin-top: 0.5rem;
+        }
+        .btn-logout:hover { background: rgba(220, 53, 69, 0.1); color: var(--danger); border-color: rgba(220, 53, 69, 0.3); }
+
+        .btn-login {
+            display: flex; align-items: center; gap: 0.5rem;
+            width: 100%; padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border); border-radius: 6px;
+            background: var(--surface); color: var(--primary);
+            font-size: 0.85rem; font-weight: 500;
+            text-decoration: none; transition: all 0.2s;
+        }
+        .btn-login:hover { background: rgba(0, 102, 204, 0.1); border-color: rgba(0, 102, 204, 0.3); }
 
         /* ───── Responsive ───── */
         @@media (max-width: 768px) {

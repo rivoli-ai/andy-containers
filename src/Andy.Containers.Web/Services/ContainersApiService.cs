@@ -47,6 +47,13 @@ public class ContainersApiService
         await _http.DeleteAsync($"api/containers/{id}");
     }
 
+    public async Task<ContainerDto?> CreateContainerAsync(CreateContainerRequest request)
+    {
+        var response = await _http.PostAsJsonAsync("api/containers", request, JsonOptions);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ContainerDto>(JsonOptions);
+    }
+
     // ---------- Templates ----------
 
     public async Task<PagedResult<TemplateDto>> GetTemplatesAsync(string? search = null, int skip = 0, int take = 20)
@@ -175,4 +182,20 @@ public class WorkspaceDto
     public DateTime? UpdatedAt { get; set; }
     public DateTime? LastAccessedAt { get; set; }
     public ContainerDto? DefaultContainer { get; set; }
+}
+
+public class CreateContainerRequest
+{
+    public required string Name { get; set; }
+    public Guid? TemplateId { get; set; }
+    public string? TemplateCode { get; set; }
+    public Guid? ProviderId { get; set; }
+    public string? ProviderCode { get; set; }
+    public GitRepositoryConfig? GitRepository { get; set; }
+}
+
+public class GitRepositoryConfig
+{
+    public required string Url { get; set; }
+    public string? Branch { get; set; }
 }

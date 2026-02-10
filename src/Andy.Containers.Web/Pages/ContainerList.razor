@@ -5,9 +5,14 @@
 
 <div class="page-header">
     <h1>Containers</h1>
-    <button class="btn btn-secondary btn-sm" @onclick="LoadDataAsync" disabled="@_loading">
-        <i class="bi bi-arrow-clockwise"></i> Refresh
-    </button>
+    <div style="display: flex; gap: 0.5rem;">
+        <a href="containers/create" class="btn btn-primary btn-sm">
+            <i class="bi bi-plus-lg"></i> New Container
+        </a>
+        <button class="btn btn-secondary btn-sm" @onclick="LoadDataAsync" disabled="@_loading">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
 </div>
 
 @if (_loading)
