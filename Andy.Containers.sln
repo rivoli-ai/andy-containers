@@ -1,4 +1,4 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
@@ -23,6 +23,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Api.Tests", "tests\Andy.Containers.Api.Tests\Andy.Containers.Api.Tests.csproj", "{30000002-0002-0002-0002-000000000002}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Client.Tests", "tests\Andy.Containers.Client.Tests\Andy.Containers.Client.Tests.csproj", "{30000003-0003-0003-0003-000000000003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Andy.Containers.Integration.Tests", "tests\Andy.Containers.Integration.Tests\Andy.Containers.Integration.Tests.csproj", "{4C761A8B-69A9-4AFE-AEAF-A1AD7BC7CEC2}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -66,6 +68,10 @@ Global
 		{30000003-0003-0003-0003-000000000003}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{30000003-0003-0003-0003-000000000003}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{30000003-0003-0003-0003-000000000003}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4C761A8B-69A9-4AFE-AEAF-A1AD7BC7CEC2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4C761A8B-69A9-4AFE-AEAF-A1AD7BC7CEC2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4C761A8B-69A9-4AFE-AEAF-A1AD7BC7CEC2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4C761A8B-69A9-4AFE-AEAF-A1AD7BC7CEC2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{10000001-0001-0001-0001-000000000001} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -77,5 +83,6 @@ Global
 		{30000001-0001-0001-0001-000000000001} = {20000000-0000-0000-0000-000000000000}
 		{30000002-0002-0002-0002-000000000002} = {20000000-0000-0000-0000-000000000000}
 		{30000003-0003-0003-0003-000000000003} = {20000000-0000-0000-0000-000000000000}
+		{4C761A8B-69A9-4AFE-AEAF-A1AD7BC7CEC2} = {20000000-0000-0000-0000-000000000000}
 	EndGlobalSection
 EndGlobal

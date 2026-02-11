@@ -9,6 +9,7 @@ namespace Andy.Containers.Infrastructure.Providers.Apple;
 /// <summary>
 /// Infrastructure provider for Apple Containers on macOS.
 /// Uses the `container` CLI tool for lightweight Linux VMs on Apple Silicon.
+/// CLI reference: https://github.com/apple/container
 /// </summary>
 public class AppleContainerProvider : IInfrastructureProvider
 {
@@ -45,7 +46,7 @@ public class AppleContainerProvider : IInfrastructureProvider
             MaxDiskGb = 50,
             SupportsGpu = false,
             SupportsVolumeMount = true,
-            SupportsPortForwarding = true,
+            SupportsPortForwarding = false,
             SupportsExec = true,
             SupportsStreaming = true,
             SupportsOfflineBuild = true
@@ -56,7 +57,9 @@ public class AppleContainerProvider : IInfrastructureProvider
     {
         try
         {
-            var result = await RunCliAsync("--version", ct);
+            // `container list` verifies both the binary AND the system service are available.
+            // `container --version` only checks the binary exists.
+            var result = await RunCliAsync("list --format json", ct, TimeSpan.FromSeconds(10));
             return result.ExitCode == 0 ? ProviderHealth.Healthy : ProviderHealth.Degraded;
         }
         catch
@@ -71,30 +74,38 @@ public class AppleContainerProvider : IInfrastructureProvider
 
         var name = spec.Name.ToLowerInvariant().Replace(' ', '-');
 
-        // Initialize a new container from an OCI image
-        var initResult = await RunCliAsync($"init --name {name} {spec.ImageReference}", ct);
-        if (initResult.ExitCode != 0)
-            throw new InvalidOperationException($"Failed to init Apple Container: {initResult.StdErr}");
+        // Use `container run -d` which creates AND starts in one step.
+        var args = $"run --name {name}";
 
-        // Configure resources
         if (spec.Resources is not null)
         {
-            await RunCliAsync($"set {name} --cpus {spec.Resources.CpuCores} --memory {spec.Resources.MemoryMb}m", ct);
+            if (spec.Resources.CpuCores > 0)
+                args += $" -c {spec.Resources.CpuCores}";
+            if (spec.Resources.MemoryMb > 0)
+                args += $" -m {spec.Resources.MemoryMb}M";
         }
 
-        // Configure port forwarding
-        if (spec.PortMappings is not null)
+        args += $" -d {spec.ImageReference}";
+
+        // Add command if specified, otherwise default to sleep infinity to keep the container alive
+        if (!string.IsNullOrEmpty(spec.Command))
         {
-            foreach (var (containerPort, hostPort) in spec.PortMappings)
-            {
-                await RunCliAsync($"set {name} --port {hostPort}:{containerPort}", ct);
-            }
+            args += $" {spec.Command}";
+            if (spec.Arguments is not null)
+                args += " " + string.Join(" ", spec.Arguments);
+        }
+        else
+        {
+            args += " sleep infinity";
         }
 
-        // Start the container
-        var startResult = await RunCliAsync($"start {name}", ct);
-        if (startResult.ExitCode != 0)
-            throw new InvalidOperationException($"Failed to start Apple Container: {startResult.StdErr}");
+        _logger.LogInformation("Running: {CliPath} {Args}", _cliPath, args);
+        var result = await RunCliAsync(args, ct, TimeSpan.FromMinutes(5));
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"Failed to run Apple Container: {result.StdErr}");
+
+        // Wait briefly for the container to get a network address
+        await Task.Delay(2000, ct);
 
         _logger.LogInformation("Apple Container {Name} created and started", name);
 
@@ -108,50 +119,53 @@ public class AppleContainerProvider : IInfrastructureProvider
 
     public async Task StartContainerAsync(string externalId, CancellationToken ct)
     {
-        var result = await RunCliAsync($"start {externalId}", ct);
+        var result = await RunCliAsync($"start {externalId}", ct, TimeSpan.FromSeconds(30));
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to start: {result.StdErr}");
     }
 
     public async Task StopContainerAsync(string externalId, CancellationToken ct)
     {
-        var result = await RunCliAsync($"stop {externalId}", ct);
+        var result = await RunCliAsync($"stop {externalId}", ct, TimeSpan.FromSeconds(15));
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to stop: {result.StdErr}");
     }
 
     public async Task DestroyContainerAsync(string externalId, CancellationToken ct)
     {
-        await RunCliAsync($"stop {externalId}", ct);
-        var result = await RunCliAsync($"remove {externalId}", ct);
+        // Stop first (ignore errors — may already be stopped)
+        await RunCliAsync($"stop {externalId}", ct, TimeSpan.FromSeconds(15));
+
+        var result = await RunCliAsync($"delete {externalId}", ct, TimeSpan.FromSeconds(15));
         if (result.ExitCode != 0)
-            throw new InvalidOperationException($"Failed to remove: {result.StdErr}");
+            throw new InvalidOperationException($"Failed to delete: {result.StdErr}");
     }
 
     public async Task<ContainerRuntimeInfo> GetContainerInfoAsync(string externalId, CancellationToken ct)
     {
-        var result = await RunCliAsync($"inspect {externalId}", ct);
-        var running = result.StdOut?.Contains("running", StringComparison.OrdinalIgnoreCase) ?? false;
+        var info = await InspectAsync(externalId, ct);
         return new ContainerRuntimeInfo
         {
             ExternalId = externalId,
-            Status = running ? ContainerStatus.Running : ContainerStatus.Stopped
+            Status = info.Status == "running" ? ContainerStatus.Running : ContainerStatus.Stopped,
+            IpAddress = info.IpAddress
         };
     }
 
-    public async Task<ContainerProvisionResult> ResizeContainerAsync(string externalId, ResourceSpec resources, CancellationToken ct)
+    public Task<ContainerProvisionResult> ResizeContainerAsync(string externalId, ResourceSpec resources, CancellationToken ct)
     {
-        await RunCliAsync($"set {externalId} --cpus {resources.CpuCores} --memory {resources.MemoryMb}m", ct);
-        return new ContainerProvisionResult { ExternalId = externalId, Status = ContainerStatus.Running };
+        // Apple Containers do not support runtime resource changes.
+        // Resources are fixed at creation time. Log a warning and return current state.
+        _logger.LogWarning("Apple Containers do not support runtime resource resize for {Id}", externalId);
+        return Task.FromResult(new ContainerProvisionResult { ExternalId = externalId, Status = ContainerStatus.Running });
     }
 
     public async Task<ConnectionInfo> GetConnectionInfoAsync(string externalId, CancellationToken ct)
     {
-        var result = await RunCliAsync($"inspect {externalId}", ct);
-        // Parse port mappings from inspect output
+        var info = await InspectAsync(externalId, ct);
         return new ConnectionInfo
         {
-            IpAddress = "127.0.0.1"
+            IpAddress = info.IpAddress
         };
     }
 
@@ -162,13 +176,56 @@ public class AppleContainerProvider : IInfrastructureProvider
 
     public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
     {
-        var result = await RunCliAsync($"exec {externalId} -- sh -c \"{command.Replace("\"", "\\\"")}\"", ct, timeout);
+        // Use ArgumentList to avoid shell quoting issues with ProcessStartInfo.Arguments.
+        // Apple `container exec` syntax: container exec <id> <command> [args...]
+        var result = await RunCliWithArgsAsync(["exec", externalId, "sh", "-c", command], ct, timeout);
         return new ExecResult
         {
             ExitCode = result.ExitCode,
             StdOut = result.StdOut,
             StdErr = result.StdErr
         };
+    }
+
+    private async Task<InspectInfo> InspectAsync(string externalId, CancellationToken ct)
+    {
+        var result = await RunCliAsync($"inspect {externalId}", ct, TimeSpan.FromSeconds(10));
+        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StdOut))
+            return new InspectInfo { Status = "unknown" };
+
+        try
+        {
+            // `container inspect` returns a JSON array
+            using var doc = JsonDocument.Parse(result.StdOut);
+            var root = doc.RootElement;
+            var item = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0
+                ? root[0]
+                : root;
+
+            var status = item.TryGetProperty("status", out var s) ? s.GetString() ?? "unknown" : "unknown";
+
+            // Network address is at networks[0].address (e.g. "192.168.64.3/24")
+            string? ipAddress = null;
+            if (item.TryGetProperty("networks", out var networks)
+                && networks.ValueKind == JsonValueKind.Array
+                && networks.GetArrayLength() > 0)
+            {
+                var net = networks[0];
+                if (net.TryGetProperty("address", out var addr))
+                {
+                    var raw = addr.GetString();
+                    // Strip CIDR suffix (e.g. "/24")
+                    ipAddress = raw?.Split('/')[0];
+                }
+            }
+
+            return new InspectInfo { Status = status, IpAddress = ipAddress };
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse inspect output for {Id}", externalId);
+            return new InspectInfo { Status = "unknown" };
+        }
     }
 
     private async Task<CliResult> RunCliAsync(string arguments, CancellationToken ct, TimeSpan? timeout = null)
@@ -189,9 +246,7 @@ public class AppleContainerProvider : IInfrastructureProvider
         if (process is null)
             throw new InvalidOperationException($"Failed to start {_cliPath}");
 
-        using var cts = timeout.HasValue
-            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
-            : CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         if (timeout.HasValue)
             cts.CancelAfter(timeout.Value);
 
@@ -199,8 +254,48 @@ public class AppleContainerProvider : IInfrastructureProvider
         var stderr = await process.StandardError.ReadToEndAsync(cts.Token);
         await process.WaitForExitAsync(cts.Token);
 
-        return new CliResult(process.ExitCode, stdout, stderr);
+        return new CliResult(process.ExitCode, stdout.TrimEnd(), stderr.TrimEnd());
+    }
+
+    /// <summary>
+    /// Runs the CLI with an explicit argument list, avoiding shell quoting issues.
+    /// Used for exec where the command string must be passed as a single argument to sh -c.
+    /// </summary>
+    private async Task<CliResult> RunCliWithArgsAsync(string[] args, CancellationToken ct, TimeSpan? timeout = null)
+    {
+        _logger.LogDebug("Running: {Cli} {Args}", _cliPath, string.Join(" ", args));
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = _cliPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+
+        using var process = Process.Start(psi);
+        if (process is null)
+            throw new InvalidOperationException($"Failed to start {_cliPath}");
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (timeout.HasValue)
+            cts.CancelAfter(timeout.Value);
+
+        var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token);
+        var stderr = await process.StandardError.ReadToEndAsync(cts.Token);
+        await process.WaitForExitAsync(cts.Token);
+
+        return new CliResult(process.ExitCode, stdout.TrimEnd(), stderr.TrimEnd());
     }
 
     private record CliResult(int ExitCode, string? StdOut, string? StdErr);
+    private record InspectInfo
+    {
+        public string Status { get; init; } = "unknown";
+        public string? IpAddress { get; init; }
+    }
 }

@@ -1,6 +1,8 @@
 using Andy.Containers.Abstractions;
+using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Andy.Containers.Api.Controllers;
 
@@ -9,10 +11,12 @@ namespace Andy.Containers.Api.Controllers;
 public class ContainersController : ControllerBase
 {
     private readonly IContainerService _containerService;
+    private readonly ContainersDbContext _db;
 
-    public ContainersController(IContainerService containerService)
+    public ContainersController(IContainerService containerService, ContainersDbContext db)
     {
         _containerService = containerService;
+        _db = db;
     }
 
     [HttpGet]
@@ -100,6 +104,17 @@ public class ContainersController : ControllerBase
     {
         var info = await _containerService.GetConnectionInfoAsync(id, ct);
         return Ok(info);
+    }
+
+    [HttpGet("{id:guid}/events")]
+    public async Task<IActionResult> GetEvents(Guid id, CancellationToken ct)
+    {
+        var events = await _db.Events
+            .Where(e => e.ContainerId == id)
+            .OrderByDescending(e => e.Timestamp)
+            .Take(50)
+            .ToListAsync(ct);
+        return Ok(events);
     }
 }
 

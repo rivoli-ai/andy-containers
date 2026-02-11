@@ -1,0 +1,176 @@
+@page "/templates/{Id:guid}"
+@inject ContainersApiService Api
+
+<PageTitle>Template Detail - Andy Containers</PageTitle>
+
+<div class="page-header">
+    <h1>Template Detail</h1>
+    <a href="templates" class="btn btn-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Back to Catalog
+    </a>
+</div>
+
+@if (_loading)
+{
+    <div class="loading-spinner"><div class="spinner"></div></div>
+}
+else if (_error is not null)
+{
+    <div class="alert alert-error">
+        <i class="bi bi-exclamation-triangle"></i>
+        Failed to load template: @_error
+        <button class="btn btn-sm btn-secondary" @onclick="LoadAsync">Retry</button>
+    </div>
+}
+else if (_template is not null)
+{
+    @* ───── Overview Card ───── *@
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <div class="card-body">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+                <h5>@_template.Name</h5>
+                <span class="info-badge">@_template.Version</span>
+            </div>
+            <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1rem;">
+                @(_template.Description ?? "No description.")
+            </p>
+            <div class="detail-row"><strong>Code:</strong> <span class="text-mono">@_template.Code</span></div>
+            <div class="detail-row"><strong>ID:</strong> <span class="text-mono">@_template.Id</span></div>
+            <div class="detail-row"><strong>Base Image:</strong> <span class="text-mono">@_template.BaseImage</span></div>
+            <div class="detail-row"><strong>IDE Type:</strong> @_template.IdeType</div>
+            <div class="detail-row"><strong>Scope:</strong> <span class="scope-badge @_template.CatalogScope.ToLowerInvariant()">@_template.CatalogScope</span></div>
+            @if (_template.GpuRequired)
+            {
+                <div class="detail-row"><strong>GPU:</strong> <span class="info-badge badge-gpu-required"><i class="bi bi-gpu-card"></i> Required</span></div>
+            }
+            else if (_template.GpuPreferred)
+            {
+                <div class="detail-row"><strong>GPU:</strong> <span class="info-badge badge-gpu-preferred"><i class="bi bi-gpu-card"></i> Preferred</span></div>
+            }
+            @if (_template.Tags is { Length: > 0 })
+            {
+                <div style="margin-top: 0.5rem;">
+                    @foreach (var tag in _template.Tags)
+                    {
+                        <span class="tag-badge">@tag</span>
+                    }
+                </div>
+            }
+            <div class="detail-row" style="margin-top: 0.5rem;">
+                <strong>Created:</strong> @_template.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+            </div>
+            @if (_template.UpdatedAt.HasValue)
+            {
+                <div class="detail-row"><strong>Updated:</strong> @_template.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm:ss")</div>
+            }
+        </div>
+    </div>
+
+    @* ───── Definition YAML Card ───── *@
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <div class="card-body">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                <h5 style="margin: 0;">Definition</h5>
+                @if (_definition is null && !_defLoading)
+                {
+                    <button class="btn btn-secondary btn-sm" @onclick="LoadDefinitionAsync">
+                        <i class="bi bi-file-earmark-code"></i> Load YAML
+                    </button>
+                }
+            </div>
+
+            @if (_defLoading)
+            {
+                <div><span class="spinner-sm"></span> Loading definition...</div>
+            }
+            else if (_defError is not null)
+            {
+                <div class="alert alert-error">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    @_defError
+                </div>
+            }
+            else if (_definition is not null)
+            {
+                <div style="position: relative;">
+                    <pre class="text-mono" style="background: var(--surface-2); padding: 1rem; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; margin: 0; white-space: pre; font-size: 0.85rem; max-height: 600px; overflow-y: auto;">@_definition.Content</pre>
+                </div>
+            }
+            else
+            {
+                <p class="text-muted" style="font-size: 0.9rem; margin: 0;">Click "Load YAML" to view the template definition file.</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private TemplateDto? _template;
+    private bool _loading = true;
+    private string? _error;
+
+    private TemplateDefinitionDto? _definition;
+    private bool _defLoading;
+    private string? _defError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            _template = await Api.GetTemplateAsync(Id);
+            if (_template is null)
+            {
+                _error = "Template not found.";
+            }
+            else
+            {
+                // Auto-load the definition
+                await LoadDefinitionAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadDefinitionAsync()
+    {
+        _defLoading = true;
+        _defError = null;
+        StateHasChanged();
+
+        try
+        {
+            _definition = await Api.GetTemplateDefinitionAsync(Id);
+            if (_definition is null)
+            {
+                _defError = "No definition file found for this template.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _defError = ex.Message;
+        }
+        finally
+        {
+            _defLoading = false;
+        }
+    }
+}

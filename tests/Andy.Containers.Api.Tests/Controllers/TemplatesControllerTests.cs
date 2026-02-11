@@ -3,7 +3,9 @@ using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
+using Moq;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Controllers;
@@ -16,7 +18,9 @@ public class TemplatesControllerTests : IDisposable
     public TemplatesControllerTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _controller = new TemplatesController(_db);
+        var mockEnv = new Mock<IWebHostEnvironment>();
+        mockEnv.Setup(e => e.ContentRootPath).Returns(Directory.GetCurrentDirectory());
+        _controller = new TemplatesController(_db, mockEnv.Object);
     }
 
     public void Dispose()
@@ -117,6 +121,26 @@ public class TemplatesControllerTests : IDisposable
         var value = okResult.Value!;
         var totalCount = (int)value.GetType().GetProperty("totalCount")!.GetValue(value)!;
         totalCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task List_SearchByTag_ShouldReturnAllMatchingTemplates()
+    {
+        _db.Templates.AddRange(
+            new ContainerTemplate { Code = "full-stack", Name = "Full Stack", Version = "1.0", BaseImage = "img", IsPublished = true, Tags = ["dotnet", "python", "node"] },
+            new ContainerTemplate { Code = "dotnet-8", Name = ".NET 8 Dev", Version = "1.0", BaseImage = "img", IsPublished = true, Tags = ["dotnet"] },
+            new ContainerTemplate { Code = "andy-cli", Name = "Andy CLI", Version = "1.0", BaseImage = "img", IsPublished = true, Tags = ["andy-cli", "dotnet", "ai"] },
+            new ContainerTemplate { Code = "python-only", Name = "Python Only", Version = "1.0", BaseImage = "img", IsPublished = true, Tags = ["python"] }
+        );
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.List(scope: null, organizationId: null, teamId: null,
+            search: "dotnet", gpuRequired: null, ideType: null);
+
+        var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
+        var value = okResult.Value!;
+        var totalCount = (int)value.GetType().GetProperty("totalCount")!.GetValue(value)!;
+        totalCount.Should().Be(3, "3 templates are tagged with 'dotnet'");
     }
 
     [Fact]

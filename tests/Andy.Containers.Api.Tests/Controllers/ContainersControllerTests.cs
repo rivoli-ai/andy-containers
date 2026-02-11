@@ -1,5 +1,7 @@
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Controllers;
+using Andy.Containers.Api.Tests.Helpers;
+using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
@@ -8,15 +10,22 @@ using Xunit;
 
 namespace Andy.Containers.Api.Tests.Controllers;
 
-public class ContainersControllerTests
+public class ContainersControllerTests : IDisposable
 {
     private readonly Mock<IContainerService> _mockService;
+    private readonly ContainersDbContext _db;
     private readonly ContainersController _controller;
 
     public ContainersControllerTests()
     {
         _mockService = new Mock<IContainerService>();
-        _controller = new ContainersController(_mockService.Object);
+        _db = InMemoryDbHelper.CreateContext();
+        _controller = new ContainersController(_mockService.Object, _db);
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
     }
 
     [Fact]
