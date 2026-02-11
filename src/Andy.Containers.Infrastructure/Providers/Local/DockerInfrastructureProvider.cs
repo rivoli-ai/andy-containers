@@ -96,10 +96,25 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             }
         }
 
+        // Build the command: use spec.Command if provided, otherwise default to
+        // "sleep infinity" to keep the container alive as a dev environment.
+        var cmd = new List<string>();
+        if (!string.IsNullOrEmpty(spec.Command))
+        {
+            cmd.Add(spec.Command);
+            if (spec.Arguments is not null)
+                cmd.AddRange(spec.Arguments);
+        }
+        else
+        {
+            cmd.AddRange(["sleep", "infinity"]);
+        }
+
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
             Image = spec.ImageReference,
             Name = spec.Name.ToLowerInvariant().Replace(' ', '-'),
+            Cmd = cmd,
             Env = spec.EnvironmentVariables?.Select(kv => $"{kv.Key}={kv.Value}").ToList(),
             ExposedPorts = exposedPorts,
             Labels = spec.Labels,
