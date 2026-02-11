@@ -70,6 +70,31 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     {
         _logger.LogInformation("Creating Docker container {Name} from {Image}", spec.Name, spec.ImageReference);
 
+        var containerName = spec.Name.ToLowerInvariant().Replace(' ', '-');
+
+        // Remove any existing container with the same name (stopped or running)
+        try
+        {
+            var existing = await _client.Containers.ListContainersAsync(new ContainersListParameters
+            {
+                All = true,
+                Filters = new Dictionary<string, IDictionary<string, bool>>
+                {
+                    ["name"] = new Dictionary<string, bool> { [$"^/{containerName}$"] = true }
+                }
+            }, ct);
+
+            foreach (var old in existing)
+            {
+                _logger.LogInformation("Removing existing container {Id} with name {Name}", old.ID[..12], containerName);
+                await _client.Containers.RemoveContainerAsync(old.ID, new ContainerRemoveParameters { Force = true }, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check for existing container {Name}", containerName);
+        }
+
         // Pull image if not present
         try
         {
@@ -113,7 +138,7 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
             Image = spec.ImageReference,
-            Name = spec.Name.ToLowerInvariant().Replace(' ', '-'),
+            Name = containerName,
             Cmd = cmd,
             Env = spec.EnvironmentVariables?.Select(kv => $"{kv.Key}={kv.Value}").ToList(),
             ExposedPorts = exposedPorts,
