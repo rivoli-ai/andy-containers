@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Data;
 using Andy.Containers.Api.Services;
@@ -46,20 +47,27 @@ try
     builder.Services.AddSingleton<ContainerProvisioningQueue>();
     builder.Services.AddHostedService<ContainerProvisioningWorker>();
 
+    // Current user service for RBAC
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()
         .WithToolsFromAssembly();
 
-    // Authentication — disabled in dev for easy testing
+    // Authentication
     builder.Services.AddAuthentication("Bearer")
         .AddJwtBearer("Bearer", options =>
         {
             options.Authority = builder.Configuration["Auth:Authority"];
             options.Audience = builder.Configuration["Auth:Audience"];
-            options.RequireHttpsMetadata = true;
+            options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
         });
-    builder.Services.AddAuthorization();
+    builder.Services.AddAuthorization(options =>
+    {
+        options.AddPolicy("Admin", policy => policy.RequireClaim("role", "admin"));
+    });
 
     // Health checks
     builder.Services.AddHealthChecks();
@@ -102,9 +110,36 @@ try
     app.MapMcp("/mcp");
 
     app.UseAuthentication();
+
+    // Dev mode: assign a default identity when no real auth provider is running
+    if (app.Environment.IsDevelopment())
+    {
+        app.Use(async (context, next) =>
+        {
+            if (context.User.Identity?.IsAuthenticated != true)
+            {
+                var devUserId = app.Configuration["Auth:DevUserId"] ?? "dev-user";
+                var devEmail = app.Configuration["Auth:DevEmail"] ?? "dev@andy.local";
+                var claims = new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, devUserId),
+                    new Claim("sub", devUserId),
+                    new Claim(ClaimTypes.Email, devEmail),
+                    new Claim("email", devEmail),
+                    new Claim(ClaimTypes.Name, "Dev User"),
+                    new Claim("name", "Dev User"),
+                    new Claim(ClaimTypes.Role, "admin"),
+                    new Claim("role", "admin")
+                };
+                context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Development"));
+            }
+            await next();
+        });
+    }
+
     app.UseAuthorization();
-    app.MapControllers();
-    app.MapHealthChecks("/health");
+    app.MapControllers().RequireAuthorization();
+    app.MapHealthChecks("/health").AllowAnonymous();
 
     Log.Information("Andy Containers API starting");
     Log.Information("Swagger UI: https://localhost:5200/swagger");

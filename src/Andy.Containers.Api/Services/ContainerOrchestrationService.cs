@@ -71,7 +71,7 @@ public class ContainerOrchestrationService : IContainerService
             Name = request.Name,
             TemplateId = template.Id,
             ProviderId = provider.Id,
-            OwnerId = "system", // TODO: from auth context
+            OwnerId = request.OwnerId ?? "system",
             OrganizationId = request.OrganizationId,
             TeamId = request.TeamId,
             Status = ContainerStatus.Pending,

@@ -1,4 +1,5 @@
 using Andy.Containers.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -6,6 +7,7 @@ namespace Andy.Containers.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ImagesController : ControllerBase
 {
     private readonly ContainersDbContext _db;

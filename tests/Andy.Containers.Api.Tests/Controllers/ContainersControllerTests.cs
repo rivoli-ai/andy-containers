@@ -1,5 +1,6 @@
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Controllers;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -13,14 +14,19 @@ namespace Andy.Containers.Api.Tests.Controllers;
 public class ContainersControllerTests : IDisposable
 {
     private readonly Mock<IContainerService> _mockService;
+    private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly ContainersDbContext _db;
     private readonly ContainersController _controller;
 
     public ContainersControllerTests()
     {
         _mockService = new Mock<IContainerService>();
+        _mockCurrentUser = new Mock<ICurrentUserService>();
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
         _db = InMemoryDbHelper.CreateContext();
-        _controller = new ContainersController(_mockService.Object, _db);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db);
     }
 
     public void Dispose()
@@ -132,6 +138,10 @@ public class ContainersControllerTests : IDisposable
     public async Task Destroy_ShouldReturnNoContent()
     {
         var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "test", OwnerId = "test-user" };
+        _mockService
+            .Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
         _mockService
             .Setup(s => s.DestroyContainerAsync(id, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -146,7 +156,11 @@ public class ContainersControllerTests : IDisposable
     public async Task Exec_ShouldReturnExecResult()
     {
         var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "test", OwnerId = "test-user" };
         var execResult = new ExecResult { ExitCode = 0, StdOut = "hello" };
+        _mockService
+            .Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
         _mockService
             .Setup(s => s.ExecAsync(id, "echo hello", It.IsAny<CancellationToken>()))
             .ReturnsAsync(execResult);

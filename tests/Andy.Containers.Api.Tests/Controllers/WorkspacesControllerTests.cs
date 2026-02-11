@@ -1,9 +1,11 @@
 using Andy.Containers.Api.Controllers;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
+using Moq;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Controllers;
@@ -11,12 +13,17 @@ namespace Andy.Containers.Api.Tests.Controllers;
 public class WorkspacesControllerTests : IDisposable
 {
     private readonly ContainersDbContext _db;
+    private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly WorkspacesController _controller;
 
     public WorkspacesControllerTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _controller = new WorkspacesController(_db);
+        _mockCurrentUser = new Mock<ICurrentUserService>();
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
+        _controller = new WorkspacesController(_db, _mockCurrentUser.Object);
     }
 
     public void Dispose()
@@ -35,7 +42,7 @@ public class WorkspacesControllerTests : IDisposable
         created.StatusCode.Should().Be(201);
         var ws = created.Value.Should().BeOfType<Workspace>().Subject;
         ws.Name.Should().Be("My Workspace");
-        ws.OwnerId.Should().Be("system");
+        ws.OwnerId.Should().Be("test-user");
         ws.GitRepositoryUrl.Should().Be("https://github.com/test/repo");
         ws.GitBranch.Should().Be("main");
     }

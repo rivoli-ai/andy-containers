@@ -1,4 +1,5 @@
 using Andy.Containers.Api.Controllers;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -13,14 +14,19 @@ namespace Andy.Containers.Api.Tests.Controllers;
 public class TemplatesControllerTests : IDisposable
 {
     private readonly ContainersDbContext _db;
+    private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly TemplatesController _controller;
 
     public TemplatesControllerTests()
     {
         _db = InMemoryDbHelper.CreateContext();
+        _mockCurrentUser = new Mock<ICurrentUserService>();
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
         var mockEnv = new Mock<IWebHostEnvironment>();
         mockEnv.Setup(e => e.ContentRootPath).Returns(Directory.GetCurrentDirectory());
-        _controller = new TemplatesController(_db, mockEnv.Object);
+        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object);
     }
 
     public void Dispose()

@@ -28,6 +28,7 @@ public class CreateContainerRequest
     public Guid? WorkspaceId { get; set; }
     public Guid? OrganizationId { get; set; }
     public Guid? TeamId { get; set; }
+    public string? OwnerId { get; set; }
     public ResourceSpec? Resources { get; set; }
     public GpuSpec? Gpu { get; set; }
     public GitRepositoryConfig? GitRepository { get; set; }

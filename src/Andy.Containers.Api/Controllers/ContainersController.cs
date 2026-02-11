@@ -1,6 +1,8 @@
 using Andy.Containers.Abstractions;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,14 +10,17 @@ namespace Andy.Containers.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ContainersController : ControllerBase
 {
     private readonly IContainerService _containerService;
+    private readonly ICurrentUserService _currentUser;
     private readonly ContainersDbContext _db;
 
-    public ContainersController(IContainerService containerService, ContainersDbContext db)
+    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db)
     {
         _containerService = containerService;
+        _currentUser = currentUser;
         _db = db;
     }
 
@@ -32,9 +37,14 @@ public class ContainersController : ControllerBase
         [FromQuery] int take = 20,
         CancellationToken ct = default)
     {
+        // Non-admins can only see their own containers
+        var effectiveOwnerId = ownerId;
+        if (!_currentUser.IsAdmin())
+            effectiveOwnerId = _currentUser.GetUserId();
+
         var containers = await _containerService.ListContainersAsync(new ContainerFilter
         {
-            OwnerId = ownerId,
+            OwnerId = effectiveOwnerId,
             OrganizationId = organizationId,
             TeamId = teamId,
             WorkspaceId = workspaceId,
@@ -54,6 +64,8 @@ public class ContainersController : ControllerBase
         try
         {
             var container = await _containerService.GetContainerAsync(id, ct);
+            if (!CanAccess(container))
+                return Forbid();
             return Ok(container);
         }
         catch (KeyNotFoundException)
@@ -65,6 +77,7 @@ public class ContainersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateContainerRequest request, CancellationToken ct)
     {
+        request.OwnerId = _currentUser.GetUserId();
         var container = await _containerService.CreateContainerAsync(request, ct);
         return CreatedAtAction(nameof(Get), new { id = container.Id }, container);
     }
@@ -72,22 +85,31 @@ public class ContainersController : ControllerBase
     [HttpPost("{id:guid}/start")]
     public async Task<IActionResult> Start(Guid id, CancellationToken ct)
     {
-        await _containerService.StartContainerAsync(id, ct);
         var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        await _containerService.StartContainerAsync(id, ct);
+        container = await _containerService.GetContainerAsync(id, ct);
         return Ok(container);
     }
 
     [HttpPost("{id:guid}/stop")]
     public async Task<IActionResult> Stop(Guid id, CancellationToken ct)
     {
-        await _containerService.StopContainerAsync(id, ct);
         var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        await _containerService.StopContainerAsync(id, ct);
+        container = await _containerService.GetContainerAsync(id, ct);
         return Ok(container);
     }
 
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Destroy(Guid id, CancellationToken ct)
     {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
         await _containerService.DestroyContainerAsync(id, ct);
         return NoContent();
     }
@@ -95,6 +117,9 @@ public class ContainersController : ControllerBase
     [HttpPost("{id:guid}/exec")]
     public async Task<IActionResult> Exec(Guid id, [FromBody] ExecRequest request, CancellationToken ct)
     {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
         var result = await _containerService.ExecAsync(id, request.Command, ct);
         return Ok(result);
     }
@@ -102,6 +127,9 @@ public class ContainersController : ControllerBase
     [HttpGet("{id:guid}/connection")]
     public async Task<IActionResult> GetConnectionInfo(Guid id, CancellationToken ct)
     {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
         var info = await _containerService.GetConnectionInfoAsync(id, ct);
         return Ok(info);
     }
@@ -109,12 +137,21 @@ public class ContainersController : ControllerBase
     [HttpGet("{id:guid}/events")]
     public async Task<IActionResult> GetEvents(Guid id, CancellationToken ct)
     {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
         var events = await _db.Events
             .Where(e => e.ContainerId == id)
             .OrderByDescending(e => e.Timestamp)
             .Take(50)
             .ToListAsync(ct);
         return Ok(events);
+    }
+
+    private bool CanAccess(Container container)
+    {
+        if (_currentUser.IsAdmin()) return true;
+        return container.OwnerId == _currentUser.GetUserId();
     }
 }
 

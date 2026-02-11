@@ -1,5 +1,7 @@
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,13 +9,16 @@ namespace Andy.Containers.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class WorkspacesController : ControllerBase
 {
     private readonly ContainersDbContext _db;
+    private readonly ICurrentUserService _currentUser;
 
-    public WorkspacesController(ContainersDbContext db)
+    public WorkspacesController(ContainersDbContext db, ICurrentUserService currentUser)
     {
         _db = db;
+        _currentUser = currentUser;
     }
 
     [HttpGet]
@@ -26,8 +31,12 @@ public class WorkspacesController : ControllerBase
         CancellationToken ct = default)
     {
         var query = _db.Workspaces.Include(w => w.DefaultContainer).AsQueryable();
-        if (!string.IsNullOrEmpty(ownerId))
-            query = query.Where(w => w.OwnerId == ownerId);
+
+        // Non-admins can only see their own workspaces
+        var effectiveOwnerId = _currentUser.IsAdmin() ? ownerId : _currentUser.GetUserId();
+        if (!string.IsNullOrEmpty(effectiveOwnerId))
+            query = query.Where(w => w.OwnerId == effectiveOwnerId);
+
         if (organizationId.HasValue)
             query = query.Where(w => w.OrganizationId == organizationId);
         if (status.HasValue)
@@ -42,7 +51,9 @@ public class WorkspacesController : ControllerBase
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
         var ws = await _db.Workspaces.Include(w => w.DefaultContainer).Include(w => w.Containers).FirstOrDefaultAsync(w => w.Id == id, ct);
-        return ws is null ? NotFound() : Ok(ws);
+        if (ws is null) return NotFound();
+        if (!CanAccess(ws)) return Forbid();
+        return Ok(ws);
     }
 
     [HttpPost]
@@ -52,7 +63,7 @@ public class WorkspacesController : ControllerBase
         {
             Name = dto.Name,
             Description = dto.Description,
-            OwnerId = "system", // TODO: from auth
+            OwnerId = _currentUser.GetUserId(),
             OrganizationId = dto.OrganizationId,
             TeamId = dto.TeamId,
             GitRepositoryUrl = dto.GitRepositoryUrl,
@@ -68,6 +79,8 @@ public class WorkspacesController : ControllerBase
     {
         var ws = await _db.Workspaces.FindAsync([id], ct);
         if (ws is null) return NotFound();
+        if (!CanAccess(ws)) return Forbid();
+
         if (dto.Name is not null) ws.Name = dto.Name;
         if (dto.Description is not null) ws.Description = dto.Description;
         if (dto.GitBranch is not null) ws.GitBranch = dto.GitBranch;
@@ -81,9 +94,17 @@ public class WorkspacesController : ControllerBase
     {
         var ws = await _db.Workspaces.FindAsync([id], ct);
         if (ws is null) return NotFound();
+        if (!CanAccess(ws)) return Forbid();
+
         _db.Workspaces.Remove(ws);
         await _db.SaveChangesAsync(ct);
         return NoContent();
+    }
+
+    private bool CanAccess(Workspace ws)
+    {
+        if (_currentUser.IsAdmin()) return true;
+        return ws.OwnerId == _currentUser.GetUserId();
     }
 }
 

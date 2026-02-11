@@ -2,6 +2,7 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +10,7 @@ namespace Andy.Containers.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ProvidersController : ControllerBase
 {
     private readonly ContainersDbContext _db;
@@ -40,6 +42,7 @@ public class ProvidersController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "Admin")]
     public async Task<IActionResult> Create([FromBody] InfrastructureProvider provider, CancellationToken ct)
     {
         _db.Providers.Add(provider);
@@ -96,6 +99,7 @@ public class ProvidersController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = "Admin")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         var provider = await _db.Providers.FindAsync([id], ct);

@@ -1,5 +1,7 @@
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,15 +9,18 @@ namespace Andy.Containers.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class TemplatesController : ControllerBase
 {
     private readonly ContainersDbContext _db;
     private readonly IWebHostEnvironment _env;
+    private readonly ICurrentUserService _currentUser;
 
-    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env)
+    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser)
     {
         _db = db;
         _env = env;
+        _currentUser = currentUser;
     }
 
     [HttpGet]
@@ -149,6 +154,7 @@ public class TemplatesController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ContainerTemplate template, CancellationToken ct)
     {
+        template.OwnerId = _currentUser.GetUserId();
         _db.Templates.Add(template);
         await _db.SaveChangesAsync(ct);
         return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
@@ -159,6 +165,7 @@ public class TemplatesController : ControllerBase
     {
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
+        if (!CanModifyTemplate(template)) return Forbid();
 
         template.Name = update.Name;
         template.Description = update.Description;
@@ -175,6 +182,8 @@ public class TemplatesController : ControllerBase
     {
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
+        if (!CanModifyTemplate(template)) return Forbid();
+
         template.IsPublished = true;
         template.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
@@ -186,8 +195,19 @@ public class TemplatesController : ControllerBase
     {
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
+        if (!CanModifyTemplate(template)) return Forbid();
+
         _db.Templates.Remove(template);
         await _db.SaveChangesAsync(ct);
         return NoContent();
+    }
+
+    private bool CanModifyTemplate(ContainerTemplate template)
+    {
+        if (_currentUser.IsAdmin()) return true;
+        // Global templates can only be modified by admins
+        if (template.CatalogScope == CatalogScope.Global) return false;
+        // User-scoped templates can be modified by their owner
+        return template.OwnerId == _currentUser.GetUserId();
     }
 }

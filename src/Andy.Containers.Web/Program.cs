@@ -9,13 +9,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 
-// Register the API HttpClient for ContainersApiService
+// Register the API HttpClient for ContainersApiService with auth token forwarding
+builder.Services.AddTransient<AuthTokenHandler>();
 builder.Services.AddHttpClient<ContainersApiService>(client =>
 {
     client.BaseAddress = new Uri(
         builder.Configuration.GetValue<string>("ApiBaseUrl") ?? "https://localhost:5200");
     client.Timeout = TimeSpan.FromSeconds(30);
-});
+}).AddHttpMessageHandler<AuthTokenHandler>();
 
 // Configure authentication with OpenID Connect (same pattern as Andy RBAC)
 var andyAuthAuthority = builder.Configuration["AndyAuth:Authority"] ?? "https://localhost:5001";
@@ -107,10 +108,18 @@ app.MapGet("authentication/login", async (HttpContext context, string? returnUrl
 app.MapPost("authentication/logout", async (HttpContext context) =>
 {
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme, new AuthenticationProperties
+    try
     {
-        RedirectUri = "/"
-    });
+        await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme, new AuthenticationProperties
+        {
+            RedirectUri = "/"
+        });
+    }
+    catch
+    {
+        // OIDC provider may be unreachable — cookie is already cleared, just redirect
+        context.Response.Redirect("/");
+    }
 }).AllowAnonymous();
 
 app.MapBlazorHub();
