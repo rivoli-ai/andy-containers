@@ -2,6 +2,7 @@ namespace Andy.Containers.Models;
 
 public class TemplateValidationResult
 {
+    public bool IsValid { get => Valid; }
     public bool Valid { get; set; }
     public List<TemplateValidationError> Errors { get; set; } = [];
     public List<TemplateValidationWarning> Warnings { get; set; } = [];

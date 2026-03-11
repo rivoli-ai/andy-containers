@@ -75,14 +75,6 @@ public class ContainersMcpTools
         var images = await _db.Images.Where(i => i.TemplateId == template.Id).OrderByDescending(i => i.BuildNumber).Take(20).ToListAsync();
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
-}
-
-public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
-public record McpContainerDetail(Guid Id, string Name, string TemplateName, string TemplateCode, string ProviderName, string ProviderType, string Status, string OwnerId, string? IdeEndpoint, string? VncEndpoint, string? ExternalId, DateTime CreatedAt, DateTime? StartedAt, DateTime? StoppedAt, DateTime? ExpiresAt);
-public record McpTemplateInfo(Guid Id, string Code, string Name, string Description, string Version, string CatalogScope, string IdeType, bool GpuRequired, bool GpuPreferred, string[] Tags);
-public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
-public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
-    // === Story 1: YAML Validation MCP Tools ===
 
     [McpServerTool, Description("Validate a template YAML definition and return errors/warnings")]
     public async Task<McpValidationResult> ValidateTemplateYaml(
@@ -101,7 +93,6 @@ public record McpWorkspaceInfo(Guid Id, string Name, string Description, string 
     {
         var template = await _db.Templates.FirstOrDefaultAsync(t => t.Code == templateCode);
         if (template is null) return null;
-        // Return a synthetic YAML representation
         var yaml = $"code: {template.Code}\nname: {template.Name}\nversion: {template.Version}\nbase_image: {template.BaseImage}\nide_type: {template.IdeType}\nscope: {template.CatalogScope}";
         return new McpTemplateDefinition(template.Code, template.Name, yaml);
     }
@@ -124,6 +115,11 @@ public record McpWorkspaceInfo(Guid Id, string Name, string Description, string 
     }
 }
 
+public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
+public record McpContainerDetail(Guid Id, string Name, string TemplateName, string TemplateCode, string ProviderName, string ProviderType, string Status, string OwnerId, string? IdeEndpoint, string? VncEndpoint, string? ExternalId, DateTime CreatedAt, DateTime? StartedAt, DateTime? StoppedAt, DateTime? ExpiresAt);
+public record McpTemplateInfo(Guid Id, string Code, string Name, string Description, string Version, string CatalogScope, string IdeType, bool GpuRequired, bool GpuPreferred, string[] Tags);
+public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
+public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
 public record McpValidationResult(bool IsValid, string[] Errors, string[] Warnings);
 public record McpTemplateDefinition(string Code, string Name, string Yaml);
 public record McpCreateFromYamlResult(bool Success, Guid? TemplateId, string? Code, string[] Errors);
