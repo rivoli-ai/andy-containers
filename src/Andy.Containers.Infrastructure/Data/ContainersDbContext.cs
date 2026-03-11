@@ -16,6 +16,8 @@ public class ContainersDbContext : DbContext
     public DbSet<InfrastructureProvider> Providers => Set<InfrastructureProvider>();
     public DbSet<DependencySpec> DependencySpecs => Set<DependencySpec>();
     public DbSet<ResolvedDependency> ResolvedDependencies => Set<ResolvedDependency>();
+    public DbSet<ContainerGitRepository> ContainerGitRepositories => Set<ContainerGitRepository>();
+    public DbSet<GitCredential> GitCredentials => Set<GitCredential>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -121,6 +123,22 @@ public class ContainersDbContext : DbContext
             e.HasIndex(r => r.ImageId);
             e.HasOne(r => r.Image).WithMany().HasForeignKey(r => r.ImageId);
             e.HasOne(r => r.DependencySpec).WithMany().HasForeignKey(r => r.DependencySpecId);
+        });
+
+        // ContainerGitRepository
+        modelBuilder.Entity<ContainerGitRepository>(e =>
+        {
+            e.HasKey(g => g.Id);
+            e.HasIndex(g => g.ContainerId);
+            e.HasIndex(g => new { g.ContainerId, g.TargetPath }).IsUnique();
+        });
+
+        // GitCredential
+        modelBuilder.Entity<GitCredential>(e =>
+        {
+            e.HasKey(g => g.Id);
+            e.HasIndex(g => g.UserId);
+            e.HasIndex(g => new { g.UserId, g.Label }).IsUnique();
         });
     }
 }
