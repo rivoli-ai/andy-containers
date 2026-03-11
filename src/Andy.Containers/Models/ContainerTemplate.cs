@@ -27,6 +27,9 @@ public class ContainerTemplate
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public string? Metadata { get; set; }
+
+    // === Story 3: SSH Access ===
+    public string? SshConfiguration { get; set; }
 }
 
 public enum CatalogScope

@@ -26,6 +26,9 @@ public class Container
     public DateTime? LastActivityAt { get; set; }
     public string? Metadata { get; set; }
 
+    // === Story 3: SSH Access ===
+    public bool SshEnabled { get; set; }
+
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();
 }

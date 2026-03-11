@@ -17,6 +17,9 @@ public class ContainersDbContext : DbContext
     public DbSet<DependencySpec> DependencySpecs => Set<DependencySpec>();
     public DbSet<ResolvedDependency> ResolvedDependencies => Set<ResolvedDependency>();
 
+    // === Story 3: SSH Access ===
+    public DbSet<UserSshKey> SshKeys => Set<UserSshKey>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // Container
@@ -50,6 +53,7 @@ public class ContainersDbContext : DbContext
             e.Property(t => t.Scripts).HasColumnType("jsonb");
             e.Property(t => t.Metadata).HasColumnType("jsonb");
             e.HasOne(t => t.ParentTemplate).WithMany().HasForeignKey(t => t.ParentTemplateId);
+            e.Property(t => t.SshConfiguration).HasColumnType("jsonb");
         });
 
         // ContainerImage
@@ -121,6 +125,14 @@ public class ContainersDbContext : DbContext
             e.HasIndex(r => r.ImageId);
             e.HasOne(r => r.Image).WithMany().HasForeignKey(r => r.ImageId);
             e.HasOne(r => r.DependencySpec).WithMany().HasForeignKey(r => r.DependencySpecId);
+        });
+
+        // === Story 3: SSH Keys ===
+        modelBuilder.Entity<UserSshKey>(e =>
+        {
+            e.HasKey(k => k.Id);
+            e.HasIndex(k => k.UserId);
+            e.HasIndex(k => k.Fingerprint).IsUnique();
         });
     }
 }
