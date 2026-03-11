@@ -51,6 +51,11 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+    // === Story 2: Organization RBAC ===
+    builder.Services.AddMemoryCache();
+    builder.Services.AddScoped<IOrganizationMembershipService, OrganizationMembershipService>();
+    builder.Services.AddScoped<IContainerAuthorizationService, ContainerAuthorizationService>();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()

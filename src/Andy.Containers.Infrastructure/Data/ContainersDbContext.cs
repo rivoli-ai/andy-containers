@@ -58,9 +58,11 @@ public class ContainersDbContext : DbContext
             e.HasKey(i => i.Id);
             e.HasIndex(i => i.ContentHash).IsUnique();
             e.HasIndex(i => i.Tag);
+            e.HasIndex(i => i.OrganizationId);
             e.Property(i => i.DependencyManifest).HasColumnType("jsonb");
             e.Property(i => i.DependencyLock).HasColumnType("jsonb");
             e.Property(i => i.Metadata).HasColumnType("jsonb");
+            e.Property(i => i.Visibility).HasConversion<string>();
             e.HasOne(i => i.Template).WithMany().HasForeignKey(i => i.TemplateId);
             e.HasOne(i => i.PreviousImage).WithMany().HasForeignKey(i => i.PreviousImageId);
         });

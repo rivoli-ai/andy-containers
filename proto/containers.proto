@@ -279,3 +279,26 @@ message DependencyChangeEntry {
   string new_version = 4;
   string change_type = 5;
 }
+
+// === Story 2: Organization RBAC ===
+
+message ListOrgImagesRequest {
+  string organization_id = 1;
+  int32 skip = 2;
+  int32 take = 3;
+}
+
+message ListOrgImagesResponse {
+  repeated ImageResponse images = 1;
+  int32 total_count = 2;
+}
+
+message PublishImageRequest {
+  string organization_id = 1;
+  string image_id = 2;
+}
+
+message DeleteOrgImageRequest {
+  string organization_id = 1;
+  string image_id = 2;
+}

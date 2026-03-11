@@ -1,4 +1,6 @@
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,10 +13,14 @@ namespace Andy.Containers.Api.Controllers;
 public class ImagesController : ControllerBase
 {
     private readonly ContainersDbContext _db;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IContainerAuthorizationService _authService;
 
-    public ImagesController(ContainersDbContext db)
+    public ImagesController(ContainersDbContext db, ICurrentUserService currentUser, IContainerAuthorizationService authService)
     {
         _db = db;
+        _currentUser = currentUser;
+        _authService = authService;
     }
 
     [HttpGet("{templateId:guid}")]
@@ -43,7 +49,9 @@ public class ImagesController : ControllerBase
         var template = await _db.Templates.FindAsync([templateId], ct);
         if (template is null) return NotFound();
 
-        var image = new Models.ContainerImage
+        var orgId = _currentUser.GetOrganizationId();
+
+        var image = new ContainerImage
         {
             TemplateId = templateId,
             ContentHash = $"sha256:{Guid.NewGuid():N}",
@@ -53,11 +61,14 @@ public class ImagesController : ControllerBase
             DependencyManifest = "{}",
             DependencyLock = "{}",
             BuildNumber = await _db.Images.CountAsync(i => i.TemplateId == templateId, ct) + 1,
-            BuildStatus = Models.ImageBuildStatus.Succeeded,
+            BuildStatus = ImageBuildStatus.Succeeded,
             BuildStartedAt = DateTime.UtcNow,
             BuildCompletedAt = DateTime.UtcNow,
             BuiltOffline = request?.Offline ?? false,
-            Changelog = "Initial build"
+            Changelog = "Initial build",
+            OwnerId = _currentUser.GetUserId(),
+            OrganizationId = orgId != null ? Guid.Parse(orgId) : null,
+            Visibility = orgId != null ? ImageVisibility.Organization : ImageVisibility.Global
         };
 
         _db.Images.Add(image);

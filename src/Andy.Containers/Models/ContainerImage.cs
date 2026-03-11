@@ -71,6 +71,11 @@ public class ContainerImage
     /// </summary>
     public string? Changelog { get; set; }
 
+    // === Story 2: Org RBAC ===
+    public Guid? OrganizationId { get; set; }
+    public string? OwnerId { get; set; }
+    public ImageVisibility Visibility { get; set; } = ImageVisibility.Global;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public string? Metadata { get; set; }
 }

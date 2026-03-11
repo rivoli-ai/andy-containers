@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -10,10 +11,12 @@ namespace Andy.Containers.Api.Mcp;
 public class ContainersMcpTools
 {
     private readonly ContainersDbContext _db;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public ContainersMcpTools(ContainersDbContext db)
+    public ContainersMcpTools(ContainersDbContext db, IOrganizationMembershipService orgMembership)
     {
         _db = db;
+        _orgMembership = orgMembership;
     }
 
     [McpServerTool, Description("List all containers with their status")]
@@ -79,4 +82,34 @@ public record McpContainerDetail(Guid Id, string Name, string TemplateName, stri
 public record McpTemplateInfo(Guid Id, string Code, string Name, string Description, string Version, string CatalogScope, string IdeType, bool GpuRequired, bool GpuPreferred, string[] Tags);
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
+    // === Story 2: Organization RBAC MCP Tools ===
+
+    [McpServerTool, Description("List images scoped to an organization")]
+    public async Task<IReadOnlyList<McpOrgImageInfo>> ListOrganizationImages(
+        [Description("Organization ID (GUID)")] string organizationId,
+        [Description("User ID for access check")] string userId)
+    {
+        if (!Guid.TryParse(organizationId, out var orgId)) return [];
+        if (!await _orgMembership.IsMemberAsync(userId, orgId)) return [];
+
+        var images = await _db.Images
+            .Where(i => i.OrganizationId == orgId || i.OrganizationId == null)
+            .OrderByDescending(i => i.CreatedAt)
+            .Take(50).ToListAsync();
+        return images.Select(i => new McpOrgImageInfo(i.Id, i.Tag, i.ContentHash, i.Visibility.ToString(), i.OrganizationId, i.CreatedAt)).ToList();
+    }
+
+    [McpServerTool, Description("Check a user's role in an organization")]
+    public async Task<McpOrgRoleInfo?> GetOrganizationRole(
+        [Description("User ID")] string userId,
+        [Description("Organization ID (GUID)")] string organizationId)
+    {
+        if (!Guid.TryParse(organizationId, out var orgId)) return null;
+        var role = await _orgMembership.GetRoleAsync(userId, orgId);
+        return role is null ? null : new McpOrgRoleInfo(userId, orgId, role);
+    }
+}
+
+public record McpOrgImageInfo(Guid Id, string Tag, string ContentHash, string Visibility, Guid? OrganizationId, DateTime CreatedAt);
+public record McpOrgRoleInfo(string UserId, Guid OrganizationId, string Role);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);
