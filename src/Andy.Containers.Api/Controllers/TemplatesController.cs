@@ -15,12 +15,14 @@ public class TemplatesController : ControllerBase
     private readonly ContainersDbContext _db;
     private readonly IWebHostEnvironment _env;
     private readonly ICurrentUserService _currentUser;
+    private readonly ITemplateValidator _validator;
 
-    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser)
+    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, ITemplateValidator validator)
     {
         _db = db;
         _env = env;
         _currentUser = currentUser;
+        _validator = validator;
     }
 
     [HttpGet]
@@ -202,6 +204,71 @@ public class TemplatesController : ControllerBase
         return NoContent();
     }
 
+    [HttpPost("validate")]
+    public async Task<IActionResult> Validate([FromBody] ValidateYamlRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Yaml))
+            return BadRequest(new { error = "YAML content is required" });
+
+        var result = await _validator.ValidateYamlAsync(request.Yaml, ct);
+        return Ok(result);
+    }
+
+    [HttpPut("{id:guid}/definition")]
+    public async Task<IActionResult> UpdateDefinition(Guid id, [FromBody] UpdateDefinitionRequest request, CancellationToken ct)
+    {
+        var template = await _db.Templates.FindAsync([id], ct);
+        if (template is null) return NotFound();
+        if (!CanModifyTemplate(template)) return Forbid();
+
+        if (string.IsNullOrWhiteSpace(request.Yaml))
+            return BadRequest(new { error = "YAML content is required" });
+
+        var validation = await _validator.ValidateYamlAsync(request.Yaml, ct);
+        if (!validation.IsValid)
+            return UnprocessableEntity(validation);
+
+        var parsed = await _validator.ParseYamlToTemplateAsync(request.Yaml, ct);
+        if (parsed is null)
+            return UnprocessableEntity(new { error = "Failed to parse YAML into template" });
+
+        template.Name = parsed.Name;
+        template.Description = parsed.Description;
+        template.Version = parsed.Version;
+        template.BaseImage = parsed.BaseImage;
+        template.IdeType = parsed.IdeType;
+        template.GpuRequired = parsed.GpuRequired;
+        template.GpuPreferred = parsed.GpuPreferred;
+        template.Tags = parsed.Tags;
+        template.DefaultResources = parsed.DefaultResources;
+        template.EnvironmentVariables = parsed.EnvironmentVariables;
+        template.Ports = parsed.Ports;
+        template.Scripts = parsed.Scripts;
+        template.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return Ok(template);
+    }
+
+    [HttpPost("from-yaml")]
+    public async Task<IActionResult> CreateFromYaml([FromBody] ValidateYamlRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Yaml))
+            return BadRequest(new { error = "YAML content is required" });
+
+        var validation = await _validator.ValidateYamlAsync(request.Yaml, ct);
+        if (!validation.IsValid)
+            return UnprocessableEntity(validation);
+
+        var template = await _validator.ParseYamlToTemplateAsync(request.Yaml, ct);
+        if (template is null)
+            return UnprocessableEntity(new { error = "Failed to parse YAML into template" });
+
+        template.OwnerId = _currentUser.GetUserId();
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync(ct);
+        return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
+    }
+
     private bool CanModifyTemplate(ContainerTemplate template)
     {
         if (_currentUser.IsAdmin()) return true;
@@ -210,4 +277,14 @@ public class TemplatesController : ControllerBase
         // User-scoped templates can be modified by their owner
         return template.OwnerId == _currentUser.GetUserId();
     }
+}
+
+public class ValidateYamlRequest
+{
+    public required string Yaml { get; set; }
+}
+
+public class UpdateDefinitionRequest
+{
+    public required string Yaml { get; set; }
 }

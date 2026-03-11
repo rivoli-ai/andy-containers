@@ -279,3 +279,35 @@ message DependencyChangeEntry {
   string new_version = 4;
   string change_type = 5;
 }
+
+// === Story 1: Template YAML Validation ===
+
+message ValidateTemplateYamlRequest {
+  string yaml_content = 1;
+}
+
+message ValidationError {
+  string field = 1;
+  string message = 2;
+  string code = 3;
+}
+
+message ValidationWarning {
+  string field = 1;
+  string message = 2;
+}
+
+message ValidateTemplateYamlResponse {
+  bool is_valid = 1;
+  repeated ValidationError errors = 2;
+  repeated ValidationWarning warnings = 3;
+}
+
+message UpdateTemplateDefinitionRequest {
+  string template_id = 1;
+  string yaml_content = 2;
+}
+
+message CreateTemplateFromYamlRequest {
+  string yaml_content = 1;
+}

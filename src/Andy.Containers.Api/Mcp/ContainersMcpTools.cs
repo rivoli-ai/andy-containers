@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -10,10 +11,12 @@ namespace Andy.Containers.Api.Mcp;
 public class ContainersMcpTools
 {
     private readonly ContainersDbContext _db;
+    private readonly ITemplateValidator _templateValidator;
 
-    public ContainersMcpTools(ContainersDbContext db)
+    public ContainersMcpTools(ContainersDbContext db, ITemplateValidator templateValidator)
     {
         _db = db;
+        _templateValidator = templateValidator;
     }
 
     [McpServerTool, Description("List all containers with their status")]
@@ -79,4 +82,49 @@ public record McpContainerDetail(Guid Id, string Name, string TemplateName, stri
 public record McpTemplateInfo(Guid Id, string Code, string Name, string Description, string Version, string CatalogScope, string IdeType, bool GpuRequired, bool GpuPreferred, string[] Tags);
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
+    // === Story 1: YAML Validation MCP Tools ===
+
+    [McpServerTool, Description("Validate a template YAML definition and return errors/warnings")]
+    public async Task<McpValidationResult> ValidateTemplateYaml(
+        [Description("YAML content to validate")] string yaml)
+    {
+        var result = await _templateValidator.ValidateYamlAsync(yaml);
+        return new McpValidationResult(
+            result.IsValid,
+            result.Errors.Select(e => $"[{e.Field}] {e.Message}").ToArray(),
+            result.Warnings.Select(w => $"[{w.Field}] {w.Message}").ToArray());
+    }
+
+    [McpServerTool, Description("Get the YAML definition for a template by code")]
+    public async Task<McpTemplateDefinition?> GetTemplateDefinition(
+        [Description("Template code (e.g., full-stack)")] string templateCode)
+    {
+        var template = await _db.Templates.FirstOrDefaultAsync(t => t.Code == templateCode);
+        if (template is null) return null;
+        // Return a synthetic YAML representation
+        var yaml = $"code: {template.Code}\nname: {template.Name}\nversion: {template.Version}\nbase_image: {template.BaseImage}\nide_type: {template.IdeType}\nscope: {template.CatalogScope}";
+        return new McpTemplateDefinition(template.Code, template.Name, yaml);
+    }
+
+    [McpServerTool, Description("Create a new template from a YAML definition")]
+    public async Task<McpCreateFromYamlResult> CreateTemplateFromYaml(
+        [Description("YAML content for the new template")] string yaml)
+    {
+        var validation = await _templateValidator.ValidateYamlAsync(yaml);
+        if (!validation.IsValid)
+            return new McpCreateFromYamlResult(false, null, null, validation.Errors.Select(e => e.Message).ToArray());
+
+        var template = await _templateValidator.ParseYamlToTemplateAsync(yaml);
+        if (template is null)
+            return new McpCreateFromYamlResult(false, null, null, ["Failed to parse YAML"]);
+
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+        return new McpCreateFromYamlResult(true, template.Id, template.Code, []);
+    }
+}
+
+public record McpValidationResult(bool IsValid, string[] Errors, string[] Warnings);
+public record McpTemplateDefinition(string Code, string Name, string Yaml);
+public record McpCreateFromYamlResult(bool Success, Guid? TemplateId, string? Code, string[] Errors);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);

@@ -51,6 +51,9 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+    // === Story 1: Template YAML Validation ===
+    builder.Services.AddScoped<ITemplateValidator, TemplateYamlValidator>();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()
