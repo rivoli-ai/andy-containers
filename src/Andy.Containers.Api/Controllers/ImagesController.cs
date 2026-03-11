@@ -67,7 +67,7 @@ public class ImagesController : ControllerBase
             BuiltOffline = request?.Offline ?? false,
             Changelog = "Initial build",
             OwnerId = _currentUser.GetUserId(),
-            OrganizationId = orgId != null ? Guid.Parse(orgId) : null,
+            OrganizationId = orgId,
             Visibility = orgId != null ? ImageVisibility.Organization : ImageVisibility.Global
         };
 
