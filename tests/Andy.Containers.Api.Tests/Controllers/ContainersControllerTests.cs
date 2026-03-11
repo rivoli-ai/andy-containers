@@ -26,7 +26,9 @@ public class ContainersControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
         _db = InMemoryDbHelper.CreateContext();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db);
+        var mockSshKeyService = new Mock<ISshKeyService>();
+        var mockSshProvisioning = new Mock<ISshProvisioningService>();
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, mockSshKeyService.Object, mockSshProvisioning.Object);
     }
 
     public void Dispose()

@@ -173,7 +173,7 @@ public class ContainersController : ControllerBase
 
         var publicKeys = keys.Select(k => k.PublicKey).ToList();
         var config = new Models.SshConfig();
-        var script = _sshProvisioning.GenerateSetupScript(publicKeys, config);
+        var script = _sshProvisioning.GenerateSetupScript(config, publicKeys);
 
         return Ok(new { enabled = true, setupScript = script });
     }
