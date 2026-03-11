@@ -12,6 +12,6 @@ public static class ContentHashCalculator
         var input = new { tools = sortedTools, baseImageDigest, architecture };
         var json = JsonSerializer.Serialize(input, new JsonSerializerOptions { WriteIndented = false });
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
-        return $"sha256:{Convert.ToHexStringLower(hash)}";
+        return $"sha256:{BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant()}";
     }
 }
