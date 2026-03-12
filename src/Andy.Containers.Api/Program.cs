@@ -51,6 +51,10 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+    // SSH services
+    builder.Services.AddScoped<ISshKeyService, SshKeyService>();
+    builder.Services.AddSingleton<ISshProvisioningService, SshProvisioningService>();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()
