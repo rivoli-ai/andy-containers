@@ -37,6 +37,12 @@ service ContainerService {
   rpc BuildImage (BuildImageRequest) returns (ImageResponse);
   rpc GetLatestImage (GetLatestImageRequest) returns (ImageResponse);
   rpc DiffImages (DiffImagesRequest) returns (ImageDiffResponse);
+
+  // Image introspection
+  rpc IntrospectImage (IntrospectImageRequest) returns (ImageManifestResponse);
+  rpc GetImageManifest (GetImageManifestRequest) returns (ImageManifestResponse);
+  rpc GetImageTools (GetImageToolsRequest) returns (GetImageToolsResponse);
+  rpc FindImagesByTool (FindImagesByToolRequest) returns (ListImagesResponse);
 }
 
 // --- Container Messages ---
@@ -278,4 +284,68 @@ message DependencyChangeEntry {
   string previous_version = 3;
   string new_version = 4;
   string change_type = 5;
+}
+
+// --- Image Introspection Messages ---
+
+message IntrospectImageRequest {
+  string image_id = 1;
+}
+
+message GetImageManifestRequest {
+  string image_id = 1;
+}
+
+message GetImageToolsRequest {
+  string image_id = 1;
+}
+
+message FindImagesByToolRequest {
+  string tool_name = 1;
+  string min_version = 2;  // Optional: filter by minimum version
+}
+
+message ListImagesResponse {
+  repeated ImageResponse images = 1;
+  int32 total_count = 2;
+}
+
+message ImageManifestResponse {
+  string image_content_hash = 1;
+  string base_image = 2;
+  string base_image_digest = 3;
+  string architecture = 4;
+  OsInfoMessage operating_system = 5;
+  repeated InstalledToolMessage tools = 6;
+  repeated InstalledPackageMessage os_packages = 7;
+  string introspected_at = 8;
+}
+
+message OsInfoMessage {
+  string name = 1;
+  string version = 2;
+  string codename = 3;
+  string kernel_version = 4;
+}
+
+message InstalledToolMessage {
+  string name = 1;
+  string version = 2;
+  string type = 3;              // Sdk, Runtime, Tool, Compiler
+  string declared_version = 4;  // What template requested (empty if undeclared)
+  bool matches_declared = 5;
+  string install_path = 6;
+  string binary_path = 7;
+  int64 size_bytes = 8;
+}
+
+message InstalledPackageMessage {
+  string name = 1;
+  string version = 2;
+  string architecture = 3;
+  int64 size_bytes = 4;
+}
+
+message GetImageToolsResponse {
+  repeated InstalledToolMessage tools = 1;
 }
