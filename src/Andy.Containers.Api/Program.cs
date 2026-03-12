@@ -51,6 +51,10 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+    // Image introspection & manifest services
+    builder.Services.AddSingleton<IToolVersionDetector, ToolVersionDetector>();
+    builder.Services.AddScoped<IImageManifestService, ImageManifestService>();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()

@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -10,10 +12,12 @@ namespace Andy.Containers.Api.Mcp;
 public class ContainersMcpTools
 {
     private readonly ContainersDbContext _db;
+    private readonly IImageManifestService _manifestService;
 
-    public ContainersMcpTools(ContainersDbContext db)
+    public ContainersMcpTools(ContainersDbContext db, IImageManifestService manifestService)
     {
         _db = db;
+        _manifestService = manifestService;
     }
 
     [McpServerTool, Description("List all containers with their status")]
@@ -72,6 +76,45 @@ public class ContainersMcpTools
         var images = await _db.Images.Where(i => i.TemplateId == template.Id).OrderByDescending(i => i.BuildNumber).Take(20).ToListAsync();
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
+
+    [McpServerTool, Description("Get the full tool manifest for an image, showing all installed tools and versions")]
+    public async Task<string> GetImageManifest([Description("Image ID (GUID)")] string imageId)
+    {
+        if (!Guid.TryParse(imageId, out var id)) return "Invalid image ID";
+        var manifest = await _manifestService.GetManifestAsync(id);
+        if (manifest is null) return "No manifest available. Run introspection first.";
+        return JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    [McpServerTool, Description("Get compact list of installed tools (name, version, type) for an image")]
+    public async Task<IReadOnlyList<McpInstalledToolInfo>> GetImageTools(
+        [Description("Image ID (GUID)")] string imageId)
+    {
+        if (!Guid.TryParse(imageId, out var id)) return [];
+        var manifest = await _manifestService.GetManifestAsync(id);
+        if (manifest is null) return [];
+        return manifest.Tools.Select(t => new McpInstalledToolInfo(t.Name, t.Version, t.Type.ToString(), t.MatchesDeclared)).ToList();
+    }
+
+    [McpServerTool, Description("Compare two images and return the differences in installed tools")]
+    public async Task<string> CompareImages(
+        [Description("Source image ID (GUID)")] string fromImageId,
+        [Description("Target image ID (GUID)")] string toImageId)
+    {
+        if (!Guid.TryParse(fromImageId, out var fromId) || !Guid.TryParse(toImageId, out var toId))
+            return "Invalid image ID(s)";
+        var diff = await _manifestService.DiffImagesAsync(fromId, toId);
+        return JsonSerializer.Serialize(diff, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    [McpServerTool, Description("Find images that have a specific tool installed")]
+    public async Task<IReadOnlyList<McpImageInfo>> FindImageByTool(
+        [Description("Tool name (e.g., python, dotnet-sdk, node)")] string toolName,
+        [Description("Minimum version (optional)")] string? minVersion = null)
+    {
+        var images = await _manifestService.FindImagesByToolAsync(toolName, minVersion);
+        return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
+    }
 }
 
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
@@ -80,3 +123,4 @@ public record McpTemplateInfo(Guid Id, string Code, string Name, string Descript
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);
+public record McpInstalledToolInfo(string Name, string Version, string Type, bool MatchesDeclared);
