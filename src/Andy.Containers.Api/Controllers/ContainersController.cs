@@ -16,12 +16,18 @@ public class ContainersController : ControllerBase
     private readonly IContainerService _containerService;
     private readonly ICurrentUserService _currentUser;
     private readonly ContainersDbContext _db;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db)
+    public ContainersController(
+        IContainerService containerService,
+        ICurrentUserService currentUser,
+        ContainersDbContext db,
+        IOrganizationMembershipService orgMembership)
     {
         _containerService = containerService;
         _currentUser = currentUser;
         _db = db;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]
@@ -37,6 +43,14 @@ public class ContainersController : ControllerBase
         [FromQuery] int take = 20,
         CancellationToken ct = default)
     {
+        // Validate org membership when filtering by organization
+        if (organizationId.HasValue)
+        {
+            var userId = _currentUser.GetUserId();
+            if (!await _orgMembership.IsMemberAsync(userId, organizationId.Value, ct))
+                return Forbid();
+        }
+
         // Non-admins can only see their own containers
         var effectiveOwnerId = ownerId;
         if (!_currentUser.IsAdmin())
@@ -77,6 +91,14 @@ public class ContainersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateContainerRequest request, CancellationToken ct)
     {
+        // Validate org membership when creating under an organization
+        if (request.OrganizationId.HasValue)
+        {
+            var userId = _currentUser.GetUserId();
+            if (!await _orgMembership.IsMemberAsync(userId, request.OrganizationId.Value, ct))
+                return Forbid();
+        }
+
         request.OwnerId = _currentUser.GetUserId();
         var container = await _containerService.CreateContainerAsync(request, ct);
         return CreatedAtAction(nameof(Get), new { id = container.Id }, container);

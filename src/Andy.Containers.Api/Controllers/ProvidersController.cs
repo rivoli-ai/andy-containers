@@ -16,15 +16,21 @@ public class ProvidersController : ControllerBase
     private readonly ContainersDbContext _db;
     private readonly IInfrastructureProviderFactory _providerFactory;
     private readonly ICostEstimationService _costService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
     public ProvidersController(
         ContainersDbContext db,
         IInfrastructureProviderFactory providerFactory,
-        ICostEstimationService costService)
+        ICostEstimationService costService,
+        ICurrentUserService currentUser,
+        IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _providerFactory = providerFactory;
         _costService = costService;
+        _currentUser = currentUser;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]

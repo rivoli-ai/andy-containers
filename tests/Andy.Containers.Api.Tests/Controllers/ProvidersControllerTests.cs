@@ -21,7 +21,10 @@ public class ProvidersControllerTests : IDisposable
     {
         _db = InMemoryDbHelper.CreateContext();
         _mockFactory = new Mock<IInfrastructureProviderFactory>();
-        _controller = new ProvidersController(_db, _mockFactory.Object, new CostEstimationService());
+        var mockCurrentUser = new Mock<ICurrentUserService>();
+        mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        var mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        _controller = new ProvidersController(_db, _mockFactory.Object, new CostEstimationService(), mockCurrentUser.Object, mockOrgMembership.Object);
     }
 
     public void Dispose()

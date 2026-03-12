@@ -15,12 +15,18 @@ public class TemplatesController : ControllerBase
     private readonly ContainersDbContext _db;
     private readonly IWebHostEnvironment _env;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser)
+    public TemplatesController(
+        ContainersDbContext db,
+        IWebHostEnvironment env,
+        ICurrentUserService currentUser,
+        IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _env = env;
         _currentUser = currentUser;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]
@@ -35,6 +41,14 @@ public class TemplatesController : ControllerBase
         [FromQuery] int take = 20,
         CancellationToken ct = default)
     {
+        // Validate org membership when filtering by organization
+        if (organizationId.HasValue)
+        {
+            var userId = _currentUser.GetUserId();
+            if (!await _orgMembership.IsMemberAsync(userId, organizationId.Value, ct))
+                return Forbid();
+        }
+
         var query = _db.Templates.AsQueryable();
 
         if (scope.HasValue)
@@ -154,6 +168,14 @@ public class TemplatesController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ContainerTemplate template, CancellationToken ct)
     {
+        // Validate org membership when creating under an organization
+        if (template.OrganizationId.HasValue)
+        {
+            var userId = _currentUser.GetUserId();
+            if (!await _orgMembership.HasPermissionAsync(userId, template.OrganizationId.Value, "template:create", ct))
+                return Forbid();
+        }
+
         template.OwnerId = _currentUser.GetUserId();
         _db.Templates.Add(template);
         await _db.SaveChangesAsync(ct);
@@ -165,7 +187,7 @@ public class TemplatesController : ControllerBase
     {
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
-        if (!CanModifyTemplate(template)) return Forbid();
+        if (!await CanModifyTemplateAsync(template, ct)) return Forbid();
 
         template.Name = update.Name;
         template.Description = update.Description;
@@ -182,7 +204,7 @@ public class TemplatesController : ControllerBase
     {
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
-        if (!CanModifyTemplate(template)) return Forbid();
+        if (!await CanModifyTemplateAsync(template, ct)) return Forbid();
 
         template.IsPublished = true;
         template.UpdatedAt = DateTime.UtcNow;
@@ -195,18 +217,24 @@ public class TemplatesController : ControllerBase
     {
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
-        if (!CanModifyTemplate(template)) return Forbid();
+        if (!await CanModifyTemplateAsync(template, ct)) return Forbid();
 
         _db.Templates.Remove(template);
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }
 
-    private bool CanModifyTemplate(ContainerTemplate template)
+    private async Task<bool> CanModifyTemplateAsync(ContainerTemplate template, CancellationToken ct = default)
     {
         if (_currentUser.IsAdmin()) return true;
         // Global templates can only be modified by admins
         if (template.CatalogScope == CatalogScope.Global) return false;
+        // Org-scoped templates: check org permission
+        if (template.OrganizationId.HasValue)
+        {
+            var userId = _currentUser.GetUserId();
+            return await _orgMembership.HasPermissionAsync(userId, template.OrganizationId.Value, "template:manage", ct);
+        }
         // User-scoped templates can be modified by their owner
         return template.OwnerId == _currentUser.GetUserId();
     }

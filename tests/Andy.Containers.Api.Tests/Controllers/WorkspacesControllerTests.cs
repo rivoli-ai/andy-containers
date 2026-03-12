@@ -23,7 +23,8 @@ public class WorkspacesControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
         _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
-        _controller = new WorkspacesController(_db, _mockCurrentUser.Object);
+        var mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        _controller = new WorkspacesController(_db, _mockCurrentUser.Object, mockOrgMembership.Object);
     }
 
     public void Dispose()

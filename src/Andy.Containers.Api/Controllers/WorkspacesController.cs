@@ -14,11 +14,13 @@ public class WorkspacesController : ControllerBase
 {
     private readonly ContainersDbContext _db;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public WorkspacesController(ContainersDbContext db, ICurrentUserService currentUser)
+    public WorkspacesController(ContainersDbContext db, ICurrentUserService currentUser, IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _currentUser = currentUser;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]
@@ -30,6 +32,14 @@ public class WorkspacesController : ControllerBase
         [FromQuery] int take = 20,
         CancellationToken ct = default)
     {
+        // Validate org membership when filtering by organization
+        if (organizationId.HasValue)
+        {
+            var userId = _currentUser.GetUserId();
+            if (!await _orgMembership.IsMemberAsync(userId, organizationId.Value, ct))
+                return Forbid();
+        }
+
         var query = _db.Workspaces.Include(w => w.DefaultContainer).AsQueryable();
 
         // Non-admins can only see their own workspaces
@@ -59,6 +69,14 @@ public class WorkspacesController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateWorkspaceDto dto, CancellationToken ct)
     {
+        // Validate org membership when creating under an organization
+        if (dto.OrganizationId.HasValue)
+        {
+            var userId = _currentUser.GetUserId();
+            if (!await _orgMembership.IsMemberAsync(userId, dto.OrganizationId.Value, ct))
+                return Forbid();
+        }
+
         var workspace = new Workspace
         {
             Name = dto.Name,
