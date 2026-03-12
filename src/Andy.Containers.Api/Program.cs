@@ -51,6 +51,10 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+    // Git services
+    builder.Services.AddScoped<IGitCloneService, GitCloneService>();
+    builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()
