@@ -1,8 +1,10 @@
 using Andy.Containers.Api.Mcp;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Moq;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Mcp;
@@ -15,7 +17,11 @@ public class ContainersMcpToolsTests : IDisposable
     public ContainersMcpToolsTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _tools = new ContainersMcpTools(_db);
+        var mockSshKeyService = new Mock<ISshKeyService>();
+        var mockSshProvisioning = new Mock<ISshProvisioningService>();
+        var mockCurrentUser = new Mock<ICurrentUserService>();
+        mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        _tools = new ContainersMcpTools(_db, mockSshKeyService.Object, mockSshProvisioning.Object, mockCurrentUser.Object);
     }
 
     public void Dispose()

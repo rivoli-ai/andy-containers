@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -10,10 +11,16 @@ namespace Andy.Containers.Api.Mcp;
 public class ContainersMcpTools
 {
     private readonly ContainersDbContext _db;
+    private readonly ISshKeyService _sshKeyService;
+    private readonly ISshProvisioningService _sshProvisioning;
+    private readonly ICurrentUserService _currentUser;
 
-    public ContainersMcpTools(ContainersDbContext db)
+    public ContainersMcpTools(ContainersDbContext db, ISshKeyService sshKeyService, ISshProvisioningService sshProvisioning, ICurrentUserService currentUser)
     {
         _db = db;
+        _sshKeyService = sshKeyService;
+        _sshProvisioning = sshProvisioning;
+        _currentUser = currentUser;
     }
 
     [McpServerTool, Description("List all containers with their status")]
@@ -72,6 +79,72 @@ public class ContainersMcpTools
         var images = await _db.Images.Where(i => i.TemplateId == template.Id).OrderByDescending(i => i.BuildNumber).Take(20).ToListAsync();
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
+
+    // === Story 3: SSH Key Management ===
+
+    [McpServerTool, Description("List SSH keys for the current user")]
+    public async Task<IReadOnlyList<McpSshKeyInfo>> ListUserSshKeys()
+    {
+        var userId = _currentUser.GetUserId();
+        var keys = await _sshKeyService.ListKeysAsync(userId);
+        return keys.Select(k => new McpSshKeyInfo(k.Id, k.Label, k.Fingerprint, k.KeyType, k.CreatedAt, k.LastUsedAt)).ToList();
+    }
+
+    [McpServerTool, Description("Add an SSH key to a running container, enabling SSH access")]
+    public async Task<McpSshEnableResult> AddSshKeyToContainer(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id))
+            return new McpSshEnableResult(false, "Invalid container ID format", null);
+
+        var container = await _db.Containers.FirstOrDefaultAsync(c => c.Id == id);
+        if (container is null)
+            return new McpSshEnableResult(false, "Container not found", null);
+
+        if (container.Status != ContainerStatus.Running)
+            return new McpSshEnableResult(false, $"Container is not running (status: {container.Status})", null);
+
+        var userId = _currentUser.GetUserId();
+        var keys = await _sshKeyService.ListKeysAsync(userId);
+        if (keys.Count == 0)
+            return new McpSshEnableResult(false, "No SSH keys registered. Add an SSH key first.", null);
+
+        var publicKeys = keys.Select(k => k.PublicKey).ToList();
+        var config = new SshConfig();
+        var script = _sshProvisioning.GenerateSetupScript(config, publicKeys);
+
+        container.SshEnabled = true;
+        await _db.SaveChangesAsync();
+
+        return new McpSshEnableResult(true, "SSH access enabled", script);
+    }
+
+    [McpServerTool, Description("Get SSH connection details for a container")]
+    public async Task<McpSshConnectionInfo?> GetContainerSshConfig(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return null;
+
+        var container = await _db.Containers.Include(c => c.Provider).FirstOrDefaultAsync(c => c.Id == id);
+        if (container is null) return null;
+
+        if (!container.SshEnabled)
+            return new McpSshConnectionInfo(container.Id, container.Name, false, null, null, null, null);
+
+        // Derive host from IDE endpoint or provider
+        var host = "localhost";
+        if (!string.IsNullOrEmpty(container.IdeEndpoint))
+        {
+            try { host = new Uri(container.IdeEndpoint).Host; }
+            catch { /* keep localhost */ }
+        }
+
+        var port = 22;
+        var user = "dev";
+        var configSnippet = $"Host container-{container.Name}\n  HostName {host}\n  Port {port}\n  User {user}\n  IdentityFile ~/.ssh/id_ed25519";
+
+        return new McpSshConnectionInfo(container.Id, container.Name, true, host, port, user, configSnippet);
+    }
 }
 
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
@@ -80,3 +153,6 @@ public record McpTemplateInfo(Guid Id, string Code, string Name, string Descript
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);
+public record McpSshKeyInfo(Guid Id, string Label, string Fingerprint, string KeyType, DateTime CreatedAt, DateTime? LastUsedAt);
+public record McpSshEnableResult(bool Success, string Message, string? SetupScript);
+public record McpSshConnectionInfo(Guid ContainerId, string ContainerName, bool SshEnabled, string? Host, int? Port, string? User, string? ConfigSnippet);
