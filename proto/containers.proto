@@ -37,6 +37,12 @@ service ContainerService {
   rpc BuildImage (BuildImageRequest) returns (ImageResponse);
   rpc GetLatestImage (GetLatestImageRequest) returns (ImageResponse);
   rpc DiffImages (DiffImagesRequest) returns (ImageDiffResponse);
+
+  // Organization RBAC
+  rpc ListOrganizationImages (ListOrgResourcesRequest) returns (ListImagesResponse);
+  rpc ListOrganizationTemplates (ListOrgResourcesRequest) returns (ListTemplatesResponse);
+  rpc ListOrganizationProviders (ListOrgResourcesRequest) returns (ListProvidersResponse);
+  rpc CheckOrgPermission (CheckOrgPermissionRequest) returns (CheckOrgPermissionResponse);
 }
 
 // --- Container Messages ---
@@ -280,17 +286,32 @@ message DependencyChangeEntry {
   string change_type = 5;
 }
 
-// === Story 2: Organization RBAC ===
+// --- Organization RBAC Messages ---
 
-message ListOrgImagesRequest {
+message ListOrgResourcesRequest {
   string organization_id = 1;
   int32 skip = 2;
   int32 take = 3;
 }
 
-message ListOrgImagesResponse {
+message ListImagesResponse {
   repeated ImageResponse images = 1;
   int32 total_count = 2;
+}
+
+message ListProvidersResponse {
+  repeated ProviderResponse providers = 1;
+  int32 total_count = 2;
+}
+
+message ProviderResponse {
+  string id = 1;
+  string code = 2;
+  string name = 3;
+  string type = 4;
+  string region = 5;
+  string health_status = 6;
+  string organization_id = 7;
 }
 
 message PublishImageRequest {
@@ -301,4 +322,15 @@ message PublishImageRequest {
 message DeleteOrgImageRequest {
   string organization_id = 1;
   string image_id = 2;
+}
+
+message CheckOrgPermissionRequest {
+  string user_id = 1;
+  string organization_id = 2;
+  string permission = 3;  // e.g., "image:create", "template:manage"
+}
+
+message CheckOrgPermissionResponse {
+  bool allowed = 1;
+  string role = 2;  // e.g., "org:admin", "org:editor", "org:viewer"
 }
