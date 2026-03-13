@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -72,6 +73,83 @@ public class ContainersMcpTools
         var images = await _db.Images.Where(i => i.TemplateId == template.Id).OrderByDescending(i => i.BuildNumber).Take(20).ToListAsync();
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
+
+    [McpServerTool, Description("List git repositories cloned into a container")]
+    public async Task<IReadOnlyList<McpGitRepositoryInfo>> ListContainerRepositories(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return [];
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == id)
+            .OrderBy(r => r.SortOrder)
+            .ToListAsync();
+        return repos.Select(r => new McpGitRepositoryInfo(
+            r.Id, r.ContainerId, r.Url, r.Branch, r.TargetPath ?? "", r.CloneDepth,
+            r.Submodules, r.Status.ToString(), r.ErrorMessage, r.ClonedAt, r.CreatedAt)).ToList();
+    }
+
+    [McpServerTool, Description("Clone a git repository into a running container")]
+    public async Task<McpGitRepositoryInfo?> CloneRepositoryToContainer(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("Git repository URL (HTTPS or SSH)")] string url,
+        [Description("Branch to clone (default: main)")] string branch = "main",
+        [Description("Target directory path inside the container")] string? targetPath = null,
+        [Description("Shallow clone depth (0 = full clone)")] int cloneDepth = 0,
+        [Description("Include submodules")] bool submodules = false)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return null;
+
+        var container = await _db.Containers.FirstOrDefaultAsync(c => c.Id == id);
+        if (container is null) return null;
+
+        if (!GitUrlValidator.IsValidGitUrl(url)) return null;
+        if (GitUrlValidator.HasEmbeddedCredentials(url)) return null;
+        if (!GitUrlValidator.IsValidBranchName(branch)) return null;
+
+        var derivedPath = targetPath ?? GitUrlValidator.DeriveTargetPath(url);
+        if (!GitUrlValidator.IsValidTargetPath(derivedPath)) return null;
+
+        var exists = await _db.ContainerGitRepositories.AnyAsync(
+            r => r.ContainerId == id && r.TargetPath == derivedPath);
+        if (exists) return null;
+
+        var maxOrder = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == id)
+            .Select(r => (int?)r.SortOrder)
+            .MaxAsync() ?? -1;
+
+        var repo = new ContainerGitRepository
+        {
+            ContainerId = id,
+            Url = url,
+            Branch = branch,
+            TargetPath = derivedPath,
+            CloneDepth = cloneDepth,
+            Submodules = submodules,
+            SortOrder = maxOrder + 1
+        };
+
+        _db.ContainerGitRepositories.Add(repo);
+        await _db.SaveChangesAsync();
+
+        return new McpGitRepositoryInfo(
+            repo.Id, repo.ContainerId, repo.Url, repo.Branch, repo.TargetPath ?? "",
+            repo.CloneDepth, repo.Submodules, repo.Status.ToString(), repo.ErrorMessage,
+            repo.ClonedAt, repo.CreatedAt);
+    }
+
+    [McpServerTool, Description("List stored git credentials (without exposing secret values)")]
+    public async Task<IReadOnlyList<McpGitCredentialInfo>> ListGitCredentials(
+        [Description("User ID to list credentials for")] string userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return [];
+        var credentials = await _db.GitCredentials
+            .Where(c => c.UserId == userId)
+            .OrderByDescending(c => c.CreatedAt)
+            .ToListAsync();
+        return credentials.Select(c => new McpGitCredentialInfo(
+            c.Id, c.Label, c.CredentialType, c.GitHost, c.CreatedAt)).ToList();
+    }
 }
 
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
@@ -80,3 +158,5 @@ public record McpTemplateInfo(Guid Id, string Code, string Name, string Descript
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);
+public record McpGitRepositoryInfo(Guid Id, Guid ContainerId, string Url, string Branch, string TargetPath, int CloneDepth, bool Submodules, string Status, string? ErrorMessage, DateTime? ClonedAt, DateTime CreatedAt);
+public record McpGitCredentialInfo(Guid Id, string Label, string CredentialType, string? GitHost, DateTime CreatedAt);
