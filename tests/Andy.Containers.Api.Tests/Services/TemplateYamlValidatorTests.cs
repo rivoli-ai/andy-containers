@@ -446,4 +446,46 @@ public class TemplateYamlValidatorTests
         template.GpuRequired.Should().BeTrue();
         template.GpuPreferred.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task DeeplyNestedYaml_ReturnsInvalid()
+    {
+        // Create YAML with >10 levels of nesting
+        var yaml = """
+            code: deep-test
+            name: Deep
+            version: 1.0.0
+            base_image: ubuntu:24.04
+            level1:
+              level2:
+                level3:
+                  level4:
+                    level5:
+                      level6:
+                        level7:
+                          level8:
+                            level9:
+                              level10:
+                                level11: too deep
+            """;
+
+        var result = await _validator.ValidateYamlAsync(yaml);
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.Message.Contains("nesting depth"));
+    }
+
+    [Fact]
+    public async Task ExcessiveAnchors_ReturnsInvalid()
+    {
+        // Create YAML with many anchors
+        var yaml = "code: anchor-test\nname: Anchors\nversion: 1.0.0\nbase_image: ubuntu:24.04\n";
+        for (int i = 0; i < 12; i++)
+            yaml += $"key{i}: &anchor{i} value{i}\n";
+
+        var result = await _validator.ValidateYamlAsync(yaml);
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.Message.Contains("anchors/aliases"));
+    }
 }

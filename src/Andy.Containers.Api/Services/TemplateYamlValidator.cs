@@ -12,6 +12,8 @@ public partial class TemplateYamlValidator : ITemplateValidator
     private const int MaxTags = 20;
     private const int MaxTagLength = 64;
     private const int MaxEnvValueSize = 32_768; // 32KB
+    private const int MaxYamlDepth = 10;
+    private const int MaxAnchorCount = 10;
 
     private static readonly HashSet<string> ValidCatalogScopes = ["global", "organization", "team", "user"];
     private static readonly HashSet<string> ValidIdeTypes = ["none", "code-server", "zed", "both"];
@@ -34,6 +36,15 @@ public partial class TemplateYamlValidator : ITemplateValidator
         {
             result.Valid = false;
             result.Errors.Add(new TemplateValidationError { Field = "yaml", Message = $"YAML exceeds maximum size of {MaxYamlSizeBytes} bytes" });
+            return Task.FromResult(result);
+        }
+
+        // YAML bomb protection: check depth and anchor count before full parse
+        var depthCheck = CheckYamlComplexity(yaml);
+        if (depthCheck is not null)
+        {
+            result.Valid = false;
+            result.Errors.Add(new TemplateValidationError { Field = "yaml", Message = depthCheck });
             return Task.FromResult(result);
         }
 
@@ -296,6 +307,39 @@ public partial class TemplateYamlValidator : ITemplateValidator
 
     private static bool ConvertBool(object? val) =>
         val is bool b ? b : bool.TryParse(val?.ToString(), out var parsed) && parsed;
+
+    /// <summary>
+    /// Pre-parse check for YAML bombs: limits nesting depth and anchor/alias count.
+    /// Returns an error message if the YAML is too complex, or null if OK.
+    /// </summary>
+    private static string? CheckYamlComplexity(string yaml)
+    {
+        int depth = 0, maxDepth = 0, anchorCount = 0;
+        foreach (var line in yaml.AsSpan().EnumerateLines())
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.IsEmpty || trimmed[0] == '#') continue;
+
+            // Count indentation (each 2 spaces = 1 level)
+            int indent = line.Length - trimmed.Length;
+            depth = indent / 2 + 1;
+            if (depth > maxDepth) maxDepth = depth;
+            if (maxDepth > MaxYamlDepth)
+                return $"YAML nesting depth exceeds maximum of {MaxYamlDepth} levels";
+
+            // Count anchors (&name) and aliases (*name)
+            for (int i = 0; i < trimmed.Length - 1; i++)
+            {
+                if (trimmed[i] == '&' && (i == 0 || trimmed[i - 1] == ' '))
+                    anchorCount++;
+                if (trimmed[i] == '*' && (i == 0 || trimmed[i - 1] == ' '))
+                    anchorCount++;
+            }
+            if (anchorCount > MaxAnchorCount)
+                return $"YAML contains too many anchors/aliases (max {MaxAnchorCount})";
+        }
+        return null;
+    }
 
     [GeneratedRegex(@"^[a-z0-9][a-z0-9-]*[a-z0-9]$")]
     private static partial Regex CodeRegex();
