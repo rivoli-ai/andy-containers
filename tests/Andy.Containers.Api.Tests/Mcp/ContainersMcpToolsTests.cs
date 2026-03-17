@@ -206,4 +206,194 @@ public class ContainersMcpToolsTests : IDisposable
 
         result.Should().BeEmpty();
     }
+
+    // --- YAML MCP Tool Tests ---
+
+    [Fact]
+    public async Task ValidateTemplateYaml_ValidYaml_ShouldReturnValid()
+    {
+        var mockValidator = new Mock<ITemplateValidator>();
+        mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        var tools = new ContainersMcpTools(_db, mockValidator.Object);
+
+        var result = await tools.ValidateTemplateYaml("code: test\nname: Test\nversion: 1.0.0\nbase_image: ubuntu:24.04");
+
+        result.IsValid.Should().BeTrue();
+        result.Errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ValidateTemplateYaml_InvalidYaml_ShouldReturnErrors()
+    {
+        var mockValidator = new Mock<ITemplateValidator>();
+        var invalidResult = new TemplateValidationResult { Valid = false };
+        invalidResult.Errors.Add(new TemplateValidationError { Field = "code", Message = "Field 'code' is required" });
+        invalidResult.Warnings.Add(new TemplateValidationWarning { Field = "ports", Message = "Port 8080 not declared" });
+        mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(invalidResult);
+        var tools = new ContainersMcpTools(_db, mockValidator.Object);
+
+        var result = await tools.ValidateTemplateYaml("name: test");
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().HaveCount(1);
+        result.Errors[0].Should().Contain("code");
+        result.Warnings.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetTemplateDefinition_ExistingTemplate_ShouldReturnYaml()
+    {
+        _db.Templates.Add(new ContainerTemplate
+        {
+            Code = "yaml-def",
+            Name = "YAML Def Test",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            IsPublished = true
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _tools.GetTemplateDefinition("yaml-def");
+
+        result.Should().NotBeNull();
+        result!.Code.Should().Be("yaml-def");
+        result.Yaml.Should().Contain("code: yaml-def");
+        result.Yaml.Should().Contain("version: 1.0.0");
+    }
+
+    [Fact]
+    public async Task GetTemplateDefinition_NonExistent_ShouldReturnNull()
+    {
+        var result = await _tools.GetTemplateDefinition("nonexistent");
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CreateTemplateFromYaml_ValidYaml_ShouldCreateAndReturnSuccess()
+    {
+        var mockValidator = new Mock<ITemplateValidator>();
+        mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerTemplate
+            {
+                Code = "mcp-created",
+                Name = "MCP Created",
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04"
+            });
+        var tools = new ContainersMcpTools(_db, mockValidator.Object);
+
+        var result = await tools.CreateTemplateFromYaml("code: mcp-created\nname: MCP Created\nversion: 1.0.0\nbase_image: ubuntu:24.04");
+
+        result.Success.Should().BeTrue();
+        result.Code.Should().Be("mcp-created");
+        result.TemplateId.Should().NotBeNull();
+        result.Errors.Should().BeEmpty();
+
+        var saved = await _db.Templates.FindAsync(result.TemplateId);
+        saved.Should().NotBeNull();
+        saved!.Code.Should().Be("mcp-created");
+    }
+
+    [Fact]
+    public async Task CreateTemplateFromYaml_InvalidYaml_ShouldReturnErrors()
+    {
+        var mockValidator = new Mock<ITemplateValidator>();
+        var invalidResult = new TemplateValidationResult { Valid = false };
+        invalidResult.Errors.Add(new TemplateValidationError { Field = "version", Message = "Invalid semver" });
+        mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(invalidResult);
+        var tools = new ContainersMcpTools(_db, mockValidator.Object);
+
+        var result = await tools.CreateTemplateFromYaml("code: bad\nversion: xyz");
+
+        result.Success.Should().BeFalse();
+        result.Errors.Should().NotBeEmpty();
+        result.TemplateId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateTemplateDefinition_ValidYaml_ShouldUpdateTemplate()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "mcp-update",
+            Name = "Original",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:22.04"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var mockValidator = new Mock<ITemplateValidator>();
+        mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerTemplate
+            {
+                Code = "mcp-update",
+                Name = "Updated",
+                Version = "2.0.0",
+                BaseImage = "ubuntu:24.04"
+            });
+        var tools = new ContainersMcpTools(_db, mockValidator.Object);
+
+        var result = await tools.UpdateTemplateDefinition(template.Id.ToString(),
+            "code: mcp-update\nname: Updated\nversion: 2.0.0\nbase_image: ubuntu:24.04");
+
+        result.Success.Should().BeTrue();
+        result.Errors.Should().BeEmpty();
+
+        var updated = await _db.Templates.FindAsync(template.Id);
+        updated!.Name.Should().Be("Updated");
+        updated.Version.Should().Be("2.0.0");
+    }
+
+    [Fact]
+    public async Task UpdateTemplateDefinition_InvalidId_ShouldReturnError()
+    {
+        var result = await _tools.UpdateTemplateDefinition("not-a-guid", "code: test");
+
+        result.Success.Should().BeFalse();
+        result.Errors.Should().Contain("Invalid template ID");
+    }
+
+    [Fact]
+    public async Task UpdateTemplateDefinition_NonExistent_ShouldReturnError()
+    {
+        var result = await _tools.UpdateTemplateDefinition(Guid.NewGuid().ToString(), "code: test");
+
+        result.Success.Should().BeFalse();
+        result.Errors.Should().Contain("Template not found");
+    }
+
+    [Fact]
+    public async Task UpdateTemplateDefinition_InvalidYaml_ShouldReturnErrors()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "mcp-upd-bad",
+            Name = "Test",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var mockValidator = new Mock<ITemplateValidator>();
+        var invalidResult = new TemplateValidationResult { Valid = false };
+        invalidResult.Errors.Add(new TemplateValidationError { Field = "version", Message = "Invalid semver" });
+        mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(invalidResult);
+        var tools = new ContainersMcpTools(_db, mockValidator.Object);
+
+        var result = await tools.UpdateTemplateDefinition(template.Id.ToString(), "code: test\nversion: bad");
+
+        result.Success.Should().BeFalse();
+        result.Errors.Should().NotBeEmpty();
+    }
 }

@@ -113,6 +113,43 @@ public class ContainersMcpTools
         await _db.SaveChangesAsync();
         return new McpCreateFromYamlResult(true, template.Id, template.Code, []);
     }
+
+    [McpServerTool, Description("Update a template's definition from YAML")]
+    public async Task<McpUpdateDefinitionResult> UpdateTemplateDefinition(
+        [Description("Template ID (GUID)")] string templateId,
+        [Description("YAML content for the template")] string yaml)
+    {
+        if (!Guid.TryParse(templateId, out var id))
+            return new McpUpdateDefinitionResult(false, ["Invalid template ID"]);
+
+        var template = await _db.Templates.FindAsync(id);
+        if (template is null)
+            return new McpUpdateDefinitionResult(false, ["Template not found"]);
+
+        var validation = await _templateValidator.ValidateYamlAsync(yaml);
+        if (!validation.IsValid)
+            return new McpUpdateDefinitionResult(false, validation.Errors.Select(e => $"[{e.Field}] {e.Message}").ToArray());
+
+        var parsed = await _templateValidator.ParseYamlToTemplateAsync(yaml);
+        if (parsed is null)
+            return new McpUpdateDefinitionResult(false, ["Failed to parse YAML"]);
+
+        template.Name = parsed.Name;
+        template.Description = parsed.Description;
+        template.Version = parsed.Version;
+        template.BaseImage = parsed.BaseImage;
+        template.IdeType = parsed.IdeType;
+        template.GpuRequired = parsed.GpuRequired;
+        template.GpuPreferred = parsed.GpuPreferred;
+        template.Tags = parsed.Tags;
+        template.DefaultResources = parsed.DefaultResources;
+        template.EnvironmentVariables = parsed.EnvironmentVariables;
+        template.Ports = parsed.Ports;
+        template.Scripts = parsed.Scripts;
+        template.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return new McpUpdateDefinitionResult(true, []);
+    }
 }
 
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
@@ -123,4 +160,5 @@ public record McpWorkspaceInfo(Guid Id, string Name, string Description, string 
 public record McpValidationResult(bool IsValid, string[] Errors, string[] Warnings);
 public record McpTemplateDefinition(string Code, string Name, string Yaml);
 public record McpCreateFromYamlResult(bool Success, Guid? TemplateId, string? Code, string[] Errors);
+public record McpUpdateDefinitionResult(bool Success, string[] Errors);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);

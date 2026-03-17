@@ -54,6 +54,9 @@ try
     // === Story 1: Template YAML Validation ===
     builder.Services.AddScoped<ITemplateValidator, TemplateYamlValidator>();
 
+    // gRPC
+    builder.Services.AddGrpc();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()
@@ -141,6 +144,7 @@ try
     }
 
     app.UseAuthorization();
+    app.MapGrpcService<Andy.Containers.Api.Services.ContainerGrpcService>();
     app.MapControllers().RequireAuthorization();
     app.MapHealthChecks("/health").AllowAnonymous();
 

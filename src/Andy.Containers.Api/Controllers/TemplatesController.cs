@@ -263,6 +263,10 @@ public class TemplatesController : ControllerBase
         if (template is null)
             return UnprocessableEntity(new { error = "Failed to parse YAML into template" });
 
+        // Non-admins cannot create global-scope templates
+        if (template.CatalogScope == CatalogScope.Global && !_currentUser.IsAdmin())
+            return Forbid();
+
         template.OwnerId = _currentUser.GetUserId();
         _db.Templates.Add(template);
         await _db.SaveChangesAsync(ct);

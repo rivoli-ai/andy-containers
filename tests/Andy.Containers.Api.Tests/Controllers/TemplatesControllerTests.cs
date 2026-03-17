@@ -15,6 +15,7 @@ public class TemplatesControllerTests : IDisposable
 {
     private readonly ContainersDbContext _db;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
+    private readonly Mock<ITemplateValidator> _mockValidator;
     private readonly TemplatesController _controller;
 
     public TemplatesControllerTests()
@@ -26,8 +27,8 @@ public class TemplatesControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
         var mockEnv = new Mock<IWebHostEnvironment>();
         mockEnv.Setup(e => e.ContentRootPath).Returns(Directory.GetCurrentDirectory());
-        var mockValidator = new Mock<ITemplateValidator>();
-        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object, mockValidator.Object);
+        _mockValidator = new Mock<ITemplateValidator>();
+        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object, _mockValidator.Object);
     }
 
     public void Dispose()
@@ -190,5 +191,271 @@ public class TemplatesControllerTests : IDisposable
         result.Should().BeOfType<NoContentResult>();
         var found = await _db.Templates.FindAsync(template.Id);
         found.Should().BeNull();
+    }
+
+    // --- YAML Endpoint Tests ---
+
+    [Fact]
+    public async Task Validate_ValidYaml_ShouldReturnOkWithIsValid()
+    {
+        var validResult = new TemplateValidationResult { Valid = true };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(validResult);
+
+        var result = await _controller.Validate(new ValidateYamlRequest { Yaml = "code: test" }, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var returned = ok.Value.Should().BeOfType<TemplateValidationResult>().Subject;
+        returned.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Validate_InvalidYaml_ShouldReturnOkWithErrors()
+    {
+        var invalidResult = new TemplateValidationResult { Valid = false };
+        invalidResult.Errors.Add(new TemplateValidationError { Field = "code", Message = "Field 'code' is required" });
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(invalidResult);
+
+        var result = await _controller.Validate(new ValidateYamlRequest { Yaml = "name: test" }, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var returned = ok.Value.Should().BeOfType<TemplateValidationResult>().Subject;
+        returned.IsValid.Should().BeFalse();
+        returned.Errors.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Validate_EmptyYaml_ShouldReturnBadRequest()
+    {
+        var result = await _controller.Validate(new ValidateYamlRequest { Yaml = "  " }, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetDefinition_ExistingTemplate_ShouldReturnSyntheticYaml()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "test-def",
+            Name = "Test Def",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.GetDefinition(template.Id, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var value = ok.Value!;
+        var content = value.GetType().GetProperty("content")!.GetValue(value) as string;
+        content.Should().Contain("code: test-def");
+        content.Should().Contain("base_image: ubuntu:24.04");
+    }
+
+    [Fact]
+    public async Task GetDefinition_NonExistent_ShouldReturnNotFound()
+    {
+        var result = await _controller.GetDefinition(Guid.NewGuid(), CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task UpdateDefinition_ValidYaml_ShouldUpdateTemplate()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "upd-def",
+            Name = "Original",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:22.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var parsedTemplate = new ContainerTemplate
+        {
+            Code = "upd-def",
+            Name = "Updated Name",
+            Version = "2.0.0",
+            BaseImage = "ubuntu:24.04",
+            Description = "Updated desc",
+            Tags = ["new-tag"]
+        };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        _mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parsedTemplate);
+
+        var result = await _controller.UpdateDefinition(template.Id,
+            new UpdateDefinitionRequest { Yaml = "code: upd-def\nname: Updated Name\nversion: 2.0.0\nbase_image: ubuntu:24.04" },
+            CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var returned = ok.Value.Should().BeOfType<ContainerTemplate>().Subject;
+        returned.Name.Should().Be("Updated Name");
+        returned.Version.Should().Be("2.0.0");
+        returned.BaseImage.Should().Be("ubuntu:24.04");
+    }
+
+    [Fact]
+    public async Task UpdateDefinition_InvalidYaml_ShouldReturn422()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "upd-invalid",
+            Name = "Test",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var invalidResult = new TemplateValidationResult { Valid = false };
+        invalidResult.Errors.Add(new TemplateValidationError { Field = "version", Message = "Invalid semver" });
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(invalidResult);
+
+        var result = await _controller.UpdateDefinition(template.Id,
+            new UpdateDefinitionRequest { Yaml = "code: test\nversion: bad" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
+    }
+
+    [Fact]
+    public async Task UpdateDefinition_NonExistent_ShouldReturnNotFound()
+    {
+        var result = await _controller.UpdateDefinition(Guid.NewGuid(),
+            new UpdateDefinitionRequest { Yaml = "code: test" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task UpdateDefinition_EmptyYaml_ShouldReturnBadRequest()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "upd-empty",
+            Name = "Test",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.UpdateDefinition(template.Id,
+            new UpdateDefinitionRequest { Yaml = "" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task UpdateDefinition_NonOwnerNonAdmin_ShouldReturnForbid()
+    {
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("other-user");
+
+        var template = new ContainerTemplate
+        {
+            Code = "upd-forbid",
+            Name = "Test",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "owner-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.UpdateDefinition(template.Id,
+            new UpdateDefinitionRequest { Yaml = "code: test" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+    }
+
+    [Fact]
+    public async Task CreateFromYaml_ValidYaml_ShouldReturnCreated()
+    {
+        var parsedTemplate = new ContainerTemplate
+        {
+            Code = "from-yaml",
+            Name = "From YAML",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        _mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parsedTemplate);
+
+        var result = await _controller.CreateFromYaml(
+            new ValidateYamlRequest { Yaml = "code: from-yaml\nname: From YAML\nversion: 1.0.0\nbase_image: ubuntu:24.04" },
+            CancellationToken.None);
+
+        var created = result.Should().BeOfType<CreatedAtActionResult>().Subject;
+        created.StatusCode.Should().Be(201);
+        var returned = created.Value.Should().BeOfType<ContainerTemplate>().Subject;
+        returned.Code.Should().Be("from-yaml");
+        returned.OwnerId.Should().Be("test-user");
+    }
+
+    [Fact]
+    public async Task CreateFromYaml_InvalidYaml_ShouldReturn422()
+    {
+        var invalidResult = new TemplateValidationResult { Valid = false };
+        invalidResult.Errors.Add(new TemplateValidationError { Field = "code", Message = "Required" });
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(invalidResult);
+
+        var result = await _controller.CreateFromYaml(
+            new ValidateYamlRequest { Yaml = "name: test" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
+    }
+
+    [Fact]
+    public async Task CreateFromYaml_EmptyYaml_ShouldReturnBadRequest()
+    {
+        var result = await _controller.CreateFromYaml(
+            new ValidateYamlRequest { Yaml = "" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task CreateFromYaml_GlobalScope_NonAdmin_ShouldReturnForbid()
+    {
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+
+        var parsedTemplate = new ContainerTemplate
+        {
+            Code = "global-test",
+            Name = "Global",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            CatalogScope = CatalogScope.Global
+        };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        _mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parsedTemplate);
+
+        var result = await _controller.CreateFromYaml(
+            new ValidateYamlRequest { Yaml = "code: global-test\ncatalog_scope: global" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
     }
 }
