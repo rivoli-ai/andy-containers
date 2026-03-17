@@ -434,6 +434,104 @@ public class TemplatesControllerTests : IDisposable
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
+    // --- Dependencies Endpoint Tests ---
+
+    [Fact]
+    public async Task UpdateDependencies_ValidDeps_ShouldReplaceAll()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "dep-test",
+            Name = "Dep Test",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        _db.DependencySpecs.Add(new DependencySpec
+        {
+            Name = "old-dep",
+            VersionConstraint = "1.0.0",
+            TemplateId = template.Id,
+            Type = DependencyType.Tool
+        });
+        await _db.SaveChangesAsync();
+
+        var newDeps = new[]
+        {
+            new DependencySpec { Name = "dotnet-sdk", VersionConstraint = "8.0.*", Type = DependencyType.Sdk },
+            new DependencySpec { Name = "python", VersionConstraint = ">=3.12,<4.0", Type = DependencyType.Runtime }
+        };
+
+        var result = await _controller.UpdateDependencies(template.Id, newDeps, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        var deps = _db.DependencySpecs.Where(d => d.TemplateId == template.Id).ToList();
+        deps.Should().HaveCount(2);
+        deps.Should().Contain(d => d.Name == "dotnet-sdk");
+        deps.Should().Contain(d => d.Name == "python");
+        deps.Should().NotContain(d => d.Name == "old-dep");
+    }
+
+    [Fact]
+    public async Task UpdateDependencies_DuplicateName_ShouldReturn422()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "dep-dup",
+            Name = "Dep Dup",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var newDeps = new[]
+        {
+            new DependencySpec { Name = "node", VersionConstraint = "20.x", Type = DependencyType.Runtime },
+            new DependencySpec { Name = "node", VersionConstraint = "18.x", Type = DependencyType.Runtime }
+        };
+
+        var result = await _controller.UpdateDependencies(template.Id, newDeps, CancellationToken.None);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
+    }
+
+    [Fact]
+    public async Task UpdateDependencies_InvalidConstraint_ShouldReturn422()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "dep-bad",
+            Name = "Dep Bad",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var newDeps = new[]
+        {
+            new DependencySpec { Name = "node", VersionConstraint = "8.0.*.1", Type = DependencyType.Runtime }
+        };
+
+        var result = await _controller.UpdateDependencies(template.Id, newDeps, CancellationToken.None);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
+    }
+
+    [Fact]
+    public async Task UpdateDependencies_NonExistent_ShouldReturnNotFound()
+    {
+        var result = await _controller.UpdateDependencies(Guid.NewGuid(),
+            [new DependencySpec { Name = "test", VersionConstraint = "1.0.0", Type = DependencyType.Tool }],
+            CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
     [Fact]
     public async Task CreateFromYaml_GlobalScope_NonAdmin_ShouldReturnForbid()
     {

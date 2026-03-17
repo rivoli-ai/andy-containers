@@ -273,6 +273,46 @@ public class TemplatesController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
     }
 
+    [HttpPut("{id:guid}/dependencies")]
+    public async Task<IActionResult> UpdateDependencies(Guid id, [FromBody] DependencySpec[] dependencies, CancellationToken ct)
+    {
+        var template = await _db.Templates.FindAsync([id], ct);
+        if (template is null) return NotFound();
+        if (!CanModifyTemplate(template)) return Forbid();
+
+        // Validate dependencies
+        var names = new HashSet<string>();
+        for (int i = 0; i < dependencies.Length; i++)
+        {
+            var dep = dependencies[i];
+            if (string.IsNullOrWhiteSpace(dep.Name))
+                return UnprocessableEntity(new { error = $"dependencies[{i}].name is required" });
+            if (!names.Add(dep.Name))
+                return UnprocessableEntity(new { error = $"Duplicate dependency name: '{dep.Name}'" });
+            if (string.IsNullOrWhiteSpace(dep.VersionConstraint))
+                return UnprocessableEntity(new { error = $"dependencies[{i}].version_constraint is required" });
+            if (!Services.VersionConstraintParser.IsValid(dep.VersionConstraint))
+                return UnprocessableEntity(new { error = $"Invalid version constraint: '{dep.VersionConstraint}'" });
+        }
+
+        // Remove existing dependencies
+        var existing = _db.DependencySpecs.Where(d => d.TemplateId == id);
+        _db.DependencySpecs.RemoveRange(existing);
+
+        // Add new dependencies
+        for (int i = 0; i < dependencies.Length; i++)
+        {
+            dependencies[i].Id = Guid.NewGuid();
+            dependencies[i].TemplateId = id;
+            dependencies[i].SortOrder = i;
+        }
+        _db.DependencySpecs.AddRange(dependencies);
+        template.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(dependencies);
+    }
+
     private bool CanModifyTemplate(ContainerTemplate template)
     {
         if (_currentUser.IsAdmin()) return true;
