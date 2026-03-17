@@ -37,6 +37,11 @@ service ContainerService {
   rpc BuildImage (BuildImageRequest) returns (ImageResponse);
   rpc GetLatestImage (GetLatestImageRequest) returns (ImageResponse);
   rpc DiffImages (DiffImagesRequest) returns (ImageDiffResponse);
+
+  // Template YAML validation
+  rpc ValidateTemplateYaml (ValidateTemplateYamlRequest) returns (ValidateTemplateYamlResponse);
+  rpc CreateTemplateFromYaml (CreateTemplateFromYamlRequest) returns (TemplateResponse);
+  rpc UpdateTemplateDefinition (UpdateTemplateDefinitionRequest) returns (TemplateResponse);
 }
 
 // --- Container Messages ---
