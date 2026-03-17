@@ -37,6 +37,12 @@ service ContainerService {
   rpc BuildImage (BuildImageRequest) returns (ImageResponse);
   rpc GetLatestImage (GetLatestImageRequest) returns (ImageResponse);
   rpc DiffImages (DiffImagesRequest) returns (ImageDiffResponse);
+
+  // SSH Key Management
+  rpc ListUserSshKeys (ListUserSshKeysRequest) returns (ListUserSshKeysResponse);
+  rpc AddSshKey (AddSshKeyRequest) returns (SshKeyResponse);
+  rpc RemoveSshKey (RemoveSshKeyRequest) returns (RemoveSshKeyResponse);
+  rpc GetContainerSshConfig (ContainerIdRequest) returns (SshConfigResponse);
 }
 
 // --- Container Messages ---
@@ -278,4 +284,45 @@ message DependencyChangeEntry {
   string previous_version = 3;
   string new_version = 4;
   string change_type = 5;
+}
+
+// --- SSH Key Management Messages ---
+
+message ListUserSshKeysRequest {
+  string user_id = 1;
+}
+
+message ListUserSshKeysResponse {
+  repeated SshKeyResponse keys = 1;
+}
+
+message AddSshKeyRequest {
+  string label = 1;
+  string public_key = 2;
+}
+
+message RemoveSshKeyRequest {
+  string key_id = 1;
+}
+
+message RemoveSshKeyResponse {
+  bool success = 1;
+}
+
+message SshKeyResponse {
+  string id = 1;
+  string user_id = 2;
+  string label = 3;
+  string fingerprint = 4;
+  string key_type = 5;
+  string created_at = 6;
+  string last_used_at = 7;
+}
+
+message SshConfigResponse {
+  bool ssh_enabled = 1;
+  string host = 2;
+  int32 port = 3;
+  string username = 4;
+  string config_snippet = 5;
 }
