@@ -434,6 +434,85 @@ public class TemplatesControllerTests : IDisposable
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
+    // --- Validation on existing endpoints ---
+
+    [Fact]
+    public async Task Create_MissingCode_ShouldReturn422()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "ab", // too short
+            Name = "Test",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+
+        var result = await _controller.Create(template, CancellationToken.None);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
+    }
+
+    [Fact]
+    public async Task Create_MissingVersion_ShouldReturn422()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "valid-code",
+            Name = "Test",
+            Version = "",
+            BaseImage = "ubuntu:24.04"
+        };
+
+        var result = await _controller.Create(template, CancellationToken.None);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
+    }
+
+    [Fact]
+    public async Task Create_GlobalScope_NonAdmin_ShouldReturnForbid()
+    {
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        var template = new ContainerTemplate
+        {
+            Code = "global-test",
+            Name = "Global",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            CatalogScope = CatalogScope.Global
+        };
+
+        var result = await _controller.Create(template, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+    }
+
+    [Fact]
+    public async Task Update_InvalidFields_ShouldReturn422()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "upd-val",
+            Name = "Original",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var update = new ContainerTemplate
+        {
+            Code = "upd-val",
+            Name = "",  // invalid: empty
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+
+        var result = await _controller.Update(template.Id, update, CancellationToken.None);
+
+        result.Should().BeOfType<UnprocessableEntityObjectResult>();
+    }
+
     // --- Dependencies Endpoint Tests ---
 
     [Fact]

@@ -156,6 +156,13 @@ public class TemplatesController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ContainerTemplate template, CancellationToken ct)
     {
+        var errors = ValidateTemplateFields(template);
+        if (errors.Count > 0)
+            return UnprocessableEntity(new TemplateValidationResult { Valid = false, Errors = errors });
+
+        if (template.CatalogScope == CatalogScope.Global && !_currentUser.IsAdmin())
+            return Forbid();
+
         template.OwnerId = _currentUser.GetUserId();
         _db.Templates.Add(template);
         await _db.SaveChangesAsync(ct);
@@ -168,6 +175,10 @@ public class TemplatesController : ControllerBase
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
         if (!CanModifyTemplate(template)) return Forbid();
+
+        var errors = ValidateTemplateFields(update);
+        if (errors.Count > 0)
+            return UnprocessableEntity(new TemplateValidationResult { Valid = false, Errors = errors });
 
         template.Name = update.Name;
         template.Description = update.Description;
@@ -311,6 +322,22 @@ public class TemplatesController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         return Ok(dependencies);
+    }
+
+    private static List<TemplateValidationError> ValidateTemplateFields(ContainerTemplate t)
+    {
+        var errors = new List<TemplateValidationError>();
+        if (string.IsNullOrWhiteSpace(t.Code) || t.Code.Length < 3 || t.Code.Length > 64)
+            errors.Add(new TemplateValidationError { Field = "code", Message = "Field 'code' must be 3-64 characters" });
+        if (string.IsNullOrWhiteSpace(t.Name) || t.Name.Length > 128)
+            errors.Add(new TemplateValidationError { Field = "name", Message = "Field 'name' must be 1-128 characters" });
+        if (string.IsNullOrWhiteSpace(t.Version))
+            errors.Add(new TemplateValidationError { Field = "version", Message = "Field 'version' is required" });
+        if (string.IsNullOrWhiteSpace(t.BaseImage))
+            errors.Add(new TemplateValidationError { Field = "base_image", Message = "Field 'base_image' is required" });
+        if (t.Tags is { Length: > 20 })
+            errors.Add(new TemplateValidationError { Field = "tags", Message = "Maximum 20 tags allowed" });
+        return errors;
     }
 
     private bool CanModifyTemplate(ContainerTemplate template)
