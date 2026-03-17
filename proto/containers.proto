@@ -37,6 +37,12 @@ service ContainerService {
   rpc BuildImage (BuildImageRequest) returns (ImageResponse);
   rpc GetLatestImage (GetLatestImageRequest) returns (ImageResponse);
   rpc DiffImages (DiffImagesRequest) returns (ImageDiffResponse);
+
+  // Git Repository Management
+  rpc ListContainerRepositories (ContainerIdRequest) returns (ListGitRepositoriesResponse);
+  rpc CloneRepository (CloneRepositoryRequest) returns (GitRepositoryResponse);
+  rpc RemoveRepository (RemoveRepositoryRequest) returns (RemoveRepositoryResponse);
+  rpc ListGitCredentials (ListGitCredentialsRequest) returns (ListGitCredentialsResponse);
 }
 
 // --- Container Messages ---
@@ -278,4 +284,60 @@ message DependencyChangeEntry {
   string previous_version = 3;
   string new_version = 4;
   string change_type = 5;
+}
+
+// --- Git Repository Management Messages ---
+
+message CloneRepositoryRequest {
+  string container_id = 1;
+  string url = 2;
+  string branch = 3;
+  string target_path = 4;
+  string credential_ref = 5;
+  int32 clone_depth = 6;
+  bool submodules = 7;
+}
+
+message GitRepositoryResponse {
+  string id = 1;
+  string container_id = 2;
+  string url = 3;
+  string branch = 4;
+  string target_path = 5;
+  int32 clone_depth = 6;
+  bool submodules = 7;
+  string status = 8;
+  string error_message = 9;
+  string cloned_at = 10;
+  string created_at = 11;
+}
+
+message ListGitRepositoriesResponse {
+  repeated GitRepositoryResponse repositories = 1;
+}
+
+message RemoveRepositoryRequest {
+  string container_id = 1;
+  string repository_id = 2;
+}
+
+message RemoveRepositoryResponse {
+  bool success = 1;
+}
+
+message ListGitCredentialsRequest {
+  string user_id = 1;
+}
+
+message ListGitCredentialsResponse {
+  repeated GitCredentialResponse credentials = 1;
+}
+
+message GitCredentialResponse {
+  string id = 1;
+  string label = 2;
+  string credential_type = 3;
+  string git_host = 4;
+  string created_at = 5;
+  string expires_at = 6;
 }
