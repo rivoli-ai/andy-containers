@@ -34,6 +34,8 @@ public class CreateContainerRequest
     public GitRepositoryConfig? GitRepository { get; set; }
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
     public TimeSpan? ExpiresAfter { get; set; }
+    public bool SshEnabled { get; set; }
+    public string[]? SshPublicKeys { get; set; }
 }
 
 public class GitRepositoryConfig

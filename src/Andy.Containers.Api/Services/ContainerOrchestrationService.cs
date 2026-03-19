@@ -66,6 +66,22 @@ public class ContainerOrchestrationService : IContainerService
             }, ct);
         }
 
+        // Determine SSH enablement from request or template config
+        var sshEnabled = request.SshEnabled;
+        if (!sshEnabled && !string.IsNullOrEmpty(template.SshConfiguration))
+        {
+            try
+            {
+                var templateSshConfig = System.Text.Json.JsonSerializer.Deserialize<Models.SshConfig>(template.SshConfiguration);
+                if (templateSshConfig?.Enabled == true)
+                    sshEnabled = true;
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse SSH configuration from template {TemplateId}", template.Id);
+            }
+        }
+
         var container = new Container
         {
             Name = request.Name,
@@ -75,6 +91,7 @@ public class ContainerOrchestrationService : IContainerService
             OrganizationId = request.OrganizationId,
             TeamId = request.TeamId,
             Status = ContainerStatus.Pending,
+            SshEnabled = sshEnabled,
             ExpiresAt = request.ExpiresAfter.HasValue
                 ? DateTime.UtcNow.Add(request.ExpiresAfter.Value)
                 : null
@@ -104,7 +121,9 @@ public class ContainerOrchestrationService : IContainerService
             ContainerName: container.Name,
             OwnerId: container.OwnerId,
             Resources: request.Resources,
-            Gpu: request.Gpu);
+            Gpu: request.Gpu,
+            SshEnabled: sshEnabled,
+            SshPublicKeys: request.SshPublicKeys);
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",

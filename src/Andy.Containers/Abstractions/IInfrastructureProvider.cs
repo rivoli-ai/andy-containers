@@ -70,6 +70,8 @@ public class ContainerSpec
     public string? Command { get; set; }
     public string[]? Arguments { get; set; }
     public Dictionary<string, string>? Labels { get; set; }
+    public bool SshEnabled { get; set; }
+    public int SshPort { get; set; } = 22;
 }
 
 public class ResourceSpec

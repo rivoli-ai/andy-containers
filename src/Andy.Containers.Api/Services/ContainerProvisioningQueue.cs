@@ -10,7 +10,9 @@ public record ContainerProvisionJob(
     string ContainerName,
     string OwnerId,
     Abstractions.ResourceSpec? Resources,
-    Abstractions.GpuSpec? Gpu);
+    Abstractions.GpuSpec? Gpu,
+    bool SshEnabled = false,
+    string[]? SshPublicKeys = null);
 
 public class ContainerProvisioningQueue
 {

@@ -221,4 +221,95 @@ public class ContainerOrchestrationServiceTests : IDisposable
         var updated = await _db.Containers.FindAsync(container.Id);
         updated!.Status.Should().Be(ContainerStatus.Destroyed);
     }
+
+    // === Story 10: SSH auto-provisioning orchestration tests ===
+
+    [Fact]
+    public async Task CreateContainer_WithSshEnabled_SetsSshEnabledOnContainer()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "ssh-container",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            SshEnabled = true
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        container.SshEnabled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithSshEnabledTemplate_SetsSshEnabledOnContainer()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "ssh-template",
+            Name = "SSH Template",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            SshConfiguration = System.Text.Json.JsonSerializer.Serialize(new SshConfig { Enabled = true })
+        };
+        var provider = new InfrastructureProvider
+        {
+            Code = "p1", Name = "P1", Type = ProviderType.Docker, IsEnabled = true
+        };
+        _db.Templates.Add(template);
+        _db.Providers.Add(provider);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "template-ssh",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        container.SshEnabled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithoutSsh_LeavesSshDisabled()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "no-ssh",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        container.SshEnabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithSshPublicKeys_EnqueuesJobWithKeys()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var keys = new[] { "ssh-ed25519 AAAA user@host" };
+
+        var request = new CreateContainerRequest
+        {
+            Name = "ssh-keys-container",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            SshEnabled = true,
+            SshPublicKeys = keys
+        };
+
+        await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        // Read the enqueued job from the queue
+        var job = await _queue.Reader.ReadAsync(CancellationToken.None);
+        job.SshEnabled.Should().BeTrue();
+        job.SshPublicKeys.Should().BeEquivalentTo(keys);
+    }
 }

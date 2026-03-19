@@ -85,7 +85,9 @@ public class ContainerProvisioningWorker : BackgroundService
                 ImageReference = job.TemplateBaseImage,
                 Name = job.ContainerName,
                 Resources = job.Resources ?? new ResourceSpec(),
-                Gpu = job.Gpu
+                Gpu = job.Gpu,
+                SshEnabled = job.SshEnabled,
+                SshPort = 22
             };
 
             // Use a timeout so we don't hang forever
@@ -121,6 +123,12 @@ public class ContainerProvisioningWorker : BackgroundService
             await db.SaveChangesAsync(stoppingToken);
             _logger.LogInformation("Container {ContainerId} provisioned successfully on {Provider}",
                 job.ContainerId, job.ProviderCode);
+
+            // Post-provisioning: SSH setup (non-fatal)
+            if (job.SshEnabled)
+            {
+                await SetupSshAsync(scope.ServiceProvider, infra, container.ExternalId!, job, stoppingToken);
+            }
         }
         catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
         {
@@ -133,6 +141,84 @@ public class ContainerProvisioningWorker : BackgroundService
             _logger.LogError(ex, "Failed to provision container {ContainerId} on provider {Provider}",
                 job.ContainerId, job.ProviderCode);
             await MarkFailedAsync(db, job.ContainerId, ex.Message);
+        }
+    }
+
+    private async Task SetupSshAsync(IServiceProvider services, IInfrastructureProvider infra, string externalId,
+        ContainerProvisionJob job, CancellationToken ct)
+    {
+        try
+        {
+            _logger.LogInformation("Setting up SSH for container {ContainerId}", job.ContainerId);
+
+            var sshKeyService = services.GetRequiredService<ISshKeyService>();
+            var sshProvisioning = services.GetRequiredService<ISshProvisioningService>();
+            var db = services.GetRequiredService<ContainersDbContext>();
+
+            // Fetch user's registered SSH keys
+            var registeredKeys = await sshKeyService.ListKeysAsync(job.OwnerId, ct);
+            var allPublicKeys = registeredKeys.Select(k => k.PublicKey).ToList();
+
+            // Merge one-time keys from the create request
+            if (job.SshPublicKeys is { Length: > 0 })
+            {
+                allPublicKeys.AddRange(job.SshPublicKeys);
+            }
+
+            // Parse SSH config from template or use defaults
+            var sshConfig = new Models.SshConfig { Enabled = true };
+
+            // Generate and execute the setup script
+            var script = sshProvisioning.GenerateSetupScript(sshConfig, allPublicKeys);
+            var result = await infra.ExecAsync(externalId, script, ct);
+
+            if (result.ExitCode != 0)
+            {
+                _logger.LogWarning("SSH setup script returned exit code {ExitCode} for container {ContainerId}: {StdErr}",
+                    result.ExitCode, job.ContainerId, result.StdErr);
+            }
+
+            db.Events.Add(new ContainerEvent
+            {
+                ContainerId = job.ContainerId,
+                EventType = ContainerEventType.SessionOpened,
+                SubjectId = job.OwnerId,
+                Details = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "ssh_provisioned",
+                    keysInjected = allPublicKeys.Count,
+                    exitCode = result.ExitCode
+                })
+            });
+            await db.SaveChangesAsync(ct);
+
+            _logger.LogInformation("SSH setup completed for container {ContainerId} ({KeyCount} keys injected)",
+                job.ContainerId, allPublicKeys.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SSH setup failed for container {ContainerId} (non-fatal)", job.ContainerId);
+
+            try
+            {
+                var db = services.GetRequiredService<ContainersDbContext>();
+                db.Events.Add(new ContainerEvent
+                {
+                    ContainerId = job.ContainerId,
+                    EventType = ContainerEventType.Failed,
+                    SubjectId = job.OwnerId,
+                    Details = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        action = "ssh_setup_failed",
+                        error = ex.Message
+                    })
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            catch (Exception logEx)
+            {
+                _logger.LogError(logEx, "Failed to log SSH setup failure event for container {ContainerId}", job.ContainerId);
+            }
         }
     }
 
