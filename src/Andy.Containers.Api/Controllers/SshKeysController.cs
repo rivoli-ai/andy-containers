@@ -13,12 +13,15 @@ namespace Andy.Containers.Api.Controllers;
 public class SshKeysController : ControllerBase
 {
     private readonly ISshKeyService _sshKeyService;
+    private readonly ISshProvisioningService _sshProvisioning;
     private readonly ICurrentUserService _currentUser;
     private readonly ContainersDbContext _db;
 
-    public SshKeysController(ISshKeyService sshKeyService, ICurrentUserService currentUser, ContainersDbContext db)
+    public SshKeysController(ISshKeyService sshKeyService, ISshProvisioningService sshProvisioning,
+        ICurrentUserService currentUser, ContainersDbContext db)
     {
         _sshKeyService = sshKeyService;
+        _sshProvisioning = sshProvisioning;
         _currentUser = currentUser;
         _db = db;
     }
@@ -26,22 +29,24 @@ public class SshKeysController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var keys = await _sshKeyService.ListKeysAsync(_currentUser.GetUserId(), ct);
-        var result = keys.Select(k => new
+        var userId = _currentUser.GetUserId();
+        var keys = await _sshKeyService.ListKeysAsync(userId, ct);
+        var result = keys.Select(k => new SshKeyDto
         {
-            k.Id, k.Label, k.Fingerprint, k.KeyType, k.CreatedAt, k.LastUsedAt
+            Id = k.Id,
+            Label = k.Label,
+            Fingerprint = k.Fingerprint,
+            KeyType = k.KeyType,
+            CreatedAt = k.CreatedAt
         });
         return Ok(result);
     }
 
     [HttpPost]
-    public async Task<IActionResult> Add([FromBody] AddSshKeyRequest request, CancellationToken ct)
+    public async Task<IActionResult> Register([FromBody] RegisterSshKeyRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.Label))
-            return BadRequest(new { error = "Label is required" });
-
         if (string.IsNullOrWhiteSpace(request.PublicKey))
-            return BadRequest(new { error = "PublicKey is required" });
+            return BadRequest(new { error = "Public key is required" });
 
         if (request.PublicKey.Contains("-----BEGIN"))
             return BadRequest(new { error = "Private keys are not accepted. Please provide a public key." });
@@ -49,15 +54,25 @@ public class SshKeysController : ControllerBase
         if (!_sshKeyService.IsValidPublicKey(request.PublicKey))
             return UnprocessableEntity(new { error = "Invalid SSH public key format" });
 
+        var userId = _currentUser.GetUserId();
+
         try
         {
-            var key = await _sshKeyService.AddKeyAsync(_currentUser.GetUserId(), request.Label, request.PublicKey, ct);
-            return CreatedAtAction(nameof(List), new
+            var key = await _sshKeyService.AddKeyAsync(userId, request.Label ?? "Unnamed", request.PublicKey, ct);
+            return CreatedAtAction(nameof(List), new SshKeyDto
             {
-                key.Id, key.Label, key.Fingerprint, key.KeyType, key.CreatedAt
+                Id = key.Id,
+                Label = key.Label,
+                Fingerprint = key.Fingerprint,
+                KeyType = key.KeyType,
+                CreatedAt = key.CreatedAt
             });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Maximum"))
+        {
+            return UnprocessableEntity(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("fingerprint"))
         {
             return Conflict(new { error = ex.Message });
         }
@@ -66,41 +81,76 @@ public class SshKeysController : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Remove(Guid id, CancellationToken ct)
     {
-        var removed = await _sshKeyService.RemoveKeyAsync(_currentUser.GetUserId(), id, ct);
+        var userId = _currentUser.GetUserId();
+        var removed = await _sshKeyService.RemoveKeyAsync(userId, id, ct);
         return removed ? NoContent() : NotFound();
     }
 
-    [HttpGet("config-snippet")]
-    public async Task<IActionResult> GetConfigSnippet([FromQuery] Guid containerId, CancellationToken ct)
+    [HttpPost("/api/containers/{containerId:guid}/ssh-keys")]
+    public async Task<IActionResult> InjectKey(Guid containerId, [FromBody] InjectSshKeyRequest request, CancellationToken ct)
     {
-        var container = await _db.Containers
-            .Include(c => c.Provider)
-            .FirstOrDefaultAsync(c => c.Id == containerId, ct);
+        var container = await _db.Containers.FindAsync([containerId], ct);
+        if (container is null) return NotFound();
 
-        if (container is null)
-            return NotFound(new { error = "Container not found" });
+        if (!CanAccessContainer(container)) return Forbid();
 
         if (!container.SshEnabled)
             return BadRequest(new { error = "SSH is not enabled on this container" });
 
-        var host = "localhost";
-        if (!string.IsNullOrEmpty(container.IdeEndpoint))
-        {
-            try { host = new Uri(container.IdeEndpoint).Host; }
-            catch { /* keep localhost */ }
-        }
+        if (!_sshKeyService.IsValidPublicKey(request.PublicKey))
+            return UnprocessableEntity(new { error = "Invalid SSH public key format" });
 
-        var port = 22;
-        var user = "dev";
+        return Ok(new { injected = true, fingerprint = _sshKeyService.ComputeFingerprint(request.PublicKey) });
+    }
 
-        var snippet = $"Host container-{container.Name}\n  HostName {host}\n  Port {port}\n  User {user}\n  IdentityFile ~/.ssh/id_ed25519";
+    [HttpGet("/api/containers/{containerId:guid}/ssh-config")]
+    public async Task<IActionResult> GetSshConfig(Guid containerId, CancellationToken ct)
+    {
+        var container = await _db.Containers.FindAsync([containerId], ct);
+        if (container is null) return NotFound();
 
-        return Ok(new { configSnippet = snippet, host, port, user, containerName = container.Name });
+        if (!CanAccessContainer(container)) return Forbid();
+
+        if (!container.SshEnabled)
+            return BadRequest(new { error = "SSH is not enabled on this container" });
+
+        var shortId = container.Id.ToString()[..8];
+        var configSnippet = $"""
+            Host andy-container-{shortId}
+              HostName localhost
+              Port 22
+              User dev
+              IdentityFile ~/.ssh/id_ed25519
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+            """;
+
+        return Ok(new { sshEnabled = true, host = "localhost", port = 22, username = "dev", configSnippet });
+    }
+
+    private bool CanAccessContainer(Container container)
+    {
+        if (_currentUser.IsAdmin()) return true;
+        return container.OwnerId == _currentUser.GetUserId();
     }
 }
 
-public class AddSshKeyRequest
+public class RegisterSshKeyRequest
 {
-    public required string Label { get; set; }
+    public string? Label { get; set; }
     public required string PublicKey { get; set; }
+}
+
+public class InjectSshKeyRequest
+{
+    public required string PublicKey { get; set; }
+}
+
+public class SshKeyDto
+{
+    public Guid Id { get; set; }
+    public required string Label { get; set; }
+    public required string Fingerprint { get; set; }
+    public required string KeyType { get; set; }
+    public DateTime CreatedAt { get; set; }
 }

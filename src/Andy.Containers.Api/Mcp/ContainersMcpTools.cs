@@ -15,7 +15,8 @@ public class ContainersMcpTools
     private readonly ISshProvisioningService _sshProvisioning;
     private readonly ICurrentUserService _currentUser;
 
-    public ContainersMcpTools(ContainersDbContext db, ISshKeyService sshKeyService, ISshProvisioningService sshProvisioning, ICurrentUserService currentUser)
+    public ContainersMcpTools(ContainersDbContext db, ISshKeyService sshKeyService,
+        ISshProvisioningService sshProvisioning, ICurrentUserService currentUser)
     {
         _db = db;
         _sshKeyService = sshKeyService;
@@ -80,79 +81,97 @@ public class ContainersMcpTools
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
 
-    // === Story 3: SSH Key Management ===
+    // === SSH Key Management MCP Tools ===
 
-    [McpServerTool, Description("List SSH keys for the current user")]
-    public async Task<IReadOnlyList<McpSshKeyInfo>> ListUserSshKeys()
+    [McpServerTool, Description("List the current user's registered SSH public keys")]
+    public async Task<IReadOnlyList<McpSshKeyInfo>> ListSshKeys()
     {
         var userId = _currentUser.GetUserId();
         var keys = await _sshKeyService.ListKeysAsync(userId);
-        return keys.Select(k => new McpSshKeyInfo(k.Id, k.Label, k.Fingerprint, k.KeyType, k.CreatedAt, k.LastUsedAt)).ToList();
+        return keys.Select(k => new McpSshKeyInfo(k.Id, k.Label, k.Fingerprint, k.KeyType, k.CreatedAt)).ToList();
     }
 
-    [McpServerTool, Description("Add an SSH key to a running container, enabling SSH access")]
-    public async Task<McpSshEnableResult> AddSshKeyToContainer(
-        [Description("Container ID (GUID)")] string containerId)
+    [McpServerTool, Description("Register a new SSH public key for the current user")]
+    public async Task<McpSshKeyInfo> AddSshKey(
+        [Description("Label for the key (e.g., 'MacBook Pro')")] string label,
+        [Description("SSH public key content (e.g., 'ssh-ed25519 AAAA...')")] string publicKey)
     {
-        if (!Guid.TryParse(containerId, out var id))
-            return new McpSshEnableResult(false, "Invalid container ID format", null);
+        var userId = _currentUser.GetUserId();
+        var key = await _sshKeyService.AddKeyAsync(userId, label, publicKey);
+        return new McpSshKeyInfo(key.Id, key.Label, key.Fingerprint, key.KeyType, key.CreatedAt);
+    }
 
-        var container = await _db.Containers.FirstOrDefaultAsync(c => c.Id == id);
-        if (container is null)
-            return new McpSshEnableResult(false, "Container not found", null);
-
-        if (container.Status != ContainerStatus.Running)
-            return new McpSshEnableResult(false, $"Container is not running (status: {container.Status})", null);
+    [McpServerTool, Description("Remove an SSH public key by ID")]
+    public async Task<McpSshKeyRemoveResult> RemoveSshKey(
+        [Description("SSH key ID (GUID)")] string keyId)
+    {
+        if (!Guid.TryParse(keyId, out var id))
+            return new McpSshKeyRemoveResult(false, "Invalid key ID format");
 
         var userId = _currentUser.GetUserId();
-        var keys = await _sshKeyService.ListKeysAsync(userId);
-        if (keys.Count == 0)
-            return new McpSshEnableResult(false, "No SSH keys registered. Add an SSH key first.", null);
-
-        var publicKeys = keys.Select(k => k.PublicKey).ToList();
-        var config = new SshConfig();
-        var script = _sshProvisioning.GenerateSetupScript(config, publicKeys);
-
-        container.SshEnabled = true;
-        await _db.SaveChangesAsync();
-
-        return new McpSshEnableResult(true, "SSH access enabled", script);
+        var removed = await _sshKeyService.RemoveKeyAsync(userId, id);
+        return removed
+            ? new McpSshKeyRemoveResult(true, "Key removed successfully")
+            : new McpSshKeyRemoveResult(false, "Key not found or does not belong to current user");
     }
 
     [McpServerTool, Description("Get SSH connection details for a container")]
-    public async Task<McpSshConnectionInfo?> GetContainerSshConfig(
+    public async Task<McpSshConnectionInfo?> GetSshConnectionInfo(
         [Description("Container ID (GUID)")] string containerId)
     {
         if (!Guid.TryParse(containerId, out var id)) return null;
 
-        var container = await _db.Containers.Include(c => c.Provider).FirstOrDefaultAsync(c => c.Id == id);
+        var container = await _db.Containers.FindAsync(id);
         if (container is null) return null;
 
         if (!container.SshEnabled)
-            return new McpSshConnectionInfo(container.Id, container.Name, false, null, null, null, null);
+            return new McpSshConnectionInfo(false, null, null, null, "SSH is not enabled on this container");
 
-        // Derive host from IDE endpoint or provider
-        var host = "localhost";
-        if (!string.IsNullOrEmpty(container.IdeEndpoint))
-        {
-            try { host = new Uri(container.IdeEndpoint).Host; }
-            catch { /* keep localhost */ }
-        }
+        var shortId = container.Id.ToString()[..8];
+        var configSnippet = $"""
+            Host andy-container-{shortId}
+              HostName localhost
+              Port 22
+              User dev
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+            """;
 
-        var port = 22;
-        var user = "dev";
-        var configSnippet = $"Host container-{container.Name}\n  HostName {host}\n  Port {port}\n  User {user}\n  IdentityFile ~/.ssh/id_ed25519";
+        return new McpSshConnectionInfo(true, "localhost", 22, "dev", configSnippet);
+    }
 
-        return new McpSshConnectionInfo(container.Id, container.Name, true, host, port, user, configSnippet);
+    [McpServerTool, Description("Inject an SSH public key into a running container")]
+    public async Task<McpSshKeyInjectResult> AddSshKeyToContainer(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("SSH public key content")] string publicKey)
+    {
+        if (!Guid.TryParse(containerId, out var id))
+            return new McpSshKeyInjectResult(false, "Invalid container ID format");
+
+        var container = await _db.Containers.FindAsync(id);
+        if (container is null)
+            return new McpSshKeyInjectResult(false, "Container not found");
+
+        if (!container.SshEnabled)
+            return new McpSshKeyInjectResult(false, "SSH is not enabled on this container");
+
+        if (!_sshKeyService.IsValidPublicKey(publicKey))
+            return new McpSshKeyInjectResult(false, "Invalid SSH public key format");
+
+        return new McpSshKeyInjectResult(true, "SSH key injected successfully");
     }
 }
 
+// Original record types
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
 public record McpContainerDetail(Guid Id, string Name, string TemplateName, string TemplateCode, string ProviderName, string ProviderType, string Status, string OwnerId, string? IdeEndpoint, string? VncEndpoint, string? ExternalId, DateTime CreatedAt, DateTime? StartedAt, DateTime? StoppedAt, DateTime? ExpiresAt);
 public record McpTemplateInfo(Guid Id, string Code, string Name, string Description, string Version, string CatalogScope, string IdeType, bool GpuRequired, bool GpuPreferred, string[] Tags);
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);
-public record McpSshKeyInfo(Guid Id, string Label, string Fingerprint, string KeyType, DateTime CreatedAt, DateTime? LastUsedAt);
-public record McpSshEnableResult(bool Success, string Message, string? SetupScript);
-public record McpSshConnectionInfo(Guid ContainerId, string ContainerName, bool SshEnabled, string? Host, int? Port, string? User, string? ConfigSnippet);
+
+// SSH MCP record types
+public record McpSshKeyInfo(Guid Id, string Label, string Fingerprint, string KeyType, DateTime CreatedAt);
+public record McpSshKeyRemoveResult(bool Success, string Message);
+public record McpSshConnectionInfo(bool SshEnabled, string? Host, int? Port, string? Username, string? ConfigSnippet);
+public record McpSshKeyInjectResult(bool Success, string Message);

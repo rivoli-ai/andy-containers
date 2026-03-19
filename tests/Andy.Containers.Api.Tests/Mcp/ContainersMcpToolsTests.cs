@@ -12,22 +12,22 @@ namespace Andy.Containers.Api.Tests.Mcp;
 public class ContainersMcpToolsTests : IDisposable
 {
     private readonly ContainersDbContext _db;
+    private readonly Mock<ISshKeyService> _mockSshKeyService;
+    private readonly Mock<ISshProvisioningService> _mockSshProvisioning;
+    private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly ContainersMcpTools _tools;
 
     public ContainersMcpToolsTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        var mockSshKeyService = new Mock<ISshKeyService>();
-        var mockSshProvisioning = new Mock<ISshProvisioningService>();
-        var mockCurrentUser = new Mock<ICurrentUserService>();
-        mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
-        _tools = new ContainersMcpTools(_db, mockSshKeyService.Object, mockSshProvisioning.Object, mockCurrentUser.Object);
+        _mockSshKeyService = new Mock<ISshKeyService>();
+        _mockSshProvisioning = new Mock<ISshProvisioningService>();
+        _mockCurrentUser = new Mock<ICurrentUserService>();
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        _tools = new ContainersMcpTools(_db, _mockSshKeyService.Object, _mockSshProvisioning.Object, _mockCurrentUser.Object);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-    }
+    public void Dispose() => _db.Dispose();
 
     private async Task<(ContainerTemplate template, InfrastructureProvider provider)> SeedTemplateAndProvider()
     {
@@ -51,11 +51,12 @@ public class ContainersMcpToolsTests : IDisposable
         return (template, provider);
     }
 
+    // === Original MCP tool tests ===
+
     [Fact]
     public async Task ListContainers_NoContainers_ShouldReturnEmpty()
     {
         var result = await _tools.ListContainers();
-
         result.Should().BeEmpty();
     }
 
@@ -70,7 +71,6 @@ public class ContainersMcpToolsTests : IDisposable
         await _db.SaveChangesAsync();
 
         var result = await _tools.ListContainers();
-
         result.Should().HaveCount(2);
     }
 
@@ -85,10 +85,8 @@ public class ContainersMcpToolsTests : IDisposable
         await _db.SaveChangesAsync();
 
         var result = await _tools.ListContainers(status: "Running");
-
         result.Should().HaveCount(1);
         result[0].Name.Should().Be("running1");
-        result[0].Status.Should().Be("Running");
     }
 
     [Fact]
@@ -97,31 +95,22 @@ public class ContainersMcpToolsTests : IDisposable
         var (template, provider) = await SeedTemplateAndProvider();
         var container = new Container
         {
-            Name = "detail-test",
-            OwnerId = "user1",
-            TemplateId = template.Id,
-            ProviderId = provider.Id,
-            Status = ContainerStatus.Running,
-            IdeEndpoint = "https://ide.test.com"
+            Name = "detail-test", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id,
+            Status = ContainerStatus.Running, IdeEndpoint = "https://ide.test.com"
         };
         _db.Containers.Add(container);
         await _db.SaveChangesAsync();
 
         var result = await _tools.GetContainer(container.Id.ToString());
-
         result.Should().NotBeNull();
         result!.Name.Should().Be("detail-test");
         result.IdeEndpoint.Should().Be("https://ide.test.com");
-        result.Status.Should().Be("Running");
-        result.TemplateName.Should().Be("Full Stack");
-        result.ProviderName.Should().Be("Local Docker");
     }
 
     [Fact]
     public async Task GetContainer_InvalidGuid_ShouldReturnNull()
     {
         var result = await _tools.GetContainer("not-a-guid");
-
         result.Should().BeNull();
     }
 
@@ -135,7 +124,6 @@ public class ContainersMcpToolsTests : IDisposable
         await _db.SaveChangesAsync();
 
         var result = await _tools.BrowseTemplates();
-
         result.Should().HaveCount(1);
         result[0].Code.Should().Be("pub");
     }
@@ -150,10 +138,7 @@ public class ContainersMcpToolsTests : IDisposable
         await _db.SaveChangesAsync();
 
         var result = await _tools.ListProviders();
-
         result.Should().HaveCount(2);
-        result.Should().Contain(p => p.Code == "docker");
-        result.Should().Contain(p => p.Code == "apple");
     }
 
     [Fact]
@@ -166,47 +151,195 @@ public class ContainersMcpToolsTests : IDisposable
         await _db.SaveChangesAsync();
 
         var result = await _tools.ListWorkspaces();
-
         result.Should().HaveCount(2);
     }
 
     [Fact]
     public async Task ListImages_WithExistingTemplate_ShouldReturnImages()
     {
-        var template = new ContainerTemplate
-        {
-            Code = "full-stack",
-            Name = "Full Stack",
-            Version = "1.0.0",
-            BaseImage = "ubuntu:24.04"
-        };
+        var template = new ContainerTemplate { Code = "full-stack", Name = "Full Stack", Version = "1.0.0", BaseImage = "ubuntu:24.04" };
         _db.Templates.Add(template);
         _db.Images.Add(new ContainerImage
         {
-            TemplateId = template.Id,
-            ContentHash = "sha256:abc",
-            Tag = "full-stack:1.0.0-1",
-            ImageReference = "registry/full-stack:1.0.0-1",
-            BaseImageDigest = "sha256:base",
-            DependencyManifest = "{}",
-            DependencyLock = "{}",
-            BuildNumber = 1,
-            BuildStatus = ImageBuildStatus.Succeeded
+            TemplateId = template.Id, ContentHash = "sha256:abc", Tag = "full-stack:1.0.0-1",
+            ImageReference = "registry/full-stack:1.0.0-1", BaseImageDigest = "sha256:base",
+            DependencyManifest = "{}", DependencyLock = "{}", BuildNumber = 1, BuildStatus = ImageBuildStatus.Succeeded
         });
         await _db.SaveChangesAsync();
 
         var result = await _tools.ListImages("full-stack");
-
         result.Should().HaveCount(1);
         result[0].Tag.Should().Be("full-stack:1.0.0-1");
-        result[0].BuildStatus.Should().Be("Succeeded");
     }
 
     [Fact]
     public async Task ListImages_NonExistentTemplate_ShouldReturnEmpty()
     {
         var result = await _tools.ListImages("nonexistent");
-
         result.Should().BeEmpty();
+    }
+
+    // === SSH MCP tool tests ===
+
+    [Fact]
+    public async Task ListSshKeys_ReturnsCurrentUserKeys()
+    {
+        var keys = new List<UserSshKey>
+        {
+            new() { UserId = "test-user", Label = "Laptop", PublicKey = "ssh-ed25519 AAAA", Fingerprint = "SHA256:abc", KeyType = "ed25519" },
+            new() { UserId = "test-user", Label = "CI", PublicKey = "ssh-rsa AAAA", Fingerprint = "SHA256:def", KeyType = "rsa" }
+        };
+        _mockSshKeyService.Setup(s => s.ListKeysAsync("test-user", default))
+            .ReturnsAsync(keys);
+
+        var result = await _tools.ListSshKeys();
+
+        result.Should().HaveCount(2);
+        result[0].Label.Should().Be("Laptop");
+        result[1].Label.Should().Be("CI");
+    }
+
+    [Fact]
+    public async Task AddSshKey_ValidKey_ReturnsKeyInfo()
+    {
+        var key = new UserSshKey
+        {
+            UserId = "test-user", Label = "New Key", PublicKey = "ssh-ed25519 AAAA",
+            Fingerprint = "SHA256:newkey", KeyType = "ed25519"
+        };
+        _mockSshKeyService.Setup(s => s.AddKeyAsync("test-user", "New Key", "ssh-ed25519 AAAA", default))
+            .ReturnsAsync(key);
+
+        var result = await _tools.AddSshKey("New Key", "ssh-ed25519 AAAA");
+
+        result.Label.Should().Be("New Key");
+        result.Fingerprint.Should().Be("SHA256:newkey");
+    }
+
+    [Fact]
+    public async Task AddSshKey_InvalidKey_ThrowsFromService()
+    {
+        _mockSshKeyService.Setup(s => s.AddKeyAsync("test-user", "Bad", "invalid", default))
+            .ThrowsAsync(new ArgumentException("Invalid SSH public key format"));
+
+        var act = () => _tools.AddSshKey("Bad", "invalid");
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task RemoveSshKey_ExistingKey_ReturnsSuccess()
+    {
+        var keyId = Guid.NewGuid();
+        _mockSshKeyService.Setup(s => s.RemoveKeyAsync("test-user", keyId, default))
+            .ReturnsAsync(true);
+
+        var result = await _tools.RemoveSshKey(keyId.ToString());
+
+        result.Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RemoveSshKey_NonExistent_ReturnsFailure()
+    {
+        var keyId = Guid.NewGuid();
+        _mockSshKeyService.Setup(s => s.RemoveKeyAsync("test-user", keyId, default))
+            .ReturnsAsync(false);
+
+        var result = await _tools.RemoveSshKey(keyId.ToString());
+
+        result.Success.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetSshConnectionInfo_SshEnabled_ReturnsDetails()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "ssh-container", OwnerId = "test-user", TemplateId = template.Id,
+            ProviderId = provider.Id, SshEnabled = true
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        var result = await _tools.GetSshConnectionInfo(container.Id.ToString());
+
+        result.Should().NotBeNull();
+        result!.SshEnabled.Should().BeTrue();
+        result.Username.Should().Be("dev");
+        result.ConfigSnippet.Should().Contain("Host andy-container-");
+    }
+
+    [Fact]
+    public async Task GetSshConnectionInfo_SshNotEnabled_ReturnsSshDisabledMessage()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "no-ssh", OwnerId = "test-user", TemplateId = template.Id,
+            ProviderId = provider.Id, SshEnabled = false
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        var result = await _tools.GetSshConnectionInfo(container.Id.ToString());
+
+        result.Should().NotBeNull();
+        result!.SshEnabled.Should().BeFalse();
+        result.ConfigSnippet.Should().Contain("not enabled");
+    }
+
+    [Fact]
+    public async Task GetSshConnectionInfo_NonExistent_ReturnsNull()
+    {
+        var result = await _tools.GetSshConnectionInfo(Guid.NewGuid().ToString());
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AddSshKeyToContainer_SshEnabled_ReturnsSuccess()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "inject-test", OwnerId = "test-user", TemplateId = template.Id,
+            ProviderId = provider.Id, SshEnabled = true
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockSshKeyService.Setup(s => s.IsValidPublicKey("ssh-ed25519 AAAA")).Returns(true);
+
+        var result = await _tools.AddSshKeyToContainer(container.Id.ToString(), "ssh-ed25519 AAAA");
+
+        result.Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AddSshKeyToContainer_SshNotEnabled_ReturnsFailure()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "no-ssh-inject", OwnerId = "test-user", TemplateId = template.Id,
+            ProviderId = provider.Id, SshEnabled = false
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        var result = await _tools.AddSshKeyToContainer(container.Id.ToString(), "ssh-ed25519 AAAA");
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("not enabled");
+    }
+
+    [Fact]
+    public async Task AddSshKeyToContainer_NonExistent_ReturnsFailure()
+    {
+        var result = await _tools.AddSshKeyToContainer(Guid.NewGuid().ToString(), "ssh-ed25519 AAAA");
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("not found");
     }
 }

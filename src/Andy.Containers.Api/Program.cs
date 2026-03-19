@@ -55,6 +55,9 @@ try
     builder.Services.AddScoped<ISshKeyService, SshKeyService>();
     builder.Services.AddSingleton<ISshProvisioningService, SshProvisioningService>();
 
+    // gRPC
+    builder.Services.AddGrpc();
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()
@@ -143,6 +146,7 @@ try
 
     app.UseAuthorization();
     app.MapControllers().RequireAuthorization();
+    app.MapGrpcService<Andy.Containers.Api.Services.ContainerGrpcService>();
     app.MapHealthChecks("/health").AllowAnonymous();
 
     Log.Information("Andy Containers API starting");
