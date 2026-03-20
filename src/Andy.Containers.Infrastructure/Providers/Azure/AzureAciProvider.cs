@@ -120,6 +120,12 @@ public class AzureAciProvider : IInfrastructureProvider
             }
         }
 
+        // Expose SSH port when enabled
+        if (spec.SshEnabled)
+        {
+            containerResource.Ports.Add(new ContainerPort(spec.SshPort));
+        }
+
         if (spec.EnvironmentVariables is not null)
         {
             foreach (var (key, value) in spec.EnvironmentVariables)
@@ -139,15 +145,20 @@ public class AzureAciProvider : IInfrastructureProvider
             }
         }
 
+        var groupPorts = spec.PortMappings?.Select(p => new ContainerGroupPort(p.Key) { Protocol = ContainerGroupNetworkProtocol.Tcp }).ToList()
+            ?? [new ContainerGroupPort(80) { Protocol = ContainerGroupNetworkProtocol.Tcp }];
+
+        if (spec.SshEnabled)
+        {
+            groupPorts.Add(new ContainerGroupPort(spec.SshPort) { Protocol = ContainerGroupNetworkProtocol.Tcp });
+        }
+
         var containerGroupData = new ContainerGroupData(
             new AzureLocation(_region),
             [containerResource],
             ContainerInstanceOperatingSystemType.Linux)
         {
-            IPAddress = new ContainerGroupIPAddress(
-                spec.PortMappings?.Select(p => new ContainerGroupPort(p.Key) { Protocol = ContainerGroupNetworkProtocol.Tcp }).ToList()
-                    ?? [new ContainerGroupPort(80) { Protocol = ContainerGroupNetworkProtocol.Tcp }],
-                ContainerGroupIPAddressType.Public)
+            IPAddress = new ContainerGroupIPAddress(groupPorts, ContainerGroupIPAddressType.Public)
         };
 
         // Add registry credentials if configured

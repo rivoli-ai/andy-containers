@@ -66,6 +66,12 @@ public class SshDockerHelper : IDisposable
         var cpuLimit = $"--cpus={resources.CpuCores}";
         var memLimit = $"--memory={resources.MemoryMb}m";
 
+        // Expose SSH port when enabled — maps container port 22 to the same port on the host
+        if (spec.SshEnabled)
+        {
+            portArgs += $" -p {spec.SshPort}:{spec.SshPort}";
+        }
+
         var cmd = $"docker run -d --name {containerName} {cpuLimit} {memLimit}{envArgs}{portArgs} {spec.ImageReference}";
         if (!string.IsNullOrEmpty(spec.Command))
         {
@@ -114,6 +120,31 @@ public class SshDockerHelper : IDisposable
             Status = running ? ContainerStatus.Running : ContainerStatus.Stopped,
             StartedAt = parts.Length > 1 && DateTime.TryParse(parts[1], out var started) ? started : null
         };
+    }
+
+    /// <summary>
+    /// Returns the SSH endpoint for a container running on this host.
+    /// The container's SSH port is forwarded through the host via docker port mapping.
+    /// </summary>
+    public string? GetContainerSshEndpoint(string containerName, int sshPort = 22)
+    {
+        EnsureConnected();
+        var host = _ssh!.ConnectionInfo.Host;
+        // Query the mapped host port for the container's SSH port
+        var result = RunCommand($"docker port {containerName} {sshPort}");
+        if (result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StdOut))
+        {
+            // Output format: "0.0.0.0:32768" or "[::]:32768"
+            var output = result.StdOut.Trim().Split('\n')[0];
+            var lastColon = output.LastIndexOf(':');
+            if (lastColon >= 0)
+            {
+                var mappedPort = output[(lastColon + 1)..];
+                return $"{host}:{mappedPort}";
+            }
+        }
+        // Fallback: assume the SSH port is mapped 1:1
+        return $"{host}:{sshPort}";
     }
 
     public ExecResult RunCommand(string command)

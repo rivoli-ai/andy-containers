@@ -131,6 +131,16 @@ public class AwsFargateProvider : IInfrastructureProvider
             }
         }
 
+        // Expose SSH port when enabled (security group must allow inbound port 22)
+        if (spec.SshEnabled)
+        {
+            containerDef.PortMappings.Add(new PortMapping
+            {
+                ContainerPort = spec.SshPort,
+                Protocol = TransportProtocol.Tcp
+            });
+        }
+
         if (spec.EnvironmentVariables is not null)
         {
             foreach (var (key, value) in spec.EnvironmentVariables)
@@ -265,7 +275,8 @@ public class AwsFargateProvider : IInfrastructureProvider
         return new ConnectionInfo
         {
             IpAddress = info.IpAddress,
-            PortMappings = info.PortMappings
+            PortMappings = info.PortMappings,
+            SshEndpoint = info.IpAddress is not null ? $"{info.IpAddress}:22" : null
         };
     }
 

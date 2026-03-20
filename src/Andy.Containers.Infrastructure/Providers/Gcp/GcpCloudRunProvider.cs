@@ -144,6 +144,14 @@ public class GcpCloudRunProvider : IInfrastructureProvider
             }
         };
 
+        // Cloud Run is a request/response platform — it does not support persistent TCP
+        // connections like SSH. SshEndpoint will always be null for Cloud Run services.
+        if (spec.SshEnabled)
+        {
+            _logger.LogWarning("SSH is not supported on GCP Cloud Run (request/response platform only). " +
+                "Container {Name} will be created without SSH access.", spec.Name);
+        }
+
         var parent = $"projects/{_projectId}/locations/{_region}";
         var operation = await _servicesClient.CreateServiceAsync(parent, service, serviceName, ct);
         var result = await operation.PollUntilCompletedAsync();
@@ -158,6 +166,7 @@ public class GcpCloudRunProvider : IInfrastructureProvider
             {
                 IpAddress = result.Result.Uri,
                 IdeEndpoint = result.Result.Uri
+                // SshEndpoint intentionally null — Cloud Run does not support persistent TCP connections
             }
         };
     }
