@@ -165,7 +165,8 @@ public class AppleContainerProvider : IInfrastructureProvider
         var info = await InspectAsync(externalId, ct);
         return new ConnectionInfo
         {
-            IpAddress = info.IpAddress
+            IpAddress = info.IpAddress,
+            SshEndpoint = info.IpAddress is not null ? $"{info.IpAddress}:22" : null
         };
     }
 
