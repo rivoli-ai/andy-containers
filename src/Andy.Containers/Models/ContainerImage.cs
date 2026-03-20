@@ -73,6 +73,21 @@ public class ContainerImage
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public string? Metadata { get; set; }
+
+    /// <summary>
+    /// Organization that owns this image. Null means global image.
+    /// </summary>
+    public Guid? OrganizationId { get; set; }
+
+    /// <summary>
+    /// User who triggered the build.
+    /// </summary>
+    public string? OwnerId { get; set; }
+
+    /// <summary>
+    /// Controls who can see the image.
+    /// </summary>
+    public ImageVisibility Visibility { get; set; } = ImageVisibility.Global;
 }
 
 public enum ImageBuildStatus

@@ -23,7 +23,14 @@ public class ContainerGrpcServiceTests : IDisposable
         _db = InMemoryDbHelper.CreateContext();
         _mockGitCloneService = new Mock<IGitCloneService>();
         _mockManifestService = new Mock<IImageManifestService>();
-        _service = new ContainerGrpcService(_db, _mockGitCloneService.Object, _mockManifestService.Object);
+        var mockCurrentUser = new Mock<ICurrentUserService>();
+        mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
+        var mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _service = new ContainerGrpcService(_db, _mockGitCloneService.Object, _mockManifestService.Object, mockCurrentUser.Object, mockOrgMembership.Object);
         _context = CreateMockContext();
     }
 

@@ -15,6 +15,8 @@ public class ImagesControllerTests : IDisposable
     private readonly ContainersDbContext _db;
     private readonly Mock<IImageManifestService> _mockManifestService;
     private readonly Mock<IImageDiffService> _mockDiffService;
+    private readonly Mock<ICurrentUserService> _mockCurrentUser;
+    private readonly Mock<IOrganizationMembershipService> _mockOrgMembership;
     private readonly ImagesController _controller;
 
     public ImagesControllerTests()
@@ -22,7 +24,14 @@ public class ImagesControllerTests : IDisposable
         _db = InMemoryDbHelper.CreateContext();
         _mockManifestService = new Mock<IImageManifestService>();
         _mockDiffService = new Mock<IImageDiffService>();
-        _controller = new ImagesController(_db, _mockManifestService.Object, _mockDiffService.Object);
+        _mockCurrentUser = new Mock<ICurrentUserService>();
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
+        _mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        _mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _controller = new ImagesController(_db, _mockManifestService.Object, _mockDiffService.Object, _mockCurrentUser.Object, _mockOrgMembership.Object);
     }
 
     public void Dispose() => _db.Dispose();
@@ -83,7 +92,7 @@ public class ImagesControllerTests : IDisposable
         SeedImage(template.Id, 1);
         SeedImage(template.Id, 2);
 
-        var result = await _controller.List(template.Id, CancellationToken.None);
+        var result = await _controller.List(template.Id, ct: CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var images = ok.Value.Should().BeAssignableTo<List<ContainerImage>>().Subject;
@@ -94,7 +103,7 @@ public class ImagesControllerTests : IDisposable
     [Fact]
     public async Task List_NoImages_ShouldReturnEmptyList()
     {
-        var result = await _controller.List(Guid.NewGuid(), CancellationToken.None);
+        var result = await _controller.List(Guid.NewGuid(), ct: CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var images = ok.Value.Should().BeAssignableTo<List<ContainerImage>>().Subject;
@@ -111,7 +120,7 @@ public class ImagesControllerTests : IDisposable
         var latest = SeedImage(template.Id, 2, ImageBuildStatus.Succeeded);
         SeedImage(template.Id, 3, ImageBuildStatus.Building);
 
-        var result = await _controller.GetLatest(template.Id, CancellationToken.None);
+        var result = await _controller.GetLatest(template.Id, ct: CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var image = ok.Value.Should().BeOfType<ContainerImage>().Subject;
@@ -124,7 +133,7 @@ public class ImagesControllerTests : IDisposable
         var template = SeedTemplate();
         SeedImage(template.Id, 1, ImageBuildStatus.Building);
 
-        var result = await _controller.GetLatest(template.Id, CancellationToken.None);
+        var result = await _controller.GetLatest(template.Id, ct: CancellationToken.None);
 
         result.Should().BeOfType<NotFoundResult>();
     }

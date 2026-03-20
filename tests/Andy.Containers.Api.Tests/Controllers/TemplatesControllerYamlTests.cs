@@ -35,7 +35,10 @@ public class TemplatesControllerYamlTests : IDisposable
         _mockParser = new Mock<IYamlTemplateParser>();
         var mockEnv = new Mock<IWebHostEnvironment>();
         mockEnv.Setup(e => e.ContentRootPath).Returns(Directory.GetCurrentDirectory());
-        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object, _mockParser.Object);
+        var mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object, _mockParser.Object, mockOrgMembership.Object);
     }
 
     public void Dispose()

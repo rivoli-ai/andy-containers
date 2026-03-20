@@ -21,7 +21,14 @@ public class ProvidersControllerTests : IDisposable
     {
         _db = InMemoryDbHelper.CreateContext();
         _mockFactory = new Mock<IInfrastructureProviderFactory>();
-        _controller = new ProvidersController(_db, _mockFactory.Object, new CostEstimationService());
+        var mockCurrentUser = new Mock<ICurrentUserService>();
+        mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
+        var mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _controller = new ProvidersController(_db, _mockFactory.Object, new CostEstimationService(), mockCurrentUser.Object, mockOrgMembership.Object);
     }
 
     public void Dispose()
@@ -38,7 +45,7 @@ public class ProvidersControllerTests : IDisposable
         );
         await _db.SaveChangesAsync();
 
-        var result = await _controller.List(CancellationToken.None);
+        var result = await _controller.List(ct: CancellationToken.None);
 
         var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
         var providers = okResult.Value.Should().BeAssignableTo<List<InfrastructureProvider>>().Subject;

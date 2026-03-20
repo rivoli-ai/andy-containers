@@ -45,6 +45,11 @@ service ContainerService {
   rpc ListContainerRepositories (ContainerIdRequest) returns (ListContainerRepositoriesResponse);
   rpc CloneRepository (CloneRepositoryRequest) returns (GitRepositoryStatusResponse);
   rpc PullRepository (PullRepositoryRequest) returns (GitRepositoryStatusResponse);
+
+  // Organization-scoped operations
+  rpc ListOrganizationImages (ListOrgImagesRequest) returns (ListOrgImagesResponse);
+  rpc BuildOrganizationImage (BuildOrgImageRequest) returns (ImageResponse);
+  rpc PublishOrganizationImage (PublishOrgImageRequest) returns (ImageResponse);
 }
 
 // --- Container Messages ---
@@ -253,6 +258,7 @@ message BuildImageRequest {
   bool offline = 2;
   bool force = 3;
   string provider_id = 4;
+  string organization_id = 5;
 }
 
 message GetLatestImageRequest {
@@ -271,6 +277,9 @@ message ImageResponse {
   bool built_offline = 9;
   string changelog = 10;
   string created_at = 11;
+  string organization_id = 12;
+  string owner_id = 13;
+  string visibility = 14;
 }
 
 message DiffImagesRequest {
@@ -356,4 +365,32 @@ message CloneRepositoryRequest {
 message PullRepositoryRequest {
   string container_id = 1;
   string repository_id = 2;
+}
+
+// --- Organization Messages ---
+
+message OrganizationContext {
+  string organization_id = 1;
+  string user_role = 2;
+}
+
+message ListOrgImagesRequest {
+  string organization_id = 1;
+}
+
+message ListOrgImagesResponse {
+  repeated ImageResponse images = 1;
+  int32 total_count = 2;
+}
+
+message BuildOrgImageRequest {
+  string organization_id = 1;
+  string template_id = 2;
+  string template_code = 3;
+  bool offline = 4;
+}
+
+message PublishOrgImageRequest {
+  string organization_id = 1;
+  string image_id = 2;
 }

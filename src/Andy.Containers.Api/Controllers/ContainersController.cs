@@ -17,13 +17,15 @@ public class ContainersController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly ContainersDbContext _db;
     private readonly IGitCloneService _gitCloneService;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db, IGitCloneService gitCloneService)
+    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db, IGitCloneService gitCloneService, IOrganizationMembershipService orgMembership)
     {
         _containerService = containerService;
         _currentUser = currentUser;
         _db = db;
         _gitCloneService = gitCloneService;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]
@@ -43,6 +45,12 @@ public class ContainersController : ControllerBase
         var effectiveOwnerId = ownerId;
         if (!_currentUser.IsAdmin())
             effectiveOwnerId = _currentUser.GetUserId();
+
+        if (organizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), organizationId.Value, ct);
+            if (!isMember) return Forbid();
+        }
 
         var containers = await _containerService.ListContainersAsync(new ContainerFilter
         {
@@ -80,6 +88,13 @@ public class ContainersController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateContainerRequest request, CancellationToken ct)
     {
         request.OwnerId = _currentUser.GetUserId();
+
+        if (request.OrganizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), request.OrganizationId.Value, ct);
+            if (!isMember) return Forbid();
+        }
+
         var container = await _containerService.CreateContainerAsync(request, ct);
         return CreatedAtAction(nameof(Get), new { id = container.Id }, container);
     }

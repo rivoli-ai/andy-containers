@@ -18,7 +18,13 @@ public class ContainersMcpToolsTests : IDisposable
     public ContainersMcpToolsTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _tools = new ContainersMcpTools(_db, new Mock<IGitCloneService>().Object, new Mock<IGitCredentialService>().Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object);
+        var mockCurrentUser = new Mock<ICurrentUserService>();
+        mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
+        mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        var mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _tools = new ContainersMcpTools(_db, new Mock<IGitCloneService>().Object, new Mock<IGitCredentialService>().Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object);
     }
 
     public void Dispose()

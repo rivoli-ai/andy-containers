@@ -14,11 +14,13 @@ public class WorkspacesController : ControllerBase
 {
     private readonly ContainersDbContext _db;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public WorkspacesController(ContainersDbContext db, ICurrentUserService currentUser)
+    public WorkspacesController(ContainersDbContext db, ICurrentUserService currentUser, IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _currentUser = currentUser;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]
@@ -36,6 +38,12 @@ public class WorkspacesController : ControllerBase
         var effectiveOwnerId = _currentUser.IsAdmin() ? ownerId : _currentUser.GetUserId();
         if (!string.IsNullOrEmpty(effectiveOwnerId))
             query = query.Where(w => w.OwnerId == effectiveOwnerId);
+
+        if (organizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), organizationId.Value, ct);
+            if (!isMember) return Forbid();
+        }
 
         if (organizationId.HasValue)
             query = query.Where(w => w.OrganizationId == organizationId);
@@ -59,6 +67,12 @@ public class WorkspacesController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateWorkspaceDto dto, CancellationToken ct)
     {
+        if (dto.OrganizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), dto.OrganizationId.Value, ct);
+            if (!isMember) return Forbid();
+        }
+
         var workspace = new Workspace
         {
             Name = dto.Name,

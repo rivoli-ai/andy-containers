@@ -76,6 +76,16 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+    // Organization RBAC
+    builder.Services.AddMemoryCache();
+    builder.Services.AddScoped<IOrganizationMembershipService, OrganizationMembershipService>();
+    builder.Services.AddScoped<IContainerAuthorizationService, ContainerAuthorizationService>();
+    builder.Services.AddHttpClient("AndyRbac", client =>
+    {
+        var baseUrl = builder.Configuration["Rbac:BaseUrl"] ?? "https://localhost:5300";
+        client.BaseAddress = new Uri(baseUrl);
+    });
+
     // MCP
     builder.Services.AddMcpServer()
         .WithHttpTransport()

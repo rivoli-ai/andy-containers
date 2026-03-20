@@ -16,13 +16,15 @@ public class TemplatesController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ICurrentUserService _currentUser;
     private readonly IYamlTemplateParser _parser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, IYamlTemplateParser parser)
+    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, IYamlTemplateParser parser, IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _env = env;
         _currentUser = currentUser;
         _parser = parser;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]
@@ -38,6 +40,12 @@ public class TemplatesController : ControllerBase
         CancellationToken ct = default)
     {
         var query = _db.Templates.AsQueryable();
+
+        if (organizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), organizationId.Value, ct);
+            if (!isMember) return Forbid();
+        }
 
         if (scope.HasValue)
             query = query.Where(t => t.CatalogScope == scope);
@@ -157,6 +165,14 @@ public class TemplatesController : ControllerBase
     public async Task<IActionResult> Create([FromBody] ContainerTemplate template, CancellationToken ct)
     {
         template.OwnerId = _currentUser.GetUserId();
+
+        if (template.OrganizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var hasPermission = await _orgMembership.HasPermissionAsync(
+                _currentUser.GetUserId(), template.OrganizationId.Value, Permissions.TemplateCreate, ct);
+            if (!hasPermission) return Forbid();
+        }
+
         _db.Templates.Add(template);
         await _db.SaveChangesAsync(ct);
         return CreatedAtAction(nameof(Get), new { id = template.Id }, template);

@@ -67,6 +67,8 @@ public class ContainersDbContext : DbContext
             e.Property(i => i.Metadata).HasColumnType("jsonb");
             e.HasOne(i => i.Template).WithMany().HasForeignKey(i => i.TemplateId);
             e.HasOne(i => i.PreviousImage).WithMany().HasForeignKey(i => i.PreviousImageId);
+            e.HasIndex(i => new { i.TemplateId, i.OrganizationId });
+            e.HasIndex(i => i.OrganizationId);
         });
 
         // ContainerSession

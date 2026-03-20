@@ -1,5 +1,6 @@
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,31 +15,68 @@ public class ImagesController : ControllerBase
     private readonly ContainersDbContext _db;
     private readonly IImageManifestService _manifestService;
     private readonly IImageDiffService _diffService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
-    public ImagesController(ContainersDbContext db, IImageManifestService manifestService, IImageDiffService diffService)
+    public ImagesController(
+        ContainersDbContext db,
+        IImageManifestService manifestService,
+        IImageDiffService diffService,
+        ICurrentUserService currentUser,
+        IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _manifestService = manifestService;
         _diffService = diffService;
+        _currentUser = currentUser;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet("{templateId:guid}")]
-    public async Task<IActionResult> List(Guid templateId, CancellationToken ct)
+    public async Task<IActionResult> List(Guid templateId, [FromQuery] Guid? organizationId = null, CancellationToken ct = default)
     {
-        var images = await _db.Images
-            .Where(i => i.TemplateId == templateId)
-            .OrderByDescending(i => i.BuildNumber)
-            .ToListAsync(ct);
+        // Validate org membership if org filter specified
+        if (organizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), organizationId.Value, ct);
+            if (!isMember) return Forbid();
+        }
+
+        var query = _db.Images.Where(i => i.TemplateId == templateId);
+
+        if (organizationId.HasValue)
+        {
+            // Show global images + org-specific images
+            query = query.Where(i => i.OrganizationId == null || i.OrganizationId == organizationId);
+        }
+        else if (!_currentUser.IsAdmin())
+        {
+            // Non-admin without org filter: show only global images
+            query = query.Where(i => i.OrganizationId == null);
+        }
+
+        var images = await query.OrderByDescending(i => i.BuildNumber).ToListAsync(ct);
         return Ok(images);
     }
 
     [HttpGet("{templateId:guid}/latest")]
-    public async Task<IActionResult> GetLatest(Guid templateId, CancellationToken ct)
+    public async Task<IActionResult> GetLatest(Guid templateId, [FromQuery] Guid? organizationId = null, CancellationToken ct = default)
     {
-        var image = await _db.Images
-            .Where(i => i.TemplateId == templateId && i.BuildStatus == Models.ImageBuildStatus.Succeeded)
-            .OrderByDescending(i => i.BuildNumber)
-            .FirstOrDefaultAsync(ct);
+        if (organizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), organizationId.Value, ct);
+            if (!isMember) return Forbid();
+        }
+
+        var query = _db.Images
+            .Where(i => i.TemplateId == templateId && i.BuildStatus == ImageBuildStatus.Succeeded);
+
+        if (organizationId.HasValue)
+            query = query.Where(i => i.OrganizationId == null || i.OrganizationId == organizationId);
+        else if (!_currentUser.IsAdmin())
+            query = query.Where(i => i.OrganizationId == null);
+
+        var image = await query.OrderByDescending(i => i.BuildNumber).FirstOrDefaultAsync(ct);
         return image is null ? NotFound() : Ok(image);
     }
 
@@ -48,8 +86,18 @@ public class ImagesController : ControllerBase
         var template = await _db.Templates.FindAsync([templateId], ct);
         if (template is null) return NotFound();
 
+        Guid? organizationId = request?.OrganizationId;
+
+        // Validate org membership and permission for org-scoped builds
+        if (organizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var hasPermission = await _orgMembership.HasPermissionAsync(
+                _currentUser.GetUserId(), organizationId.Value, Permissions.ImageBuild, ct);
+            if (!hasPermission) return Forbid();
+        }
+
         // Create the image record with a temporary content hash
-        var image = new Models.ContainerImage
+        var image = new ContainerImage
         {
             TemplateId = templateId,
             ContentHash = $"sha256:{Guid.NewGuid():N}",
@@ -59,9 +107,12 @@ public class ImagesController : ControllerBase
             DependencyManifest = "{}",
             DependencyLock = "{}",
             BuildNumber = await _db.Images.CountAsync(i => i.TemplateId == templateId, ct) + 1,
-            BuildStatus = Models.ImageBuildStatus.Building,
+            BuildStatus = ImageBuildStatus.Building,
             BuildStartedAt = DateTime.UtcNow,
-            BuiltOffline = request?.Offline ?? false
+            BuiltOffline = request?.Offline ?? false,
+            OrganizationId = organizationId,
+            OwnerId = _currentUser.GetUserId(),
+            Visibility = organizationId.HasValue ? ImageVisibility.Organization : ImageVisibility.Global
         };
 
         _db.Images.Add(image);
@@ -72,7 +123,7 @@ public class ImagesController : ControllerBase
             // Run introspection to populate the real manifest
             var (manifest, finalImage) = await _manifestService.GenerateManifestAsync(image.Id, ct);
 
-            finalImage.BuildStatus = Models.ImageBuildStatus.Succeeded;
+            finalImage.BuildStatus = ImageBuildStatus.Succeeded;
             finalImage.BuildCompletedAt = DateTime.UtcNow;
             finalImage.Changelog = "Build with introspection";
             await _db.SaveChangesAsync(ct);
@@ -82,7 +133,7 @@ public class ImagesController : ControllerBase
         catch (Exception)
         {
             // If introspection fails, the image still succeeds but without manifest data
-            image.BuildStatus = Models.ImageBuildStatus.Succeeded;
+            image.BuildStatus = ImageBuildStatus.Succeeded;
             image.BuildCompletedAt = DateTime.UtcNow;
             image.Changelog = "Build completed (introspection unavailable)";
             await _db.SaveChangesAsync(ct);
@@ -94,6 +145,25 @@ public class ImagesController : ControllerBase
     [HttpGet("diff")]
     public async Task<IActionResult> Diff([FromQuery] Guid fromImageId, [FromQuery] Guid toImageId, CancellationToken ct)
     {
+        // Validate user can access both images
+        if (!_currentUser.IsAdmin())
+        {
+            var userId = _currentUser.GetUserId();
+            var fromImage = await _db.Images.AsNoTracking().FirstOrDefaultAsync(i => i.Id == fromImageId, ct);
+            var toImage = await _db.Images.AsNoTracking().FirstOrDefaultAsync(i => i.Id == toImageId, ct);
+
+            if (fromImage?.OrganizationId != null)
+            {
+                var canAccess = await _orgMembership.IsMemberAsync(userId, fromImage.OrganizationId.Value, ct);
+                if (!canAccess) return Forbid();
+            }
+            if (toImage?.OrganizationId != null)
+            {
+                var canAccess = await _orgMembership.IsMemberAsync(userId, toImage.OrganizationId.Value, ct);
+                if (!canAccess) return Forbid();
+            }
+        }
+
         try
         {
             var diff = await _diffService.DiffAsync(fromImageId, toImageId, ct);
@@ -153,4 +223,4 @@ public class ImagesController : ControllerBase
     }
 }
 
-public record BuildRequest(bool Offline = false, bool Force = false);
+public record BuildRequest(bool Offline = false, bool Force = false, Guid? OrganizationId = null);

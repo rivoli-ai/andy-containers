@@ -16,28 +16,44 @@ public class ContainersMcpTools
     private readonly IGitCredentialService _credentialService;
     private readonly IImageManifestService _manifestService;
     private readonly IImageDiffService _diffService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
     public ContainersMcpTools(
         ContainersDbContext db,
         IGitCloneService gitCloneService,
         IGitCredentialService credentialService,
         IImageManifestService manifestService,
-        IImageDiffService diffService)
+        IImageDiffService diffService,
+        ICurrentUserService currentUser,
+        IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _gitCloneService = gitCloneService;
         _credentialService = credentialService;
         _manifestService = manifestService;
         _diffService = diffService;
+        _currentUser = currentUser;
+        _orgMembership = orgMembership;
     }
 
     [McpServerTool, Description("List all containers with their status")]
     public async Task<IReadOnlyList<McpContainerInfo>> ListContainers(
-        [Description("Filter by status: Pending, Creating, Running, Stopped, Failed, Destroyed")] string? status = null)
+        [Description("Filter by status: Pending, Creating, Running, Stopped, Failed, Destroyed")] string? status = null,
+        [Description("Filter by organization ID (GUID)")] string? organizationId = null)
     {
         var query = _db.Containers.Include(c => c.Template).Include(c => c.Provider).AsQueryable();
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<ContainerStatus>(status, true, out var s))
             query = query.Where(c => c.Status == s);
+        if (!string.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, out var orgId))
+        {
+            if (!_currentUser.IsAdmin())
+            {
+                var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), orgId);
+                if (!isMember) return [];
+            }
+            query = query.Where(c => c.OrganizationId == orgId);
+        }
         var containers = await query.OrderByDescending(c => c.CreatedAt).Take(50).ToListAsync();
         return containers.Select(c => new McpContainerInfo(c.Id, c.Name, c.Template?.Name ?? "", c.Provider?.Name ?? "", c.Status.ToString(), c.IdeEndpoint, c.VncEndpoint, c.CreatedAt)).ToList();
     }
@@ -54,39 +70,84 @@ public class ContainersMcpTools
     [McpServerTool, Description("Browse the container template catalog")]
     public async Task<IReadOnlyList<McpTemplateInfo>> BrowseTemplates(
         [Description("Search by name or description")] string? search = null,
-        [Description("Filter by scope: Global, Organization, Team, User")] string? scope = null)
+        [Description("Filter by scope: Global, Organization, Team, User")] string? scope = null,
+        [Description("Filter by organization ID (GUID)")] string? organizationId = null)
     {
         var query = _db.Templates.Where(t => t.IsPublished).AsQueryable();
         if (!string.IsNullOrEmpty(search))
             query = query.Where(t => t.Name.Contains(search) || (t.Description != null && t.Description.Contains(search)));
         if (!string.IsNullOrEmpty(scope) && Enum.TryParse<CatalogScope>(scope, true, out var s))
             query = query.Where(t => t.CatalogScope == s);
+        if (!string.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, out var orgId))
+        {
+            if (!_currentUser.IsAdmin())
+            {
+                var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), orgId);
+                if (!isMember) return [];
+            }
+            query = query.Where(t => t.OrganizationId == orgId || t.CatalogScope == CatalogScope.Global);
+        }
         var templates = await query.OrderBy(t => t.Name).Take(50).ToListAsync();
         return templates.Select(t => new McpTemplateInfo(t.Id, t.Code, t.Name, t.Description ?? "", t.Version, t.CatalogScope.ToString(), t.IdeType.ToString(), t.GpuRequired, t.GpuPreferred, t.Tags ?? [])).ToList();
     }
 
     [McpServerTool, Description("List infrastructure providers and their health status")]
-    public async Task<IReadOnlyList<McpProviderInfo>> ListProviders()
+    public async Task<IReadOnlyList<McpProviderInfo>> ListProviders(
+        [Description("Filter by organization ID (GUID)")] string? organizationId = null)
     {
-        var providers = await _db.Providers.OrderBy(p => p.Name).ToListAsync();
+        var query = _db.Providers.AsQueryable();
+        if (!string.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, out var orgId))
+        {
+            if (!_currentUser.IsAdmin())
+            {
+                var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), orgId);
+                if (!isMember) return [];
+            }
+            query = query.Where(p => p.OrganizationId == null || p.OrganizationId == orgId);
+        }
+        var providers = await query.OrderBy(p => p.Name).ToListAsync();
         return providers.Select(p => new McpProviderInfo(p.Id, p.Code, p.Name, p.Type.ToString(), p.Region ?? "", p.IsEnabled, p.HealthStatus.ToString(), p.LastHealthCheck)).ToList();
     }
 
     [McpServerTool, Description("List workspaces")]
-    public async Task<IReadOnlyList<McpWorkspaceInfo>> ListWorkspaces()
+    public async Task<IReadOnlyList<McpWorkspaceInfo>> ListWorkspaces(
+        [Description("Filter by organization ID (GUID)")] string? organizationId = null)
     {
-        var workspaces = await _db.Workspaces.OrderByDescending(w => w.CreatedAt).Take(50).ToListAsync();
+        var query = _db.Workspaces.AsQueryable();
+        if (!string.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, out var orgId))
+        {
+            if (!_currentUser.IsAdmin())
+            {
+                var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), orgId);
+                if (!isMember) return [];
+            }
+            query = query.Where(w => w.OrganizationId == orgId);
+        }
+        var workspaces = await query.OrderByDescending(w => w.CreatedAt).Take(50).ToListAsync();
         return workspaces.Select(w => new McpWorkspaceInfo(w.Id, w.Name, w.Description ?? "", w.Status.ToString(), w.GitRepositoryUrl ?? "", w.GitBranch ?? "", w.CreatedAt)).ToList();
     }
 
     [McpServerTool, Description("List built images for a template")]
-    public async Task<IReadOnlyList<McpImageInfo>> ListImages([Description("Template code (e.g., full-stack)")] string templateCode)
+    public async Task<IReadOnlyList<McpImageInfo>> ListImages(
+        [Description("Template code (e.g., full-stack)")] string templateCode,
+        [Description("Filter by organization ID (GUID)")] string? organizationId = null)
     {
         var template = await _db.Templates.FirstOrDefaultAsync(t => t.Code == templateCode);
         if (template is null) return [];
-        var images = await _db.Images.Where(i => i.TemplateId == template.Id).OrderByDescending(i => i.BuildNumber).Take(20).ToListAsync();
+        var query = _db.Images.Where(i => i.TemplateId == template.Id);
+        if (!string.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, out var orgId))
+        {
+            if (!_currentUser.IsAdmin())
+            {
+                var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), orgId);
+                if (!isMember) return [];
+            }
+            query = query.Where(i => i.OrganizationId == null || i.OrganizationId == orgId);
+        }
+        var images = await query.OrderByDescending(i => i.BuildNumber).Take(20).ToListAsync();
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
+
     [McpServerTool, Description("List git repositories cloned into a container with their clone status")]
     public async Task<IReadOnlyList<McpGitRepositoryInfo>> ListContainerRepositories(
         [Description("Container ID (GUID)")] string containerId)
@@ -236,6 +297,71 @@ public class ContainersMcpTools
             .ToListAsync();
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
+
+    [McpServerTool, Description("Get a summary of an organization's resources including templates, images, containers, and providers")]
+    public async Task<McpOrgResourceSummary?> GetOrganizationResources(
+        [Description("Organization ID (GUID)")] string organizationId)
+    {
+        if (!Guid.TryParse(organizationId, out var orgId)) return null;
+
+        var userId = _currentUser.GetUserId();
+        if (!_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(userId, orgId);
+            if (!isMember) return null;
+        }
+
+        var templateCount = await _db.Templates.CountAsync(t => t.OrganizationId == orgId);
+        var imageCount = await _db.Images.CountAsync(i => i.OrganizationId == orgId);
+        var containerCount = await _db.Containers.CountAsync(c => c.OrganizationId == orgId);
+        var providerCount = await _db.Providers.CountAsync(p => p.OrganizationId == orgId);
+
+        return new McpOrgResourceSummary(orgId, templateCount, imageCount, containerCount, providerCount);
+    }
+
+    [McpServerTool, Description("Trigger an organization-scoped image build from a template")]
+    public async Task<McpImageInfo?> BuildOrganizationImage(
+        [Description("Organization ID (GUID)")] string organizationId,
+        [Description("Template code (e.g., full-stack)")] string templateCode)
+    {
+        if (!Guid.TryParse(organizationId, out var orgId)) return null;
+
+        var userId = _currentUser.GetUserId();
+        if (!_currentUser.IsAdmin())
+        {
+            var hasPermission = await _orgMembership.HasPermissionAsync(userId, orgId, Permissions.ImageBuild);
+            if (!hasPermission) return null;
+        }
+
+        var template = await _db.Templates.FirstOrDefaultAsync(t => t.Code == templateCode);
+        if (template is null) return null;
+
+        var image = new ContainerImage
+        {
+            TemplateId = template.Id,
+            ContentHash = $"sha256:{Guid.NewGuid():N}",
+            Tag = $"{template.Code}:{template.Version}-{DateTime.UtcNow:yyyyMMddHHmmss}",
+            ImageReference = $"andy-containers/{template.Code}:{template.Version}",
+            BaseImageDigest = $"sha256:{Guid.NewGuid():N}",
+            DependencyManifest = "{}",
+            DependencyLock = "{}",
+            BuildNumber = await _db.Images.CountAsync(i => i.TemplateId == template.Id) + 1,
+            BuildStatus = ImageBuildStatus.Building,
+            BuildStartedAt = DateTime.UtcNow,
+            OrganizationId = orgId,
+            OwnerId = userId,
+            Visibility = ImageVisibility.Organization
+        };
+        _db.Images.Add(image);
+        await _db.SaveChangesAsync();
+
+        image.BuildStatus = ImageBuildStatus.Succeeded;
+        image.BuildCompletedAt = DateTime.UtcNow;
+        image.Changelog = "Organization-scoped build";
+        await _db.SaveChangesAsync();
+
+        return new McpImageInfo(image.Id, image.Tag, image.ContentHash, image.BuildNumber, image.BuildStatus.ToString(), image.BuiltOffline, image.Changelog, image.CreatedAt);
+    }
 }
 
 public record McpGitRepositoryInfo(Guid Id, string Url, string Branch, string TargetPath, string CloneStatus, string CloneError, bool IsFromTemplate, DateTime? CloneStartedAt, DateTime? CloneCompletedAt);
@@ -250,3 +376,4 @@ public record McpImageManifestInfo(string ContentHash, string BaseImage, string 
 public record McpInstalledToolInfo(string Name, string Version, string Type, bool MatchesDeclared);
 public record McpImageDiffInfo(bool BaseImageChanged, string? OsVersionChanged, bool ArchitectureChanged, List<McpToolChange> ToolChanges, int PackagesAdded, int PackagesRemoved, int PackagesUpgraded, int PackagesDowngraded, string? SizeChange, string? Warning);
 public record McpToolChange(string Name, string ChangeType, string? PreviousVersion, string? NewVersion, string? Severity);
+public record McpOrgResourceSummary(Guid OrganizationId, int TemplateCount, int ImageCount, int ContainerCount, int ProviderCount);

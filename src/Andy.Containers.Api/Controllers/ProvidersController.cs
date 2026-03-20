@@ -16,21 +16,38 @@ public class ProvidersController : ControllerBase
     private readonly ContainersDbContext _db;
     private readonly IInfrastructureProviderFactory _providerFactory;
     private readonly ICostEstimationService _costService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationMembershipService _orgMembership;
 
     public ProvidersController(
         ContainersDbContext db,
         IInfrastructureProviderFactory providerFactory,
-        ICostEstimationService costService)
+        ICostEstimationService costService,
+        ICurrentUserService currentUser,
+        IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _providerFactory = providerFactory;
         _costService = costService;
+        _currentUser = currentUser;
+        _orgMembership = orgMembership;
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List([FromQuery] Guid? organizationId = null, CancellationToken ct = default)
     {
-        var providers = await _db.Providers.OrderBy(p => p.Name).ToListAsync(ct);
+        if (organizationId.HasValue && !_currentUser.IsAdmin())
+        {
+            var hasPermission = await _orgMembership.HasPermissionAsync(
+                _currentUser.GetUserId(), organizationId.Value, Permissions.ProviderRead, ct);
+            if (!hasPermission) return Forbid();
+        }
+
+        var query = _db.Providers.AsQueryable();
+        if (organizationId.HasValue)
+            query = query.Where(p => p.OrganizationId == null || p.OrganizationId == organizationId);
+
+        var providers = await query.OrderBy(p => p.Name).ToListAsync(ct);
         return Ok(providers);
     }
 
