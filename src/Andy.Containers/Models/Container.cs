@@ -28,6 +28,7 @@ public class Container
 
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();
+    public ICollection<ContainerGitRepository> GitRepositories { get; set; } = new List<ContainerGitRepository>();
 }
 
 public enum ContainerStatus

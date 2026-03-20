@@ -84,6 +84,7 @@ public class DependencyChange
     public string? PreviousVersion { get; set; }
     public string? NewVersion { get; set; }
     public DependencyChangeType ChangeType { get; set; }
+    public ChangeSeverity? Severity { get; set; }
 }
 
 public enum DependencyChangeType

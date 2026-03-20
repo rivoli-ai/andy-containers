@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using Andy.Containers.Abstractions;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -10,10 +12,23 @@ namespace Andy.Containers.Api.Mcp;
 public class ContainersMcpTools
 {
     private readonly ContainersDbContext _db;
+    private readonly IGitCloneService _gitCloneService;
+    private readonly IGitCredentialService _credentialService;
+    private readonly IImageManifestService _manifestService;
+    private readonly IImageDiffService _diffService;
 
-    public ContainersMcpTools(ContainersDbContext db)
+    public ContainersMcpTools(
+        ContainersDbContext db,
+        IGitCloneService gitCloneService,
+        IGitCredentialService credentialService,
+        IImageManifestService manifestService,
+        IImageDiffService diffService)
     {
         _db = db;
+        _gitCloneService = gitCloneService;
+        _credentialService = credentialService;
+        _manifestService = manifestService;
+        _diffService = diffService;
     }
 
     [McpServerTool, Description("List all containers with their status")]
@@ -72,11 +87,166 @@ public class ContainersMcpTools
         var images = await _db.Images.Where(i => i.TemplateId == template.Id).OrderByDescending(i => i.BuildNumber).Take(20).ToListAsync();
         return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
     }
+    [McpServerTool, Description("List git repositories cloned into a container with their clone status")]
+    public async Task<IReadOnlyList<McpGitRepositoryInfo>> ListContainerRepositories(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return [];
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == id)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync();
+        return repos.Select(r => new McpGitRepositoryInfo(r.Id, r.Url, r.Branch ?? "", r.TargetPath, r.CloneStatus.ToString(), r.CloneError ?? "", r.IsFromTemplate, r.CloneStartedAt, r.CloneCompletedAt)).ToList();
+    }
+
+    [McpServerTool, Description("Clone a new git repository into a running container")]
+    public async Task<McpGitRepositoryInfo?> CloneRepository(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("Git repository URL (https:// or git@)")] string url,
+        [Description("Branch to clone")] string? branch = null,
+        [Description("Target path inside the container")] string? targetPath = null,
+        [Description("Credential label for private repos")] string? credentialRef = null,
+        [Description("Shallow clone depth")] int? cloneDepth = null,
+        [Description("Include submodules")] bool submodules = false)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return null;
+
+        var config = new GitRepositoryConfig { Url = url, Branch = branch, TargetPath = targetPath, CloneDepth = cloneDepth, Submodules = submodules };
+        var errors = GitRepositoryValidator.Validate(config);
+        if (errors.Count > 0) return null;
+
+        var repo = new ContainerGitRepository
+        {
+            ContainerId = id,
+            Url = url,
+            Branch = branch,
+            TargetPath = targetPath ?? "/workspace",
+            CredentialRef = credentialRef,
+            CloneDepth = cloneDepth,
+            Submodules = submodules,
+            CloneStatus = GitCloneStatus.Pending
+        };
+        _db.ContainerGitRepositories.Add(repo);
+        await _db.SaveChangesAsync();
+
+        var cloned = await _gitCloneService.CloneRepositoryAsync(id, repo.Id);
+        return new McpGitRepositoryInfo(cloned.Id, cloned.Url, cloned.Branch ?? "", cloned.TargetPath, cloned.CloneStatus.ToString(), cloned.CloneError ?? "", cloned.IsFromTemplate, cloned.CloneStartedAt, cloned.CloneCompletedAt);
+    }
+
+    [McpServerTool, Description("Pull latest changes for a cloned repository")]
+    public async Task<McpGitRepositoryInfo?> PullRepository(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("Repository ID (GUID)")] string repositoryId)
+    {
+        if (!Guid.TryParse(containerId, out var cId) || !Guid.TryParse(repositoryId, out var rId)) return null;
+        var repo = await _gitCloneService.PullRepositoryAsync(cId, rId);
+        return new McpGitRepositoryInfo(repo.Id, repo.Url, repo.Branch ?? "", repo.TargetPath, repo.CloneStatus.ToString(), repo.CloneError ?? "", repo.IsFromTemplate, repo.CloneStartedAt, repo.CloneCompletedAt);
+    }
+
+    [McpServerTool, Description("List stored git credentials (tokens are never returned)")]
+    public async Task<IReadOnlyList<McpGitCredentialInfo>> ListGitCredentials(
+        [Description("Owner ID to list credentials for")] string ownerId)
+    {
+        var credentials = await _credentialService.ListAsync(ownerId);
+        return credentials.Select(c => new McpGitCredentialInfo(c.Id, c.Label, c.GitHost ?? "", c.CredentialType.ToString(), c.CreatedAt, c.LastUsedAt)).ToList();
+    }
+
+    [McpServerTool, Description("Store a git credential (PAT or deploy key) for cloning private repositories")]
+    public async Task<McpGitCredentialInfo?> StoreGitCredential(
+        [Description("Owner ID")] string ownerId,
+        [Description("Label for this credential (e.g., 'github-work')")] string label,
+        [Description("The token or key value")] string token,
+        [Description("Git host to auto-match (e.g., github.com)")] string? gitHost = null)
+    {
+        var credential = await _credentialService.CreateAsync(ownerId, label, token, gitHost);
+        return new McpGitCredentialInfo(credential.Id, credential.Label, credential.GitHost ?? "", credential.CredentialType.ToString(), credential.CreatedAt, credential.LastUsedAt);
+    }
+
+    [McpServerTool, Description("Get the introspection manifest for a built image, showing installed tools, OS packages, and base image info")]
+    public async Task<McpImageManifestInfo?> GetImageManifest(
+        [Description("Image ID (GUID)")] string imageId)
+    {
+        if (!Guid.TryParse(imageId, out var id)) return null;
+        var manifest = await _manifestService.GetManifestAsync(id);
+        if (manifest is null) return null;
+        return new McpImageManifestInfo(
+            manifest.ImageContentHash,
+            manifest.BaseImage,
+            manifest.BaseImageDigest,
+            manifest.Architecture,
+            $"{manifest.OperatingSystem.Name} {manifest.OperatingSystem.Version}",
+            manifest.Tools.Count,
+            manifest.OsPackages.Count,
+            manifest.IntrospectedAt);
+    }
+
+    [McpServerTool, Description("List the developer tools installed in a built image with their versions and types")]
+    public async Task<IReadOnlyList<McpInstalledToolInfo>> GetImageTools(
+        [Description("Image ID (GUID)")] string imageId)
+    {
+        if (!Guid.TryParse(imageId, out var id)) return [];
+        var manifest = await _manifestService.GetManifestAsync(id);
+        if (manifest is null) return [];
+        return manifest.Tools.Select(t => new McpInstalledToolInfo(t.Name, t.Version, t.Type.ToString(), t.MatchesDeclared)).ToList();
+    }
+
+    [McpServerTool, Description("Compare two images to see what tools, packages, and configurations changed between them")]
+    public async Task<McpImageDiffInfo?> CompareImages(
+        [Description("From image ID (GUID)")] string fromImageId,
+        [Description("To image ID (GUID)")] string toImageId)
+    {
+        if (!Guid.TryParse(fromImageId, out var fromId) || !Guid.TryParse(toImageId, out var toId)) return null;
+        try
+        {
+            var diff = await _diffService.DiffAsync(fromId, toId);
+            return new McpImageDiffInfo(
+                diff.BaseImageChanged,
+                diff.OsVersionChanged,
+                diff.ArchitectureChanged,
+                diff.ToolChanges.Select(c => new McpToolChange(c.Name, c.ChangeType, c.PreviousVersion, c.NewVersion, c.Severity)).ToList(),
+                diff.PackageChanges.Added,
+                diff.PackageChanges.Removed,
+                diff.PackageChanges.Upgraded,
+                diff.PackageChanges.Downgraded,
+                diff.SizeChange,
+                diff.Warning);
+        }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    [McpServerTool, Description("Find images that have a specific tool installed")]
+    public async Task<IReadOnlyList<McpImageInfo>> FindImageByTool(
+        [Description("Tool name to search for (e.g., python, node, dotnet-sdk)")] string toolName,
+        [Description("Template code to limit search")] string? templateCode = null)
+    {
+        var query = _db.Images.AsQueryable();
+        if (!string.IsNullOrEmpty(templateCode))
+        {
+            var template = await _db.Templates.FirstOrDefaultAsync(t => t.Code == templateCode);
+            if (template is null) return [];
+            query = query.Where(i => i.TemplateId == template.Id);
+        }
+        var images = await query
+            .Where(i => i.DependencyManifest != null && i.DependencyManifest.Contains(toolName))
+            .OrderByDescending(i => i.BuildNumber)
+            .Take(20)
+            .ToListAsync();
+        return images.Select(i => new McpImageInfo(i.Id, i.Tag, i.ContentHash, i.BuildNumber, i.BuildStatus.ToString(), i.BuiltOffline, i.Changelog ?? "", i.CreatedAt)).ToList();
+    }
 }
 
+public record McpGitRepositoryInfo(Guid Id, string Url, string Branch, string TargetPath, string CloneStatus, string CloneError, bool IsFromTemplate, DateTime? CloneStartedAt, DateTime? CloneCompletedAt);
+public record McpGitCredentialInfo(Guid Id, string Label, string GitHost, string CredentialType, DateTime CreatedAt, DateTime? LastUsedAt);
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
 public record McpContainerDetail(Guid Id, string Name, string TemplateName, string TemplateCode, string ProviderName, string ProviderType, string Status, string OwnerId, string? IdeEndpoint, string? VncEndpoint, string? ExternalId, DateTime CreatedAt, DateTime? StartedAt, DateTime? StoppedAt, DateTime? ExpiresAt);
 public record McpTemplateInfo(Guid Id, string Code, string Name, string Description, string Version, string CatalogScope, string IdeType, bool GpuRequired, bool GpuPreferred, string[] Tags);
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
 public record McpImageInfo(Guid Id, string Tag, string ContentHash, int BuildNumber, string BuildStatus, bool BuiltOffline, string Changelog, DateTime CreatedAt);
+public record McpImageManifestInfo(string ContentHash, string BaseImage, string BaseImageDigest, string Architecture, string OperatingSystem, int ToolCount, int PackageCount, DateTime IntrospectedAt);
+public record McpInstalledToolInfo(string Name, string Version, string Type, bool MatchesDeclared);
+public record McpImageDiffInfo(bool BaseImageChanged, string? OsVersionChanged, bool ArchitectureChanged, List<McpToolChange> ToolChanges, int PackagesAdded, int PackagesRemoved, int PackagesUpgraded, int PackagesDowngraded, string? SizeChange, string? Warning);
+public record McpToolChange(string Name, string ChangeType, string? PreviousVersion, string? NewVersion, string? Severity);

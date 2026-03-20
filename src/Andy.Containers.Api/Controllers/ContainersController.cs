@@ -16,12 +16,14 @@ public class ContainersController : ControllerBase
     private readonly IContainerService _containerService;
     private readonly ICurrentUserService _currentUser;
     private readonly ContainersDbContext _db;
+    private readonly IGitCloneService _gitCloneService;
 
-    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db)
+    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db, IGitCloneService gitCloneService)
     {
         _containerService = containerService;
         _currentUser = currentUser;
         _db = db;
+        _gitCloneService = gitCloneService;
     }
 
     [HttpGet]
@@ -148,11 +150,112 @@ public class ContainersController : ControllerBase
         return Ok(events);
     }
 
+    [HttpGet("{id:guid}/repositories")]
+    public async Task<IActionResult> ListRepositories(Guid id, CancellationToken ct)
+    {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == id)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(repos.Select(r => new ContainerGitRepositoryDto(
+            r.Id, r.Url, r.Branch, r.TargetPath, r.CloneDepth, r.Submodules,
+            r.IsFromTemplate, r.CloneStatus.ToString(), r.CloneError,
+            r.CloneStartedAt, r.CloneCompletedAt)));
+    }
+
+    [HttpPost("{id:guid}/repositories")]
+    public async Task<IActionResult> AddRepository(Guid id, [FromBody] AddRepositoryDto dto, CancellationToken ct)
+    {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        if (container.Status != ContainerStatus.Running)
+            return BadRequest(new { error = $"Container is {container.Status}, must be Running to add repositories" });
+
+        var config = new GitRepositoryConfig
+        {
+            Url = dto.Url,
+            Branch = dto.Branch,
+            TargetPath = dto.TargetPath,
+            CloneDepth = dto.CloneDepth,
+            Submodules = dto.Submodules
+        };
+
+        var errors = GitRepositoryValidator.Validate(config);
+        if (errors.Count > 0)
+            return BadRequest(new { errors });
+
+        var repo = new ContainerGitRepository
+        {
+            ContainerId = id,
+            Url = dto.Url,
+            Branch = dto.Branch,
+            TargetPath = dto.TargetPath ?? "/workspace",
+            CredentialRef = dto.CredentialRef,
+            CloneDepth = dto.CloneDepth,
+            Submodules = dto.Submodules,
+            CloneStatus = GitCloneStatus.Pending
+        };
+        _db.ContainerGitRepositories.Add(repo);
+        await _db.SaveChangesAsync(ct);
+
+        // Immediately clone
+        var cloned = await _gitCloneService.CloneRepositoryAsync(id, repo.Id, ct);
+
+        return CreatedAtAction(nameof(ListRepositories), new { id },
+            new ContainerGitRepositoryDto(
+                cloned.Id, cloned.Url, cloned.Branch, cloned.TargetPath, cloned.CloneDepth, cloned.Submodules,
+                cloned.IsFromTemplate, cloned.CloneStatus.ToString(), cloned.CloneError,
+                cloned.CloneStartedAt, cloned.CloneCompletedAt));
+    }
+
+    [HttpPost("{id:guid}/repositories/{repoId:guid}/pull")]
+    public async Task<IActionResult> PullRepository(Guid id, Guid repoId, CancellationToken ct)
+    {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        if (container.Status != ContainerStatus.Running)
+            return BadRequest(new { error = $"Container is {container.Status}, must be Running to pull" });
+
+        try
+        {
+            var repo = await _gitCloneService.PullRepositoryAsync(id, repoId, ct);
+            return Ok(new ContainerGitRepositoryDto(
+                repo.Id, repo.Url, repo.Branch, repo.TargetPath, repo.CloneDepth, repo.Submodules,
+                repo.IsFromTemplate, repo.CloneStatus.ToString(), repo.CloneError,
+                repo.CloneStartedAt, repo.CloneCompletedAt));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     private bool CanAccess(Container container)
     {
         if (_currentUser.IsAdmin()) return true;
         return container.OwnerId == _currentUser.GetUserId();
     }
+}
+
+public record ContainerGitRepositoryDto(
+    Guid Id, string Url, string? Branch, string TargetPath, int? CloneDepth, bool Submodules,
+    bool IsFromTemplate, string CloneStatus, string? CloneError,
+    DateTime? CloneStartedAt, DateTime? CloneCompletedAt);
+
+public record AddRepositoryDto
+{
+    public required string Url { get; init; }
+    public string? Branch { get; init; }
+    public string? TargetPath { get; init; }
+    public string? CredentialRef { get; init; }
+    public int? CloneDepth { get; init; }
+    public bool Submodules { get; init; }
 }
 
 public class ExecRequest

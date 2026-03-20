@@ -121,6 +121,22 @@ public class ContainerProvisioningWorker : BackgroundService
             await db.SaveChangesAsync(stoppingToken);
             _logger.LogInformation("Container {ContainerId} provisioned successfully on {Provider}",
                 job.ContainerId, job.ProviderCode);
+
+            // Clone git repositories after container is running
+            if (job.HasGitRepositories)
+            {
+                try
+                {
+                    var gitCloneService = scope.ServiceProvider.GetRequiredService<IGitCloneService>();
+                    await gitCloneService.CloneRepositoriesAsync(job.ContainerId, stoppingToken);
+                }
+                catch (Exception gitEx)
+                {
+                    // Failed clones do NOT fail the container
+                    _logger.LogWarning(gitEx, "Git clone failed for container {ContainerId}, container remains Running",
+                        job.ContainerId);
+                }
+            }
         }
         catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
         {

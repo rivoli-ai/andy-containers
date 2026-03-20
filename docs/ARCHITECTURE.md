@@ -75,7 +75,11 @@ Business Logic Layer
 ├── Template Catalog Service
 ├── Session Management Service
 ├── Infrastructure Routing Service
-└── Health Monitoring Service
+├── Health Monitoring Service
+├── Image Manifest & Introspection Service
+├── Image Diff Service
+├── Git Clone Service
+└── Git Credential Service
          │
 Domain Layer (Andy.Containers)
 ├── Models (Container, Workspace, Template, etc.)
@@ -670,6 +674,11 @@ AI assistant integration for managing containers from Claude Desktop, Cursor, et
 - Browse template catalog
 - Check container status and logs
 - Connect to running containers
+- Clone and manage git repositories in containers
+- Store and list git credentials
+- Get image manifests and installed tool lists
+- Compare images to see what changed
+- Search for images by installed tool
 
 ## 12. Technology Stack
 
@@ -826,7 +835,33 @@ Image #41 → #42 changelog:
   UNCHANGED angular-cli    18.2.12
 ```
 
-### 14.6 Air-Gapped / Offline Builds
+### 14.6 Runtime Introspection
+
+After an image is built, the platform automatically introspects the running container to discover what is actually installed. This produces an `ImageToolManifest` containing:
+
+- **Architecture** (amd64, arm64)
+- **Operating System** (name, version, codename, kernel)
+- **Installed Tools** with exact versions (15+ tool types: dotnet, python, node, go, rust, java, git, etc.)
+- **OS Packages** (dpkg on Debian/Ubuntu, apk on Alpine)
+
+The introspection runs as a single shell script inside the container, avoiding 15+ individual exec calls. Tool version output is parsed using compile-time generated regexes (`[GeneratedRegex]`). Each detected tool is matched against declared template dependencies to flag version mismatches.
+
+The manifest is serialized to the `DependencyManifest` JSONB column on `ContainerImage`, and `ResolvedDependency` records are created for each tool.
+
+### 14.7 Image Diffing
+
+Any two images can be compared to produce a structured diff showing:
+
+- **Tool changes** (Added, Removed, VersionChanged) with severity classification (Major, Minor, Patch)
+- **Package changes** (added, removed, upgraded, downgraded counts)
+- **Base image** changes
+- **OS version** changes
+- **Architecture** changes
+- **Size** delta in MB
+
+The diff API is exposed via REST (`GET /api/images/diff`), MCP (`CompareImages` tool), and gRPC (`DiffImages` RPC).
+
+### 14.8 Air-Gapped / Offline Builds
 
 For environments with no internet access (secure environments, CI pipelines):
 
@@ -838,7 +873,7 @@ For environments with no internet access (secure environments, CI pipelines):
 
 This ensures containers in air-gapped environments use the exact same verified artifacts as their online-built counterparts.
 
-### 14.7 Library Dependency Tracking
+### 14.9 Library Dependency Tracking
 
 Beyond compilers and tools, templates can track **library dependencies** per ecosystem:
 
@@ -850,8 +885,38 @@ Beyond compilers and tools, templates can track **library dependencies** per eco
 
 Library dependencies follow the same versioning, locking, and auto-update model. When a library update matches the update policy, the image is rebuilt with the new version and the change is recorded in the changelog.
 
+## 15. Git Repository Management
+
+### 15.1 Multi-Repository Clone
+
+Containers support cloning multiple git repositories at creation time or into running containers. Each repository is tracked as a `ContainerGitRepository` entity with individual clone status (`Pending`, `Cloning`, `Cloned`, `Failed`).
+
+Repository sources:
+1. **Request repos** -- specified in the `CreateContainerRequest.GitRepositories` list
+2. **Template repos** -- default repositories defined on the `ContainerTemplate.GitRepositories` JSONB field
+3. **Runtime repos** -- added via REST, MCP, or gRPC to a running container
+
+Template repos are automatically merged with request repos unless `ExcludeTemplateRepos` is set.
+
+### 15.2 Git Credential Management
+
+Private repository access is handled via `GitCredential` entities:
+
+- Credentials are encrypted using ASP.NET Core Data Protection API
+- Tokens are never returned in API responses
+- Resolution order: explicit `credentialRef` label match, then auto-match by git host
+- Credential injection uses HTTPS URL format (`https://token@host/...`), cleaned up after clone
+
+### 15.3 Clone Flow
+
+1. Validate repository URLs (HTTPS and SSH only, no embedded credentials, no path traversal)
+2. Resolve credential if needed (by label or host auto-match)
+3. Execute `git clone` inside the container via `IInfrastructureProvider.ExecAsync`
+4. Update clone status and timestamps
+5. Failed clones do NOT fail the container -- the container stays Running
+
 ---
 
 **Status:** Alpha
 **Version:** 0.1.0-alpha
-**Last Updated:** 2026-02-10
+**Last Updated:** 2026-03-20

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -82,7 +83,7 @@ public class ContainerOrchestrationService : IContainerService
 
         if (request.GitRepository is not null)
         {
-            container.GitRepository = System.Text.Json.JsonSerializer.Serialize(request.GitRepository);
+            container.GitRepository = JsonSerializer.Serialize(request.GitRepository);
         }
 
         _db.Containers.Add(container);
@@ -92,6 +93,61 @@ public class ContainerOrchestrationService : IContainerService
             EventType = ContainerEventType.Created,
             SubjectId = container.OwnerId
         });
+
+        // Collect git repositories from request and template
+        var gitRepos = new List<GitRepositoryConfig>();
+
+        // Add repos from the list
+        if (request.GitRepositories is { Count: > 0 })
+        {
+            var errors = GitRepositoryValidator.ValidateAll(request.GitRepositories);
+            if (errors.Count > 0)
+                throw new ArgumentException(string.Join("; ", errors));
+            gitRepos.AddRange(request.GitRepositories);
+        }
+
+        // Backward compat: single GitRepository
+        if (request.GitRepository is not null && request.GitRepositories is null)
+        {
+            var errors = GitRepositoryValidator.Validate(request.GitRepository);
+            if (errors.Count > 0)
+                throw new ArgumentException(string.Join("; ", errors));
+            gitRepos.Add(request.GitRepository);
+        }
+
+        // Merge template repos unless excluded
+        if (!request.ExcludeTemplateRepos && !string.IsNullOrEmpty(template.GitRepositories))
+        {
+            var templateRepos = JsonSerializer.Deserialize<List<GitRepositoryConfig>>(template.GitRepositories);
+            if (templateRepos is not null)
+            {
+                foreach (var tr in templateRepos)
+                {
+                    gitRepos.Add(tr);
+                }
+            }
+        }
+
+        // Create ContainerGitRepository entities
+        var hasGitRepos = false;
+        foreach (var repoConfig in gitRepos)
+        {
+            var gitRepo = new ContainerGitRepository
+            {
+                ContainerId = container.Id,
+                Url = repoConfig.Url,
+                Branch = repoConfig.Branch,
+                TargetPath = repoConfig.TargetPath ?? "/workspace",
+                CredentialRef = repoConfig.CredentialRef,
+                CloneDepth = repoConfig.CloneDepth,
+                Submodules = repoConfig.Submodules,
+                IsFromTemplate = !string.IsNullOrEmpty(template.GitRepositories) &&
+                    (request.GitRepositories is null || !request.GitRepositories.Any(r => r.Url == repoConfig.Url)),
+                CloneStatus = GitCloneStatus.Pending
+            };
+            _db.ContainerGitRepositories.Add(gitRepo);
+            hasGitRepos = true;
+        }
 
         await _db.SaveChangesAsync(ct);
 
@@ -104,7 +160,8 @@ public class ContainerOrchestrationService : IContainerService
             ContainerName: container.Name,
             OwnerId: container.OwnerId,
             Resources: request.Resources,
-            Gpu: request.Gpu);
+            Gpu: request.Gpu,
+            HasGitRepositories: hasGitRepos);
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",

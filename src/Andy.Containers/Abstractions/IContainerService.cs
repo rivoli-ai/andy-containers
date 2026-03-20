@@ -32,6 +32,8 @@ public class CreateContainerRequest
     public ResourceSpec? Resources { get; set; }
     public GpuSpec? Gpu { get; set; }
     public GitRepositoryConfig? GitRepository { get; set; }
+    public List<GitRepositoryConfig>? GitRepositories { get; set; }
+    public bool ExcludeTemplateRepos { get; set; }
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
     public TimeSpan? ExpiresAfter { get; set; }
 }
@@ -41,6 +43,9 @@ public class GitRepositoryConfig
     public required string Url { get; set; }
     public string? Branch { get; set; }
     public string? CredentialRef { get; set; }
+    public string? TargetPath { get; set; }
+    public int? CloneDepth { get; set; }
+    public bool Submodules { get; set; }
 }
 
 public class ContainerFilter

@@ -1,8 +1,11 @@
+using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Mcp;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Moq;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Mcp;
@@ -15,7 +18,7 @@ public class ContainersMcpToolsTests : IDisposable
     public ContainersMcpToolsTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _tools = new ContainersMcpTools(_db);
+        _tools = new ContainersMcpTools(_db, new Mock<IGitCloneService>().Object, new Mock<IGitCredentialService>().Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object);
     }
 
     public void Dispose()

@@ -10,7 +10,8 @@ public record ContainerProvisionJob(
     string ContainerName,
     string OwnerId,
     Abstractions.ResourceSpec? Resources,
-    Abstractions.GpuSpec? Gpu);
+    Abstractions.GpuSpec? Gpu,
+    bool HasGitRepositories = false);
 
 public class ContainerProvisioningQueue
 {

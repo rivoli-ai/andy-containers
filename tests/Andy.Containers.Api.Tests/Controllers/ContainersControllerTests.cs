@@ -15,6 +15,7 @@ public class ContainersControllerTests : IDisposable
 {
     private readonly Mock<IContainerService> _mockService;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
+    private readonly Mock<IGitCloneService> _mockGitCloneService;
     private readonly ContainersDbContext _db;
     private readonly ContainersController _controller;
 
@@ -25,8 +26,9 @@ public class ContainersControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
         _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
+        _mockGitCloneService = new Mock<IGitCloneService>();
         _db = InMemoryDbHelper.CreateContext();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object);
     }
 
     public void Dispose()

@@ -16,6 +16,8 @@ public class ContainersDbContext : DbContext
     public DbSet<InfrastructureProvider> Providers => Set<InfrastructureProvider>();
     public DbSet<DependencySpec> DependencySpecs => Set<DependencySpec>();
     public DbSet<ResolvedDependency> ResolvedDependencies => Set<ResolvedDependency>();
+    public DbSet<ContainerGitRepository> ContainerGitRepositories => Set<ContainerGitRepository>();
+    public DbSet<GitCredential> GitCredentials => Set<GitCredential>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -35,6 +37,7 @@ public class ContainersDbContext : DbContext
             e.HasOne(c => c.Provider).WithMany().HasForeignKey(c => c.ProviderId);
             e.HasMany(c => c.Sessions).WithOne(s => s.Container).HasForeignKey(s => s.ContainerId);
             e.HasMany(c => c.Events).WithOne(ev => ev.Container).HasForeignKey(ev => ev.ContainerId);
+            e.HasMany(c => c.GitRepositories).WithOne(r => r.Container).HasForeignKey(r => r.ContainerId);
         });
 
         // ContainerTemplate
@@ -48,6 +51,7 @@ public class ContainersDbContext : DbContext
             e.Property(t => t.EnvironmentVariables).HasColumnType("jsonb");
             e.Property(t => t.Ports).HasColumnType("jsonb");
             e.Property(t => t.Scripts).HasColumnType("jsonb");
+            e.Property(t => t.GitRepositories).HasColumnType("jsonb");
             e.Property(t => t.Metadata).HasColumnType("jsonb");
             e.HasOne(t => t.ParentTemplate).WithMany().HasForeignKey(t => t.ParentTemplateId);
         });
@@ -121,6 +125,22 @@ public class ContainersDbContext : DbContext
             e.HasIndex(r => r.ImageId);
             e.HasOne(r => r.Image).WithMany().HasForeignKey(r => r.ImageId);
             e.HasOne(r => r.DependencySpec).WithMany().HasForeignKey(r => r.DependencySpecId);
+        });
+
+        // ContainerGitRepository
+        modelBuilder.Entity<ContainerGitRepository>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.HasIndex(r => r.ContainerId);
+            e.HasIndex(r => r.CloneStatus);
+        });
+
+        // GitCredential
+        modelBuilder.Entity<GitCredential>(e =>
+        {
+            e.HasKey(c => c.Id);
+            e.HasIndex(c => c.OwnerId);
+            e.HasIndex(c => new { c.OwnerId, c.Label }).IsUnique();
         });
     }
 }

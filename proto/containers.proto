@@ -37,6 +37,14 @@ service ContainerService {
   rpc BuildImage (BuildImageRequest) returns (ImageResponse);
   rpc GetLatestImage (GetLatestImageRequest) returns (ImageResponse);
   rpc DiffImages (DiffImagesRequest) returns (ImageDiffResponse);
+  rpc GetImageManifest (GetImageManifestRequest) returns (ImageManifestResponse);
+  rpc GetImageTools (GetImageManifestRequest) returns (ImageToolsResponse);
+  rpc IntrospectImage (GetImageManifestRequest) returns (ImageManifestResponse);
+
+  // Git Repositories
+  rpc ListContainerRepositories (ContainerIdRequest) returns (ListContainerRepositoriesResponse);
+  rpc CloneRepository (CloneRepositoryRequest) returns (GitRepositoryStatusResponse);
+  rpc PullRepository (PullRepositoryRequest) returns (GitRepositoryStatusResponse);
 }
 
 // --- Container Messages ---
@@ -55,6 +63,8 @@ message CreateContainerRequest {
   GitRepositoryConfig git_repository = 11;
   map<string, string> environment_variables = 12;
   int64 expires_after_seconds = 13;
+  repeated GitRepositoryConfig git_repositories = 14;
+  bool exclude_template_repos = 15;
 }
 
 message ContainerIdRequest {
@@ -117,6 +127,9 @@ message GitRepositoryConfig {
   string url = 1;
   string branch = 2;
   string credential_ref = 3;
+  string target_path = 4;
+  int32 clone_depth = 5;
+  bool submodules = 6;
 }
 
 // --- Execution Messages ---
@@ -278,4 +291,69 @@ message DependencyChangeEntry {
   string previous_version = 3;
   string new_version = 4;
   string change_type = 5;
+}
+
+// --- Image Manifest Messages ---
+
+message GetImageManifestRequest {
+  string image_id = 1;
+}
+
+message ImageManifestResponse {
+  string image_content_hash = 1;
+  string base_image = 2;
+  string base_image_digest = 3;
+  string architecture = 4;
+  string os_name = 5;
+  string os_version = 6;
+  repeated InstalledToolEntry tools = 7;
+  int32 package_count = 8;
+  string introspected_at = 9;
+}
+
+message InstalledToolEntry {
+  string name = 1;
+  string version = 2;
+  string type = 3;
+  bool matches_declared = 4;
+}
+
+message ImageToolsResponse {
+  repeated InstalledToolEntry tools = 1;
+}
+
+// --- Git Repository Messages ---
+
+message ListContainerRepositoriesResponse {
+  repeated GitRepositoryStatusResponse repositories = 1;
+}
+
+message GitRepositoryStatusResponse {
+  string id = 1;
+  string container_id = 2;
+  string url = 3;
+  string branch = 4;
+  string target_path = 5;
+  int32 clone_depth = 6;
+  bool submodules = 7;
+  bool is_from_template = 8;
+  string clone_status = 9;
+  string clone_error = 10;
+  string clone_started_at = 11;
+  string clone_completed_at = 12;
+}
+
+message CloneRepositoryRequest {
+  string container_id = 1;
+  string url = 2;
+  string branch = 3;
+  string target_path = 4;
+  string credential_ref = 5;
+  int32 clone_depth = 6;
+  bool submodules = 7;
+}
+
+message PullRepositoryRequest {
+  string container_id = 1;
+  string repository_id = 2;
 }

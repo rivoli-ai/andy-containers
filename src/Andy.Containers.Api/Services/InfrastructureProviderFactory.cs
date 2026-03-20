@@ -18,6 +18,18 @@ public class InfrastructureProviderFactory : IInfrastructureProviderFactory
         _loggerFactory = loggerFactory;
     }
 
+    public IInfrastructureProvider GetProvider(ProviderType type)
+    {
+        var entity = new InfrastructureProvider
+        {
+            Code = "default",
+            Name = $"Default {type}",
+            Type = type,
+            IsEnabled = true
+        };
+        return GetProvider(entity);
+    }
+
     public IInfrastructureProvider GetProvider(InfrastructureProvider providerEntity)
     {
         return providerEntity.Type switch

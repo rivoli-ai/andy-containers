@@ -1,9 +1,11 @@
+using System.Text.Json;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -220,5 +222,245 @@ public class ContainerOrchestrationServiceTests : IDisposable
         _mockInfraProvider.Verify(p => p.DestroyContainerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         var updated = await _db.Containers.FindAsync(container.Id);
         updated!.Status.Should().Be(ContainerStatus.Destroyed);
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithGitRepositories_ShouldCreateRepoEntities()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "git-container",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepositories = new List<GitRepositoryConfig>
+            {
+                new() { Url = "https://github.com/owner/repo1.git", Branch = "main", TargetPath = "/workspace/repo1" },
+                new() { Url = "https://github.com/owner/repo2.git", CloneDepth = 1, Submodules = true }
+            }
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == container.Id)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync();
+
+        repos.Should().HaveCount(2);
+        repos[0].Url.Should().Be("https://github.com/owner/repo1.git");
+        repos[0].Branch.Should().Be("main");
+        repos[0].TargetPath.Should().Be("/workspace/repo1");
+        repos[0].CloneStatus.Should().Be(GitCloneStatus.Pending);
+        repos[1].Url.Should().Be("https://github.com/owner/repo2.git");
+        repos[1].CloneDepth.Should().Be(1);
+        repos[1].Submodules.Should().BeTrue();
+        repos[1].TargetPath.Should().Be("/workspace"); // default
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithInvalidGitRepositories_ShouldThrowArgumentException()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "bad-git",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepositories = new List<GitRepositoryConfig>
+            {
+                new() { Url = "file:///etc/passwd" }
+            }
+        };
+
+        var act = () => _service.CreateContainerAsync(request, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*https:// and git@*");
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithInvalidSingleGitRepository_ShouldThrowArgumentException()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "bad-git",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepository = new GitRepositoryConfig { Url = "https://user:pass@github.com/owner/repo.git" }
+        };
+
+        var act = () => _service.CreateContainerAsync(request, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Embedded credentials*");
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithTemplateRepos_ShouldMergeTemplateRepos()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.GitRepositories = JsonSerializer.Serialize(new List<GitRepositoryConfig>
+        {
+            new() { Url = "https://github.com/template/repo.git", Branch = "main" }
+        });
+        await _db.SaveChangesAsync();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "merged-repos",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepositories = new List<GitRepositoryConfig>
+            {
+                new() { Url = "https://github.com/user/repo.git" }
+            }
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == container.Id)
+            .ToListAsync();
+
+        repos.Should().HaveCount(2);
+        repos.Should().Contain(r => r.Url == "https://github.com/user/repo.git");
+        repos.Should().Contain(r => r.Url == "https://github.com/template/repo.git");
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithExcludeTemplateRepos_ShouldNotMerge()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.GitRepositories = JsonSerializer.Serialize(new List<GitRepositoryConfig>
+        {
+            new() { Url = "https://github.com/template/repo.git" }
+        });
+        await _db.SaveChangesAsync();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "no-template-repos",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            ExcludeTemplateRepos = true,
+            GitRepositories = new List<GitRepositoryConfig>
+            {
+                new() { Url = "https://github.com/user/repo.git" }
+            }
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == container.Id)
+            .ToListAsync();
+
+        repos.Should().HaveCount(1);
+        repos[0].Url.Should().Be("https://github.com/user/repo.git");
+    }
+
+    [Fact]
+    public async Task CreateContainer_TemplateRepos_ShouldBeMarkedAsFromTemplate()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.GitRepositories = JsonSerializer.Serialize(new List<GitRepositoryConfig>
+        {
+            new() { Url = "https://github.com/template/repo.git" }
+        });
+        await _db.SaveChangesAsync();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "template-flag-test",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepositories = new List<GitRepositoryConfig>
+            {
+                new() { Url = "https://github.com/user/repo.git" }
+            }
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == container.Id)
+            .ToListAsync();
+
+        var userRepo = repos.Single(r => r.Url == "https://github.com/user/repo.git");
+        userRepo.IsFromTemplate.Should().BeFalse();
+
+        var templateRepo = repos.Single(r => r.Url == "https://github.com/template/repo.git");
+        templateRepo.IsFromTemplate.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateContainer_SingleGitRepository_BackwardCompat_ShouldCreateRepoEntity()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "backward-compat",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepository = new GitRepositoryConfig { Url = "https://github.com/owner/repo.git", Branch = "develop" }
+            // GitRepositories is null — backward compat path
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        var repos = await _db.ContainerGitRepositories
+            .Where(r => r.ContainerId == container.Id)
+            .ToListAsync();
+
+        repos.Should().HaveCount(1);
+        repos[0].Url.Should().Be("https://github.com/owner/repo.git");
+        repos[0].Branch.Should().Be("develop");
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithGitRepositories_ShouldEnqueueJobWithHasGitReposTrue()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "git-job",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepositories = new List<GitRepositoryConfig>
+            {
+                new() { Url = "https://github.com/owner/repo.git" }
+            }
+        };
+
+        await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        // Read the job from the queue
+        var reader = _queue.Reader;
+        reader.TryRead(out var job).Should().BeTrue();
+        job!.HasGitRepositories.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithoutGitRepositories_ShouldEnqueueJobWithHasGitReposFalse()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "no-git",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        var reader = _queue.Reader;
+        reader.TryRead(out var job).Should().BeTrue();
+        job!.HasGitRepositories.Should().BeFalse();
     }
 }

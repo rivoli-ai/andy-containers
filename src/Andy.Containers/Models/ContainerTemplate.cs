@@ -24,6 +24,7 @@ public class ContainerTemplate
     public bool IsPublished { get; set; }
     public Guid? ParentTemplateId { get; set; }
     public ContainerTemplate? ParentTemplate { get; set; }
+    public string? GitRepositories { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public string? Metadata { get; set; }

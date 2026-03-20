@@ -47,6 +47,14 @@ try
     builder.Services.AddSingleton<ContainerProvisioningQueue>();
     builder.Services.AddHostedService<ContainerProvisioningWorker>();
 
+    // Git credential + clone services
+    builder.Services.AddDataProtection();
+    builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
+    builder.Services.AddScoped<IGitCloneService, GitCloneService>();
+    builder.Services.AddScoped<IToolVersionDetector, ToolVersionDetector>();
+    builder.Services.AddScoped<IImageManifestService, ImageManifestService>();
+    builder.Services.AddScoped<IImageDiffService, ImageDiffService>();
+
     // Current user service for RBAC
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();

@@ -25,6 +25,8 @@ public enum ContainerEventType
     AgentSpawned,
     AgentCompleted,
     GitCloned,
+    GitCloneFailed,
+    GitPulled,
     ExpiredAutoStopped,
     ExpiredAutoDestroyed
 }

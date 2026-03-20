@@ -20,6 +20,10 @@ Development container management platform for the Andy ecosystem.
 - **Template Catalog** - Hierarchical catalog of container templates scoped by global, organization, team, or user
 - **Declarative Dependencies** - Specify compilers, tools, and libraries in YAML; exact versions resolved and locked automatically
 - **Content-Addressed Images** - Every built image has a unique hash; track exactly what changed between versions
+- **Image Introspection** - Automatically detect installed tool versions, OS packages, and base image details after every build
+- **Image Diffing** - Compare two images to see tool changes, severity classification, package deltas, and size changes
+- **Multi-Repo Git Clone** - Clone multiple git repositories into containers with per-repo status tracking
+- **Git Credential Management** - Securely store and resolve PATs and deploy keys for private repository cloning
 - **Automatic Rebuilds** - New compiler/library versions trigger automatic image rebuilds per your update policy
 - **Air-Gapped Builds** - Full support for internet-isolated environments with offline dependency caching
 - **GPU Support** - Request GPU acceleration when available (NVIDIA, Azure GPU SKUs)
@@ -142,6 +146,9 @@ When upstream versions change, images are automatically rebuilt and a changelog 
 - `POST /api/containers/{id}/exec` - Execute command
 - `GET /api/containers/{id}/connection` - Get IDE/VNC/SSH endpoints
 - `DELETE /api/containers/{id}` - Destroy container
+- `GET /api/containers/{id}/repositories` - List cloned git repositories
+- `POST /api/containers/{id}/repositories` - Clone a new repository
+- `POST /api/containers/{id}/repositories/{repoId}/pull` - Pull latest changes
 
 ### Workspaces
 - `POST /api/workspaces` - Create workspace
@@ -161,6 +168,15 @@ When upstream versions change, images are automatically rebuilt and a changelog 
 - `POST /api/images/{templateId}/build` - Trigger build
 - `GET /api/images/{templateId}/latest` - Get latest image
 - `GET /api/images/diff` - Compare two images
+- `GET /api/images/{imageId}/manifest` - Get introspection manifest
+- `GET /api/images/{imageId}/tools` - List installed tools
+- `GET /api/images/{imageId}/packages` - List OS packages
+- `POST /api/images/{imageId}/introspect` - Re-run introspection
+
+### Git Credentials
+- `POST /api/git-credentials` - Store a credential (PAT or deploy key)
+- `GET /api/git-credentials` - List stored credentials (tokens never returned)
+- `DELETE /api/git-credentials/{id}` - Delete a credential
 
 ### Providers
 - `GET /api/providers` - List providers
@@ -238,4 +254,4 @@ Apache 2.0
 
 **Status:** Alpha
 **Version:** 0.1.0-alpha
-**Last Updated:** 2026-02-10
+**Last Updated:** 2026-03-20
