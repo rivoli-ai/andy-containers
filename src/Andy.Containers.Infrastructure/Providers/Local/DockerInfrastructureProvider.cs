@@ -121,6 +121,14 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             }
         }
 
+        // Map SSH port when enabled (auto-assign host port)
+        if (spec.SshEnabled)
+        {
+            var sshKey = $"{spec.SshPort}/tcp";
+            exposedPorts[sshKey] = default;
+            portBindings[sshKey] = new List<PortBinding> { new() { HostPort = "0" } };
+        }
+
         // Build the command: use spec.Command if provided, otherwise default to
         // "sleep infinity" to keep the container alive as a dev environment.
         var cmd = new List<string>();
@@ -221,7 +229,8 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             IpAddress = inspect.NetworkSettings?.IPAddress,
             PortMappings = ports,
             IdeEndpoint = ports.TryGetValue(8080, out var idePort) ? $"https://localhost:{idePort}" : null,
-            VncEndpoint = ports.TryGetValue(6080, out var vncPort) ? $"https://localhost:{vncPort}" : null
+            VncEndpoint = ports.TryGetValue(6080, out var vncPort) ? $"https://localhost:{vncPort}" : null,
+            SshEndpoint = ports.TryGetValue(22, out var sshPort) ? $"localhost:{sshPort}" : null
         };
     }
 

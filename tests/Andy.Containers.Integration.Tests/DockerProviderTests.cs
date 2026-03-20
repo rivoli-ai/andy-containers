@@ -101,4 +101,46 @@ public class DockerProviderTests : IAsyncLifetime
         caps.SupportsExec.Should().BeTrue();
         caps.SupportsPortForwarding.Should().BeTrue();
     }
+
+    // === Story 13: SSH port mapping ===
+
+    [Fact]
+    public async Task CreateContainer_SshEnabled_MapsPort22ToHostPort()
+    {
+        var spec = new ContainerSpec
+        {
+            Name = $"ssh-test-{Guid.NewGuid().ToString()[..8]}",
+            ImageReference = "ubuntu:24.04",
+            Resources = new ResourceSpec { CpuCores = 1, MemoryMb = 256 },
+            SshEnabled = true,
+            SshPort = 22
+        };
+
+        var result = await _provider.CreateContainerAsync(spec, CancellationToken.None);
+        _externalId = result.ExternalId;
+
+        result.ConnectionInfo.Should().NotBeNull();
+        result.ConnectionInfo!.SshEndpoint.Should().MatchRegex(@"^localhost:\d+$");
+        result.ConnectionInfo.PortMappings.Should().ContainKey(22);
+        result.ConnectionInfo.PortMappings![22].Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task CreateContainer_SshNotEnabled_DoesNotMapPort22()
+    {
+        var spec = new ContainerSpec
+        {
+            Name = $"nossh-test-{Guid.NewGuid().ToString()[..8]}",
+            ImageReference = "ubuntu:24.04",
+            Resources = new ResourceSpec { CpuCores = 1, MemoryMb = 256 },
+            SshEnabled = false
+        };
+
+        var result = await _provider.CreateContainerAsync(spec, CancellationToken.None);
+        _externalId = result.ExternalId;
+
+        result.ConnectionInfo.Should().NotBeNull();
+        result.ConnectionInfo!.SshEndpoint.Should().BeNull();
+        result.ConnectionInfo.PortMappings.Should().NotContainKey(22);
+    }
 }
