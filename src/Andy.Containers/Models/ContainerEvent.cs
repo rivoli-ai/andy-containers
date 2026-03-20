@@ -26,5 +26,9 @@ public enum ContainerEventType
     AgentCompleted,
     GitCloned,
     ExpiredAutoStopped,
-    ExpiredAutoDestroyed
+    ExpiredAutoDestroyed,
+    SshEnabled,
+    SshDisabled,
+    SshKeyInjected,
+    SshProvisioned
 }

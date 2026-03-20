@@ -201,13 +201,12 @@ public class ContainerProvisioningWorker : BackgroundService
                 db.Events.Add(new ContainerEvent
                 {
                     ContainerId = job.ContainerId,
-                    EventType = ContainerEventType.SessionOpened,
+                    EventType = ContainerEventType.SshProvisioned,
                     SubjectId = job.OwnerId,
                     Details = System.Text.Json.JsonSerializer.Serialize(new
                     {
-                        action = "ssh_provisioned",
                         warning = "SSH enabled but no keys injected",
-                        keysInjected = 0
+                        keyCount = 0
                     })
                 });
                 await db.SaveChangesAsync(ct);
@@ -237,12 +236,11 @@ public class ContainerProvisioningWorker : BackgroundService
             db.Events.Add(new ContainerEvent
             {
                 ContainerId = job.ContainerId,
-                EventType = ContainerEventType.SessionOpened,
+                EventType = ContainerEventType.SshProvisioned,
                 SubjectId = job.OwnerId,
                 Details = System.Text.Json.JsonSerializer.Serialize(new
                 {
-                    action = "ssh_provisioned",
-                    keysInjected = allPublicKeys.Count,
+                    keyCount = allPublicKeys.Count,
                     exitCode = result.ExitCode
                 })
             });

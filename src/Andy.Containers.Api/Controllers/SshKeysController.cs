@@ -115,6 +115,15 @@ public class SshKeysController : ControllerBase
             await _sshKeyService.UpdateLastUsedAsync(userId, [matchingKey.Id], ct);
         }
 
+        _db.Events.Add(new ContainerEvent
+        {
+            ContainerId = containerId,
+            EventType = ContainerEventType.SshKeyInjected,
+            SubjectId = userId,
+            Details = System.Text.Json.JsonSerializer.Serialize(new { fingerprint, keyType = request.PublicKey.Split(' ')[0] })
+        });
+        await _db.SaveChangesAsync(ct);
+
         return Ok(new { injected = true, fingerprint });
     }
 

@@ -3,6 +3,8 @@ using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Services;
@@ -19,7 +21,7 @@ public class SshKeyServiceTests : IDisposable
     public SshKeyServiceTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _service = new SshKeyService(_db);
+        _service = new SshKeyService(_db, new NullLogger<SshKeyService>());
     }
 
     public void Dispose() => _db.Dispose();

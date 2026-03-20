@@ -6,6 +6,7 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 using Xunit;
 
@@ -16,6 +17,7 @@ public class ContainersControllerTests : IDisposable
     private readonly Mock<IContainerService> _mockService;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly Mock<IContainerPermissionService> _mockPermissions;
+    private readonly Mock<ISshKeyService> _mockSshKeyService;
     private readonly ContainersDbContext _db;
     private readonly ContainersController _controller;
 
@@ -30,9 +32,9 @@ public class ContainersControllerTests : IDisposable
         _mockPermissions.Setup(p => p.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         _db = InMemoryDbHelper.CreateContext();
-        var mockSshKeyService = new Mock<ISshKeyService>();
+        _mockSshKeyService = new Mock<ISshKeyService>();
         var mockSshProvisioning = new Mock<ISshProvisioningService>();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _mockPermissions.Object, _db, mockSshKeyService.Object, mockSshProvisioning.Object);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _mockPermissions.Object, _db, _mockSshKeyService.Object, mockSshProvisioning.Object);
     }
 
     public void Dispose()
@@ -287,5 +289,45 @@ public class ContainersControllerTests : IDisposable
         var result = await _controller.DisableSsh(id, CancellationToken.None);
 
         result.Should().BeOfType<ForbidResult>();
+    }
+
+    // === Story 18: Audit logging ===
+
+    [Fact]
+    public async Task EnableSsh_CreatesContainerEvent_SshEnabled()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "audit-enable", OwnerId = "test-user" };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockSshKeyService.Setup(s => s.ListKeysAsync("test-user", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UserSshKey> { new() { UserId = "test-user", Label = "key", PublicKey = "ssh-ed25519 AAAA", Fingerprint = "f", KeyType = "ed25519" } });
+
+        await _controller.EnableSsh(id, CancellationToken.None);
+
+        var events = await _db.Events.Where(e => e.ContainerId == id).ToListAsync();
+        events.Should().ContainSingle(e => e.EventType == ContainerEventType.SshEnabled);
+        events.First().SubjectId.Should().Be("test-user");
+    }
+
+    [Fact]
+    public async Task DisableSsh_CreatesContainerEvent_SshDisabled()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "audit-disable", OwnerId = "test-user" };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+
+        await _controller.DisableSsh(id, CancellationToken.None);
+
+        var events = await _db.Events.Where(e => e.ContainerId == id).ToListAsync();
+        events.Should().ContainSingle(e => e.EventType == ContainerEventType.SshDisabled);
+        events.First().SubjectId.Should().Be("test-user");
     }
 }

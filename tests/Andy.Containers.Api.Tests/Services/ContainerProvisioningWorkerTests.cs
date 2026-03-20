@@ -266,7 +266,7 @@ public class ContainerProvisioningWorkerTests : IDisposable
         await ProcessSingleJob(job);
 
         var events = await _db.Events.Where(e => e.ContainerId == container.Id).ToListAsync();
-        events.Should().Contain(e => e.Details != null && e.Details.Contains("ssh_provisioned"));
+        events.Should().Contain(e => e.EventType == ContainerEventType.SshProvisioned && e.Details != null && e.Details.Contains("keyCount"));
     }
 
     [Fact]

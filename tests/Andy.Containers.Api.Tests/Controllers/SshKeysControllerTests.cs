@@ -5,6 +5,9 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
@@ -31,7 +34,7 @@ public class SshKeysControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
 
-        _sshKeyService = new SshKeyService(_db);
+        _sshKeyService = new SshKeyService(_db, new NullLogger<SshKeyService>());
         _mockProvisioning = new Mock<ISshProvisioningService>();
         _mockPermissions = new Mock<IContainerPermissionService>();
         _mockPermissions.Setup(p => p.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -305,5 +308,26 @@ public class SshKeysControllerTests : IDisposable
         var result = await _controller.GetSshConfig(container.Id, CancellationToken.None);
 
         result.Should().BeOfType<ForbidResult>();
+    }
+
+    // === Story 18: Audit logging ===
+
+    [Fact]
+    public async Task InjectKey_CreatesContainerEvent_SshKeyInjected()
+    {
+        var container = new Container { Name = "audit-inject", OwnerId = TestUserId, SshEnabled = true };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        var request = new InjectSshKeyRequest { PublicKey = ValidEd25519Key };
+        var result = await _controller.InjectKey(container.Id, request, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+
+        var events = await _db.Events.Where(e => e.ContainerId == container.Id).ToListAsync();
+        events.Should().ContainSingle(e => e.EventType == ContainerEventType.SshKeyInjected);
+        var evt = events.First(e => e.EventType == ContainerEventType.SshKeyInjected);
+        evt.SubjectId.Should().Be(TestUserId);
+        evt.Details.Should().Contain("fingerprint");
     }
 }

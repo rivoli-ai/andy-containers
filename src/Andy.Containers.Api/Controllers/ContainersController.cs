@@ -173,6 +173,13 @@ public class ContainersController : ControllerBase
             return BadRequest(new { error = "You must have at least one SSH key registered to enable SSH access" });
 
         dbContainer.SshEnabled = true;
+
+        _db.Events.Add(new ContainerEvent
+        {
+            ContainerId = id,
+            EventType = ContainerEventType.SshEnabled,
+            SubjectId = _currentUser.GetUserId()
+        });
         await _db.SaveChangesAsync(ct);
 
         var publicKeys = keys.Select(k => k.PublicKey).ToList();
@@ -193,6 +200,13 @@ public class ContainersController : ControllerBase
         if (dbContainer is null) return NotFound();
 
         dbContainer.SshEnabled = false;
+
+        _db.Events.Add(new ContainerEvent
+        {
+            ContainerId = id,
+            EventType = ContainerEventType.SshDisabled,
+            SubjectId = _currentUser.GetUserId()
+        });
         await _db.SaveChangesAsync(ct);
         return Ok(new { enabled = false });
     }

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Andy.Containers.Api.Services;
 
@@ -12,10 +13,12 @@ public class SshKeyService : ISshKeyService
         ["ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"];
 
     private readonly ContainersDbContext _db;
+    private readonly ILogger<SshKeyService> _logger;
 
-    public SshKeyService(ContainersDbContext db)
+    public SshKeyService(ContainersDbContext db, ILogger<SshKeyService> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     public bool IsValidPublicKey(string publicKey)
@@ -79,6 +82,10 @@ public class SshKeyService : ISshKeyService
 
         _db.SshKeys.Add(key);
         await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("SSH key registered {Fingerprint} ({KeyType}) for user {UserId}",
+            fingerprint, key.KeyType, userId);
+
         return key;
     }
 
@@ -95,6 +102,9 @@ public class SshKeyService : ISshKeyService
         var key = await _db.SshKeys.FirstOrDefaultAsync(
             k => k.Id == keyId && k.UserId == userId, ct);
         if (key is null) return false;
+
+        _logger.LogInformation("SSH key removed {Fingerprint} ({KeyType}) for user {UserId}",
+            key.Fingerprint, key.KeyType, userId);
 
         _db.SshKeys.Remove(key);
         await _db.SaveChangesAsync(ct);
