@@ -100,4 +100,22 @@ public class SshKeyService : ISshKeyService
         await _db.SaveChangesAsync(ct);
         return true;
     }
+
+    public async Task UpdateLastUsedAsync(string userId, IReadOnlyList<Guid> keyIds, CancellationToken ct = default)
+    {
+        if (keyIds.Count == 0) return;
+
+        var keys = await _db.SshKeys
+            .Where(k => k.UserId == userId && keyIds.Contains(k.Id))
+            .ToListAsync(ct);
+
+        var now = DateTime.UtcNow;
+        foreach (var key in keys)
+        {
+            key.LastUsedAt = now;
+        }
+
+        if (keys.Count > 0)
+            await _db.SaveChangesAsync(ct);
+    }
 }

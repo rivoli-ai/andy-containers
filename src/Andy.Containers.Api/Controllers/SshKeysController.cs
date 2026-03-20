@@ -37,7 +37,8 @@ public class SshKeysController : ControllerBase
             Label = k.Label,
             Fingerprint = k.Fingerprint,
             KeyType = k.KeyType,
-            CreatedAt = k.CreatedAt
+            CreatedAt = k.CreatedAt,
+            LastUsedAt = k.LastUsedAt
         });
         return Ok(result);
     }
@@ -100,7 +101,18 @@ public class SshKeysController : ControllerBase
         if (!_sshKeyService.IsValidPublicKey(request.PublicKey))
             return UnprocessableEntity(new { error = "Invalid SSH public key format" });
 
-        return Ok(new { injected = true, fingerprint = _sshKeyService.ComputeFingerprint(request.PublicKey) });
+        var fingerprint = _sshKeyService.ComputeFingerprint(request.PublicKey);
+
+        // Update LastUsedAt if this matches a registered key
+        var userId = _currentUser.GetUserId();
+        var userKeys = await _sshKeyService.ListKeysAsync(userId, ct);
+        var matchingKey = userKeys.FirstOrDefault(k => k.Fingerprint == fingerprint);
+        if (matchingKey is not null)
+        {
+            await _sshKeyService.UpdateLastUsedAsync(userId, [matchingKey.Id], ct);
+        }
+
+        return Ok(new { injected = true, fingerprint });
     }
 
     [HttpGet("/api/containers/{containerId:guid}/ssh-config")]
@@ -153,4 +165,5 @@ public class SshKeyDto
     public required string Fingerprint { get; set; }
     public required string KeyType { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
 }

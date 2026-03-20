@@ -185,4 +185,40 @@ public class SshKeyServiceTests : IDisposable
         fp1.Should().StartWith("SHA256:");
         fp1.Should().Be(fp2);
     }
+
+    // === Story 11: UpdateLastUsedAsync ===
+
+    [Fact]
+    public async Task UpdateLastUsedAsync_UpdatesLastUsedAtOnSpecifiedKeys()
+    {
+        var key1 = await _service.AddKeyAsync("user1", "Key 1", ValidEd25519Key);
+        var key2 = await _service.AddKeyAsync("user1", "Key 2", ValidRsaKey);
+
+        await _service.UpdateLastUsedAsync("user1", [key1.Id, key2.Id]);
+
+        var keys = await _service.ListKeysAsync("user1");
+        keys.Should().AllSatisfy(k => k.LastUsedAt.Should().NotBeNull());
+    }
+
+    [Fact]
+    public async Task UpdateLastUsedAsync_IgnoresKeysBelongingToOtherUser()
+    {
+        var key = await _service.AddKeyAsync("user1", "Key 1", ValidEd25519Key);
+
+        await _service.UpdateLastUsedAsync("user2", [key.Id]);
+
+        var keys = await _service.ListKeysAsync("user1");
+        keys[0].LastUsedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateLastUsedAsync_EmptyList_IsNoOp()
+    {
+        await _service.AddKeyAsync("user1", "Key 1", ValidEd25519Key);
+
+        await _service.UpdateLastUsedAsync("user1", []);
+
+        var keys = await _service.ListKeysAsync("user1");
+        keys[0].LastUsedAt.Should().BeNull();
+    }
 }

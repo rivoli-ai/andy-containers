@@ -230,4 +230,43 @@ public class SshKeysControllerTests : IDisposable
 
         result.Should().BeOfType<BadRequestObjectResult>();
     }
+
+    // === Story 11: LastUsedAt tracking ===
+
+    [Fact]
+    public async Task InjectKey_MatchingRegisteredKey_UpdatesLastUsedAt()
+    {
+        var container = new Container { Name = "ssh-test", OwnerId = TestUserId, SshEnabled = true };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        // Register the key first so it exists in DB
+        var key = await _sshKeyService.AddKeyAsync(TestUserId, "Laptop", ValidEd25519Key);
+        key.LastUsedAt.Should().BeNull();
+
+        var request = new InjectSshKeyRequest { PublicKey = ValidEd25519Key };
+        var result = await _controller.InjectKey(container.Id, request, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+
+        // Verify LastUsedAt was updated
+        var keys = await _sshKeyService.ListKeysAsync(TestUserId);
+        keys[0].LastUsedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task List_ReturnsLastUsedAtTimestamp()
+    {
+        var key = await _sshKeyService.AddKeyAsync(TestUserId, "Laptop", ValidEd25519Key);
+
+        // Update LastUsedAt
+        await _sshKeyService.UpdateLastUsedAsync(TestUserId, [key.Id]);
+
+        var result = await _controller.List(CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var keys = ok.Value.Should().BeAssignableTo<IEnumerable<SshKeyDto>>().Subject.ToList();
+        keys.Should().HaveCount(1);
+        keys[0].LastUsedAt.Should().NotBeNull();
+    }
 }

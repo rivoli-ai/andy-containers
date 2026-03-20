@@ -157,12 +157,53 @@ public class ContainerProvisioningWorker : BackgroundService
 
             // Fetch user's registered SSH keys
             var registeredKeys = await sshKeyService.ListKeysAsync(job.OwnerId, ct);
-            var allPublicKeys = registeredKeys.Select(k => k.PublicKey).ToList();
 
-            // Merge one-time keys from the create request
+            // Build deduplicated key list: registered keys first, then one-time keys by fingerprint
+            var seenFingerprints = new HashSet<string>();
+            var allPublicKeys = new List<string>();
+
+            foreach (var key in registeredKeys)
+            {
+                seenFingerprints.Add(key.Fingerprint);
+                allPublicKeys.Add(key.PublicKey);
+            }
+
             if (job.SshPublicKeys is { Length: > 0 })
             {
-                allPublicKeys.AddRange(job.SshPublicKeys);
+                foreach (var oneTimeKey in job.SshPublicKeys)
+                {
+                    try
+                    {
+                        var fp = sshKeyService.ComputeFingerprint(oneTimeKey);
+                        if (seenFingerprints.Add(fp))
+                            allPublicKeys.Add(oneTimeKey);
+                    }
+                    catch
+                    {
+                        // If fingerprint computation fails, include the key anyway
+                        allPublicKeys.Add(oneTimeKey);
+                    }
+                }
+            }
+
+            // Zero-key warning
+            if (allPublicKeys.Count == 0)
+            {
+                _logger.LogWarning("SSH enabled for container {ContainerId} but no keys to inject", job.ContainerId);
+                db.Events.Add(new ContainerEvent
+                {
+                    ContainerId = job.ContainerId,
+                    EventType = ContainerEventType.SessionOpened,
+                    SubjectId = job.OwnerId,
+                    Details = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        action = "ssh_provisioned",
+                        warning = "SSH enabled but no keys injected",
+                        keysInjected = 0
+                    })
+                });
+                await db.SaveChangesAsync(ct);
+                return;
             }
 
             // Parse SSH config from template or use defaults
@@ -176,6 +217,13 @@ public class ContainerProvisioningWorker : BackgroundService
             {
                 _logger.LogWarning("SSH setup script returned exit code {ExitCode} for container {ContainerId}: {StdErr}",
                     result.ExitCode, job.ContainerId, result.StdErr);
+            }
+
+            // Update LastUsedAt on injected registered keys
+            if (registeredKeys.Count > 0)
+            {
+                var keyIds = registeredKeys.Select(k => k.Id).ToList();
+                await sshKeyService.UpdateLastUsedAsync(job.OwnerId, keyIds, ct);
             }
 
             db.Events.Add(new ContainerEvent

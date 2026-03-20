@@ -225,8 +225,12 @@ public class ContainerProvisioningWorkerTests : IDisposable
         var container = await SeedContainer(template.Id, provider.Id, sshEnabled: true);
         var job = CreateJob(container, provider, sshEnabled: true);
 
+        var registeredKeys = new List<UserSshKey>
+        {
+            new() { UserId = TestUserId, Label = "Key", PublicKey = "ssh-ed25519 AAAA1", Fingerprint = "SHA256:a", KeyType = "ed25519" }
+        };
         _mockSshKeyService.Setup(s => s.ListKeysAsync(TestUserId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<UserSshKey>());
+            .ReturnsAsync(registeredKeys);
         _mockSshProvisioning.Setup(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns("#!/bin/bash\nsetup-ssh");
         _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
@@ -246,8 +250,12 @@ public class ContainerProvisioningWorkerTests : IDisposable
         var container = await SeedContainer(template.Id, provider.Id, sshEnabled: true);
         var job = CreateJob(container, provider, sshEnabled: true);
 
+        var registeredKeys = new List<UserSshKey>
+        {
+            new() { UserId = TestUserId, Label = "Key", PublicKey = "ssh-ed25519 AAAA1", Fingerprint = "SHA256:a", KeyType = "ed25519" }
+        };
         _mockSshKeyService.Setup(s => s.ListKeysAsync(TestUserId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<UserSshKey>());
+            .ReturnsAsync(registeredKeys);
         _mockSshProvisioning.Setup(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns("#!/bin/bash\necho setup");
         _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
@@ -297,6 +305,93 @@ public class ContainerProvisioningWorkerTests : IDisposable
 
         _mockSshKeyService.Verify(s => s.ListKeysAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockSshProvisioning.Verify(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()), Times.Never);
+    }
+
+    // === Story 11: LastUsedAt, zero-key warning, deduplication ===
+
+    [Fact]
+    public async Task ProcessJob_SshEnabled_CallsUpdateLastUsedAsync()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = await SeedContainer(template.Id, provider.Id, sshEnabled: true);
+        var job = CreateJob(container, provider, sshEnabled: true);
+
+        var keyId = Guid.NewGuid();
+        var registeredKeys = new List<UserSshKey>
+        {
+            new() { Id = keyId, UserId = TestUserId, Label = "Laptop", PublicKey = "ssh-ed25519 AAAA1", Fingerprint = "SHA256:a", KeyType = "ed25519" }
+        };
+        _mockSshKeyService.Setup(s => s.ListKeysAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(registeredKeys);
+        _mockSshProvisioning.Setup(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns("#!/bin/bash\necho setup");
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+        _mockInfraProvider.Setup(p => p.ExecAsync("ext-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await ProcessSingleJob(job);
+
+        _mockSshKeyService.Verify(s => s.UpdateLastUsedAsync(
+            TestUserId,
+            It.Is<IReadOnlyList<Guid>>(ids => ids.Contains(keyId)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessJob_SshEnabled_ZeroKeys_LogsWarningEvent()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = await SeedContainer(template.Id, provider.Id, sshEnabled: true);
+        var job = CreateJob(container, provider, sshEnabled: true);
+
+        _mockSshKeyService.Setup(s => s.ListKeysAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UserSshKey>());
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        await ProcessSingleJob(job);
+
+        // Should NOT call GenerateSetupScript or ExecAsync
+        _mockSshProvisioning.Verify(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()), Times.Never);
+        _mockInfraProvider.Verify(p => p.ExecAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Should log warning event
+        var events = await _db.Events.Where(e => e.ContainerId == container.Id).ToListAsync();
+        events.Should().Contain(e => e.Details != null && e.Details.Contains("no keys injected"));
+    }
+
+    [Fact]
+    public async Task ProcessJob_SshEnabled_DeduplicatesOneTimeKeysAgainstRegistered()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = await SeedContainer(template.Id, provider.Id, sshEnabled: true);
+        // One-time key is the same as the registered key
+        var oneTimeKeys = new[] { "ssh-ed25519 AAAA1" };
+        var job = CreateJob(container, provider, sshEnabled: true, sshPublicKeys: oneTimeKeys);
+
+        var registeredKeys = new List<UserSshKey>
+        {
+            new() { UserId = TestUserId, Label = "Laptop", PublicKey = "ssh-ed25519 AAAA1", Fingerprint = "SHA256:dup", KeyType = "ed25519" }
+        };
+        _mockSshKeyService.Setup(s => s.ListKeysAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(registeredKeys);
+        _mockSshKeyService.Setup(s => s.ComputeFingerprint("ssh-ed25519 AAAA1"))
+            .Returns("SHA256:dup");
+        _mockSshProvisioning.Setup(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns("#!/bin/bash\necho setup");
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+        _mockInfraProvider.Setup(p => p.ExecAsync("ext-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await ProcessSingleJob(job);
+
+        // Should only have 1 key (deduplicated), not 2
+        _mockSshProvisioning.Verify(s => s.GenerateSetupScript(
+            It.IsAny<SshConfig>(),
+            It.Is<IReadOnlyList<string>>(keys => keys.Count == 1)),
+            Times.Once);
     }
 }
 
