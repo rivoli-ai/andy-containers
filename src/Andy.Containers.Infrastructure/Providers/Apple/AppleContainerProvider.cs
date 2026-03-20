@@ -74,6 +74,22 @@ public class AppleContainerProvider : IInfrastructureProvider
 
         var name = spec.Name.ToLowerInvariant().Replace(' ', '-');
 
+        // Remove any existing container with the same name (may be left over from a previous run)
+        try
+        {
+            var inspect = await RunCliAsync($"inspect {name}", ct, TimeSpan.FromSeconds(5));
+            if (inspect.ExitCode == 0)
+            {
+                _logger.LogInformation("Removing existing Apple Container {Name} before re-creation", name);
+                await RunCliAsync($"stop {name}", ct, TimeSpan.FromSeconds(15));
+                await RunCliAsync($"delete {name}", ct, TimeSpan.FromSeconds(15));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check/remove existing Apple Container {Name}", name);
+        }
+
         // Use `container run -d` which creates AND starts in one step.
         var args = $"run --name {name}";
 
