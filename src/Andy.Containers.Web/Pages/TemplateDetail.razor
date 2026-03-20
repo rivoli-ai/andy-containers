@@ -92,9 +92,7 @@ else if (_template is not null)
             }
             else if (_definition is not null)
             {
-                <div style="position: relative;">
-                    <pre class="text-mono" style="background: var(--surface-2); padding: 1rem; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; margin: 0; white-space: pre; font-size: 0.85rem; max-height: 600px; overflow-y: auto;">@_definition.Content</pre>
-                </div>
+                <YamlEditor Value="@_definition.Content" ReadOnly="true" Height="500px" />
             }
             else
             {

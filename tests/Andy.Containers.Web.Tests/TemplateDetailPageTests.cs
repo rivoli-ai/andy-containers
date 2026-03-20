@@ -17,6 +17,10 @@ public class TemplateDetailPageTests : TestContext
     public TemplateDetailPageTests()
     {
         _handler = new MockHttpMessageHandler();
+        JSInterop.SetupVoid("yamlEditor.init", _ => true).SetVoidResult();
+        JSInterop.SetupVoid("yamlEditor.setDiagnostics", _ => true).SetVoidResult();
+        JSInterop.SetupVoid("yamlEditor.dispose", _ => true).SetVoidResult();
+        JSInterop.SetupVoid("yamlEditor.setValue", _ => true).SetVoidResult();
     }
 
     private void RegisterService()
@@ -106,12 +110,12 @@ public class TemplateDetailPageTests : TestContext
         RegisterService();
 
         var cut = RenderComponent<TemplateDetail>(p => p.Add(s => s.Id, _templateId));
-        cut.WaitForState(() => cut.Markup.Contains("golang:1.22"), TimeSpan.FromSeconds(2));
+        cut.WaitForState(() => cut.Markup.Contains("yaml-editor-container"), TimeSpan.FromSeconds(2));
 
-        var pre = cut.Find("pre");
-        pre.Should().NotBeNull();
-        pre.TextContent.Should().Contain("kind: Template");
-        pre.TextContent.Should().Contain("baseImage: golang:1.22");
+        var editor = cut.Find(".yaml-editor-container");
+        editor.Should().NotBeNull();
+        // The YamlEditor component passes value via JS interop, so verify init was called
+        JSInterop.Invocations.Should().Contain(i => i.Identifier == "yamlEditor.init");
     }
 
     private class DelayedHttpMessageHandler : HttpMessageHandler
