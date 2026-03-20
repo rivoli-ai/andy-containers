@@ -15,12 +15,14 @@ public class TemplatesController : ControllerBase
     private readonly ContainersDbContext _db;
     private readonly IWebHostEnvironment _env;
     private readonly ICurrentUserService _currentUser;
+    private readonly IYamlTemplateParser _parser;
 
-    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser)
+    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, IYamlTemplateParser parser)
     {
         _db = db;
         _env = env;
         _currentUser = currentUser;
+        _parser = parser;
     }
 
     [HttpGet]
@@ -202,6 +204,60 @@ public class TemplatesController : ControllerBase
         return NoContent();
     }
 
+    [HttpPost("validate")]
+    public IActionResult Validate([FromBody] YamlContentRequest request)
+    {
+        var result = _parser.Validate(request.Content);
+        return Ok(result);
+    }
+
+    [HttpPost("from-yaml")]
+    public async Task<IActionResult> CreateFromYaml([FromBody] YamlContentRequest request, CancellationToken ct)
+    {
+        var validation = _parser.Validate(request.Content);
+        if (!validation.IsValid)
+            return BadRequest(validation);
+
+        var template = _parser.Parse(request.Content);
+        template.OwnerId = _currentUser.GetUserId();
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync(ct);
+        return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
+    }
+
+    [HttpPut("{id:guid}/definition")]
+    public async Task<IActionResult> UpdateDefinition(Guid id, [FromBody] YamlContentRequest request, CancellationToken ct)
+    {
+        var template = await _db.Templates.FindAsync([id], ct);
+        if (template is null) return NotFound();
+        if (!CanModifyTemplate(template)) return Forbid();
+
+        var validation = _parser.Validate(request.Content);
+        if (!validation.IsValid)
+            return BadRequest(validation);
+
+        var parsed = _parser.Parse(request.Content);
+        template.Name = parsed.Name;
+        template.Description = parsed.Description;
+        template.Version = parsed.Version;
+        template.BaseImage = parsed.BaseImage;
+        template.IdeType = parsed.IdeType;
+        template.CatalogScope = parsed.CatalogScope;
+        template.GpuRequired = parsed.GpuRequired;
+        template.GpuPreferred = parsed.GpuPreferred;
+        template.Tags = parsed.Tags;
+        template.Ports = parsed.Ports;
+        template.EnvironmentVariables = parsed.EnvironmentVariables;
+        template.Scripts = parsed.Scripts;
+        template.DefaultResources = parsed.DefaultResources;
+        template.Toolchains = parsed.Toolchains;
+        template.GitRepositories = parsed.GitRepositories;
+        template.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(template);
+    }
+
     private bool CanModifyTemplate(ContainerTemplate template)
     {
         if (_currentUser.IsAdmin()) return true;
@@ -211,3 +267,5 @@ public class TemplatesController : ControllerBase
         return template.OwnerId == _currentUser.GetUserId();
     }
 }
+
+public record YamlContentRequest(string Content);

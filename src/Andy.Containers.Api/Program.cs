@@ -42,6 +42,7 @@ try
     builder.Services.AddScoped<IInfrastructureRoutingService, InfrastructureRoutingService>();
     builder.Services.AddSingleton<IInfrastructureProviderFactory, InfrastructureProviderFactory>();
     builder.Services.AddSingleton<ICostEstimationService, CostEstimationService>();
+    builder.Services.AddSingleton<IYamlTemplateParser, YamlTemplateParser>();
 
     // Container provisioning queue + background worker
     builder.Services.AddSingleton<ContainerProvisioningQueue>();

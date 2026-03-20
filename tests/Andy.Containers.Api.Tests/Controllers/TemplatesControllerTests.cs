@@ -26,7 +26,8 @@ public class TemplatesControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
         var mockEnv = new Mock<IWebHostEnvironment>();
         mockEnv.Setup(e => e.ContentRootPath).Returns(Directory.GetCurrentDirectory());
-        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object);
+        var mockParser = new Mock<IYamlTemplateParser>();
+        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object, mockParser.Object);
     }
 
     public void Dispose()
