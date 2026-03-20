@@ -121,6 +121,7 @@ public class ConnectionInfo
     public string? IdeEndpoint { get; set; }
     public string? VncEndpoint { get; set; }
     public string? SshEndpoint { get; set; }
+    public string? SshUser { get; set; }
     public string? AgentEndpoint { get; set; }
 }
 

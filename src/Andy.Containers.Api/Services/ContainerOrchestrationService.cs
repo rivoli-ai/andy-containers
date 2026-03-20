@@ -237,6 +237,15 @@ public class ContainerOrchestrationService : IContainerService
             return new ConnectionInfo();
 
         var infra = _providerFactory.GetProvider(container.Provider!);
-        return await infra.GetConnectionInfoAsync(container.ExternalId, ct);
+        var info = await infra.GetConnectionInfoAsync(container.ExternalId, ct);
+
+        // Augment with SSH fields if SSH is enabled
+        if (container.SshEnabled)
+        {
+            info.SshEndpoint ??= container.SshEndpoint;
+            info.SshUser ??= container.SshUser ?? "dev";
+        }
+
+        return info;
     }
 }

@@ -312,4 +312,93 @@ public class ContainerOrchestrationServiceTests : IDisposable
         job.SshEnabled.Should().BeTrue();
         job.SshPublicKeys.Should().BeEquivalentTo(keys);
     }
+
+    // === Story 12: GetConnectionInfoAsync SSH fields ===
+
+    [Fact]
+    public async Task GetConnectionInfo_SshEnabled_ReturnsSshEndpointFromContainer()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "ssh-conn", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id,
+            ExternalId = "ext-ssh", Status = ContainerStatus.Running,
+            SshEnabled = true, SshEndpoint = "localhost:2222", SshUser = "dev"
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockInfraProvider.Setup(p => p.GetConnectionInfoAsync("ext-ssh", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConnectionInfo { IdeEndpoint = "https://ide.test" });
+
+        var info = await _service.GetConnectionInfoAsync(container.Id, CancellationToken.None);
+
+        info.SshEndpoint.Should().Be("localhost:2222");
+        info.SshUser.Should().Be("dev");
+    }
+
+    [Fact]
+    public async Task GetConnectionInfo_SshNotEnabled_ReturnsNullSshFields()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "no-ssh-conn", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id,
+            ExternalId = "ext-nossh", Status = ContainerStatus.Running,
+            SshEnabled = false
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockInfraProvider.Setup(p => p.GetConnectionInfoAsync("ext-nossh", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConnectionInfo());
+
+        var info = await _service.GetConnectionInfoAsync(container.Id, CancellationToken.None);
+
+        info.SshEndpoint.Should().BeNull();
+        info.SshUser.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetConnectionInfo_SshEnabled_ReturnsSshUserDev()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "ssh-user", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id,
+            ExternalId = "ext-sshuser", Status = ContainerStatus.Running,
+            SshEnabled = true
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockInfraProvider.Setup(p => p.GetConnectionInfoAsync("ext-sshuser", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConnectionInfo());
+
+        var info = await _service.GetConnectionInfoAsync(container.Id, CancellationToken.None);
+
+        info.SshUser.Should().Be("dev");
+    }
+
+    [Fact]
+    public async Task GetConnectionInfo_ProviderReturnsSshEndpoint_UsesProviderEndpoint()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "provider-ssh", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id,
+            ExternalId = "ext-provssh", Status = ContainerStatus.Running,
+            SshEnabled = true, SshEndpoint = "stored:2222"
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockInfraProvider.Setup(p => p.GetConnectionInfoAsync("ext-provssh", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConnectionInfo { SshEndpoint = "provider:3333" });
+
+        var info = await _service.GetConnectionInfoAsync(container.Id, CancellationToken.None);
+
+        // Provider's endpoint takes precedence (it's not null)
+        info.SshEndpoint.Should().Be("provider:3333");
+    }
 }

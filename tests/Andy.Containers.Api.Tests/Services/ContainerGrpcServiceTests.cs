@@ -1,3 +1,4 @@
+using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Grpc;
@@ -14,13 +15,15 @@ public class ContainerGrpcServiceTests : IDisposable
 {
     private readonly ContainersDbContext _db;
     private readonly Mock<ISshKeyService> _mockSshKeyService;
+    private readonly Mock<IContainerService> _mockContainerService;
     private readonly ContainerGrpcService _service;
 
     public ContainerGrpcServiceTests()
     {
         _db = InMemoryDbHelper.CreateContext();
         _mockSshKeyService = new Mock<ISshKeyService>();
-        _service = new ContainerGrpcService(_db, _mockSshKeyService.Object);
+        _mockContainerService = new Mock<IContainerService>();
+        _service = new ContainerGrpcService(_db, _mockSshKeyService.Object, _mockContainerService.Object);
     }
 
     public void Dispose() => _db.Dispose();
@@ -141,6 +144,45 @@ public class ContainerGrpcServiceTests : IDisposable
 
         await act.Should().ThrowAsync<RpcException>()
             .Where(e => e.StatusCode == StatusCode.FailedPrecondition);
+    }
+
+    // === Story 12: GetConnectionInfo gRPC ===
+
+    [Fact]
+    public async Task GetConnectionInfo_SshEnabled_ReturnsSshUser()
+    {
+        var containerId = Guid.NewGuid();
+        _mockContainerService.Setup(s => s.GetConnectionInfoAsync(containerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Abstractions.ConnectionInfo
+            {
+                SshEndpoint = "localhost:2222",
+                SshUser = "dev",
+                IdeEndpoint = "https://ide.test"
+            });
+
+        var response = await _service.GetConnectionInfo(
+            new ContainerIdRequest { ContainerId = containerId.ToString() }, MockContext());
+
+        response.SshEndpoint.Should().Be("localhost:2222");
+        response.SshUser.Should().Be("dev");
+        response.IdeEndpoint.Should().Be("https://ide.test");
+    }
+
+    [Fact]
+    public async Task GetConnectionInfo_SshNotEnabled_ReturnsEmptySshUser()
+    {
+        var containerId = Guid.NewGuid();
+        _mockContainerService.Setup(s => s.GetConnectionInfoAsync(containerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Abstractions.ConnectionInfo
+            {
+                IdeEndpoint = "https://ide.test"
+            });
+
+        var response = await _service.GetConnectionInfo(
+            new ContainerIdRequest { ContainerId = containerId.ToString() }, MockContext());
+
+        response.SshEndpoint.Should().BeEmpty();
+        response.SshUser.Should().BeEmpty();
     }
 }
 

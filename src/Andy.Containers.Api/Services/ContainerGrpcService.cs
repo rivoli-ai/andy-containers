@@ -1,3 +1,4 @@
+using Andy.Containers.Abstractions;
 using Andy.Containers.Grpc;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -10,11 +11,13 @@ public class ContainerGrpcService : ContainerService.ContainerServiceBase
 {
     private readonly ContainersDbContext _db;
     private readonly ISshKeyService _sshKeyService;
+    private readonly IContainerService _containerService;
 
-    public ContainerGrpcService(ContainersDbContext db, ISshKeyService sshKeyService)
+    public ContainerGrpcService(ContainersDbContext db, ISshKeyService sshKeyService, IContainerService containerService)
     {
         _db = db;
         _sshKeyService = sshKeyService;
+        _containerService = containerService;
     }
 
     public override async Task<ListUserSshKeysResponse> ListUserSshKeys(ListUserSshKeysRequest request, ServerCallContext context)
@@ -97,6 +100,30 @@ public class ContainerGrpcService : ContainerService.ContainerServiceBase
             Username = "dev",
             ConfigSnippet = configSnippet
         };
+    }
+
+    public override async Task<ConnectionInfoResponse> GetConnectionInfo(ContainerIdRequest request, ServerCallContext context)
+    {
+        if (!Guid.TryParse(request.ContainerId, out var id))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "Invalid container_id format"));
+
+        try
+        {
+            var info = await _containerService.GetConnectionInfoAsync(id, context.CancellationToken);
+            return new ConnectionInfoResponse
+            {
+                IpAddress = info.IpAddress ?? "",
+                IdeEndpoint = info.IdeEndpoint ?? "",
+                VncEndpoint = info.VncEndpoint ?? "",
+                SshEndpoint = info.SshEndpoint ?? "",
+                SshUser = info.SshUser ?? "",
+                AgentEndpoint = info.AgentEndpoint ?? ""
+            };
+        }
+        catch (KeyNotFoundException)
+        {
+            throw new RpcException(new Status(StatusCode.NotFound, "Container not found"));
+        }
     }
 
     private static SshKeyResponse MapSshKey(UserSshKey key) => new()

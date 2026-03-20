@@ -28,6 +28,8 @@ public class Container
 
     // === Story 3: SSH Access ===
     public bool SshEnabled { get; set; }
+    public string? SshEndpoint { get; set; }
+    public string? SshUser { get; set; }
 
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();

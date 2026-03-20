@@ -111,6 +111,14 @@ public class ContainerProvisioningWorker : BackgroundService
                 container.IdeEndpoint = result.ConnectionInfo.IdeEndpoint;
                 container.VncEndpoint = result.ConnectionInfo.VncEndpoint;
                 container.NetworkConfig = System.Text.Json.JsonSerializer.Serialize(result.ConnectionInfo);
+
+                if (result.ConnectionInfo.SshEndpoint is not null)
+                    container.SshEndpoint = result.ConnectionInfo.SshEndpoint;
+            }
+
+            if (job.SshEnabled)
+            {
+                container.SshUser = "dev";
             }
 
             db.Events.Add(new ContainerEvent

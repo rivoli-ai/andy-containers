@@ -393,6 +393,63 @@ public class ContainerProvisioningWorkerTests : IDisposable
             It.Is<IReadOnlyList<string>>(keys => keys.Count == 1)),
             Times.Once);
     }
+
+    // === Story 12: Persist SSH endpoint and user ===
+
+    [Fact]
+    public async Task ProcessJob_ProviderReturnsSshEndpoint_PersistsOnContainer()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = await SeedContainer(template.Id, provider.Id, sshEnabled: true);
+        var job = CreateJob(container, provider, sshEnabled: true);
+
+        _mockSshKeyService.Setup(s => s.ListKeysAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UserSshKey>
+            {
+                new() { UserId = TestUserId, Label = "K", PublicKey = "ssh-ed25519 AAAA", Fingerprint = "SHA256:x", KeyType = "ed25519" }
+            });
+        _mockSshProvisioning.Setup(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns("#!/bin/bash");
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult
+            {
+                ExternalId = "ext-1",
+                Status = ContainerStatus.Running,
+                ConnectionInfo = new Abstractions.ConnectionInfo { SshEndpoint = "localhost:2222" }
+            });
+        _mockInfraProvider.Setup(p => p.ExecAsync("ext-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await ProcessSingleJob(job);
+
+        var updated = await _db.Containers.FindAsync(container.Id);
+        updated!.SshEndpoint.Should().Be("localhost:2222");
+    }
+
+    [Fact]
+    public async Task ProcessJob_SshEnabled_SetsSshUserDev()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = await SeedContainer(template.Id, provider.Id, sshEnabled: true);
+        var job = CreateJob(container, provider, sshEnabled: true);
+
+        _mockSshKeyService.Setup(s => s.ListKeysAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<UserSshKey>
+            {
+                new() { UserId = TestUserId, Label = "K", PublicKey = "ssh-ed25519 AAAA", Fingerprint = "SHA256:x", KeyType = "ed25519" }
+            });
+        _mockSshProvisioning.Setup(s => s.GenerateSetupScript(It.IsAny<SshConfig>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns("#!/bin/bash");
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+        _mockInfraProvider.Setup(p => p.ExecAsync("ext-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await ProcessSingleJob(job);
+
+        var updated = await _db.Containers.FindAsync(container.Id);
+        updated!.SshUser.Should().Be("dev");
+    }
 }
 
 internal class TestServiceScopeFactory : IServiceScopeFactory

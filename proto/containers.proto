@@ -154,6 +154,7 @@ message ConnectionInfoResponse {
   string vnc_endpoint = 4;
   string ssh_endpoint = 5;
   string agent_endpoint = 6;
+  string ssh_user = 7;
 }
 
 // --- Workspace Messages ---

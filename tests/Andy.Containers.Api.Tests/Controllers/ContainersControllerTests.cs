@@ -208,4 +208,42 @@ public class ContainersControllerTests : IDisposable
         capturedRequest.Should().NotBeNull();
         capturedRequest!.SshPublicKeys.Should().BeEquivalentTo(keys);
     }
+
+    // === Story 12: Connection endpoint SSH fields ===
+
+    [Fact]
+    public async Task GetConnectionInfo_SshEnabled_IncludesSshFields()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "ssh-conn", OwnerId = "test-user", SshEnabled = true };
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockService.Setup(s => s.GetConnectionInfoAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConnectionInfo { SshEndpoint = "localhost:2222", SshUser = "dev" });
+
+        var result = await _controller.GetConnectionInfo(id, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var info = ok.Value.Should().BeOfType<ConnectionInfo>().Subject;
+        info.SshEndpoint.Should().Be("localhost:2222");
+        info.SshUser.Should().Be("dev");
+    }
+
+    [Fact]
+    public async Task GetConnectionInfo_SshNotEnabled_HasNullSshFields()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "no-ssh-conn", OwnerId = "test-user", SshEnabled = false };
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockService.Setup(s => s.GetConnectionInfoAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConnectionInfo());
+
+        var result = await _controller.GetConnectionInfo(id, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var info = ok.Value.Should().BeOfType<ConnectionInfo>().Subject;
+        info.SshEndpoint.Should().BeNull();
+        info.SshUser.Should().BeNull();
+    }
 }
