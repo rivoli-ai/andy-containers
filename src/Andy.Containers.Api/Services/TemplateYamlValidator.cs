@@ -167,6 +167,10 @@ public partial class TemplateYamlValidator : ITemplateValidator
         var baseImage = GetString(doc, "base_image");
         if (string.IsNullOrEmpty(baseImage))
             result.Errors.Add(new TemplateValidationError { Field = "base_image", Message = "Field 'base_image' is required" });
+        else if (!OciImageRefRegex().IsMatch(baseImage))
+            result.Errors.Add(new TemplateValidationError { Field = "base_image", Message = $"Invalid OCI image reference: '{baseImage}'. Expected format: [registry/]image[:tag|@digest]" });
+        else if (!baseImage.Contains(':') && !baseImage.Contains('@'))
+            result.Warnings.Add(new TemplateValidationWarning { Field = "base_image", Message = $"Image '{baseImage}' has no tag or digest — will default to ':latest' which may cause non-reproducible builds" });
     }
 
     private void ValidateOptionalFields(Dictionary<string, object?> doc, TemplateValidationResult result)
@@ -349,4 +353,24 @@ public partial class TemplateYamlValidator : ITemplateValidator
 
     [GeneratedRegex(@"^[A-Z_][A-Z0-9_]*$")]
     private static partial Regex EnvKeyRegex();
+
+    // OCI image reference: [registry[:port]/][namespace/]name[:tag|@sha256:digest]
+    [GeneratedRegex(@"^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?(?::\d+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[\w][\w.-]{0,127}|@sha256:[a-f0-9]{64})?$")]
+    private static partial Regex OciImageRefRegex();
+
+    /// <summary>
+    /// Validates an OCI image reference string. Used by both YAML and JSON template creation.
+    /// </summary>
+    public static OciImageValidation ValidateOciImageRef(string imageRef)
+    {
+        if (string.IsNullOrWhiteSpace(imageRef))
+            return new OciImageValidation(false, "Image reference is required", false);
+        if (!OciImageRefRegex().IsMatch(imageRef))
+            return new OciImageValidation(false, $"Invalid OCI image reference: '{imageRef}'. Expected format: [registry/]image[:tag|@digest]", false);
+        if (!imageRef.Contains(':') && !imageRef.Contains('@'))
+            return new OciImageValidation(true, null, true);
+        return new OciImageValidation(true, null, false);
+    }
 }
+
+public record OciImageValidation(bool IsValid, string? Error, bool IsUntagged);

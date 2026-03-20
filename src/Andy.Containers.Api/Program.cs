@@ -54,6 +54,10 @@ try
     // === Story 1: Template YAML Validation ===
     builder.Services.AddScoped<ITemplateValidator, TemplateYamlValidator>();
 
+    // === Story 7: Template YAML Persistence ===
+    var yamlBasePath = Path.Combine(builder.Environment.ContentRootPath, "..", "..", "config", "templates");
+    builder.Services.AddSingleton<ITemplateYamlPersistence>(new TemplateYamlPersistence(Path.GetFullPath(yamlBasePath)));
+
     // gRPC
     builder.Services.AddGrpc();
 

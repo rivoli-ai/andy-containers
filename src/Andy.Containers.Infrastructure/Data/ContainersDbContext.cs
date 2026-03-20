@@ -16,6 +16,7 @@ public class ContainersDbContext : DbContext
     public DbSet<InfrastructureProvider> Providers => Set<InfrastructureProvider>();
     public DbSet<DependencySpec> DependencySpecs => Set<DependencySpec>();
     public DbSet<ResolvedDependency> ResolvedDependencies => Set<ResolvedDependency>();
+    public DbSet<TemplateEvent> TemplateEvents => Set<TemplateEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -121,6 +122,17 @@ public class ContainersDbContext : DbContext
             e.HasIndex(r => r.ImageId);
             e.HasOne(r => r.Image).WithMany().HasForeignKey(r => r.ImageId);
             e.HasOne(r => r.DependencySpec).WithMany().HasForeignKey(r => r.DependencySpecId);
+        });
+
+        // TemplateEvent — no FK navigation to avoid cascade delete (audit events survive template deletion)
+        modelBuilder.Entity<TemplateEvent>(e =>
+        {
+            e.HasKey(te => te.Id);
+            e.HasIndex(te => te.TemplateId);
+            e.HasIndex(te => te.SubjectId);
+            e.HasIndex(te => te.Timestamp);
+            e.Property(te => te.BeforeSnapshot).HasColumnType("jsonb");
+            e.Property(te => te.AfterSnapshot).HasColumnType("jsonb");
         });
     }
 }

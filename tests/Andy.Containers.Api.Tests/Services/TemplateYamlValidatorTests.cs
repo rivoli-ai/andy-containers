@@ -488,4 +488,113 @@ public class TemplateYamlValidatorTests
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(e => e.Message.Contains("anchors/aliases"));
     }
+
+    // === Story #8: OCI Image Reference Validation ===
+
+    [Theory]
+    [InlineData("ubuntu:24.04")]
+    [InlineData("mcr.microsoft.com/dotnet/sdk:8.0")]
+    [InlineData("ghcr.io/org/image:1.0")]
+    [InlineData("nvidia/cuda:12.0-base")]
+    [InlineData("registry.example.com:5000/my-image:latest")]
+    [InlineData("ubuntu@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")]
+    [InlineData("ubuntu")]  // bare name allowed
+    [InlineData("my-org/my-image:v1.2.3")]
+    public async Task ValidOciImageRef_NoError(string image)
+    {
+        var yaml = $"""
+            code: oci-test
+            name: OCI Test
+            version: 1.0.0
+            base_image: {image}
+            """;
+
+        var result = await _validator.ValidateYamlAsync(yaml);
+
+        result.Errors.Should().NotContain(e => e.Field == "base_image");
+    }
+
+    [Theory]
+    [InlineData("not a valid image!")]
+    [InlineData("image with spaces:tag")]
+    [InlineData("UPPERCASE:tag")]
+    [InlineData(":just-a-tag")]
+    public async Task InvalidOciImageRef_ReturnsError(string image)
+    {
+        var yaml = $"""
+            code: oci-bad
+            name: OCI Bad
+            version: 1.0.0
+            base_image: {image}
+            """;
+
+        var result = await _validator.ValidateYamlAsync(yaml);
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(e => e.Field == "base_image" && e.Message.Contains("OCI"));
+    }
+
+    [Fact]
+    public async Task UntaggedImage_GeneratesWarning()
+    {
+        var yaml = """
+            code: untagged-test
+            name: Untagged
+            version: 1.0.0
+            base_image: ubuntu
+            """;
+
+        var result = await _validator.ValidateYamlAsync(yaml);
+
+        result.Errors.Should().NotContain(e => e.Field == "base_image");
+        result.Warnings.Should().Contain(w => w.Field == "base_image" && w.Message.Contains("latest"));
+    }
+
+    [Fact]
+    public async Task TaggedImage_NoWarning()
+    {
+        var yaml = """
+            code: tagged-test
+            name: Tagged
+            version: 1.0.0
+            base_image: ubuntu:24.04
+            """;
+
+        var result = await _validator.ValidateYamlAsync(yaml);
+
+        result.Warnings.Should().NotContain(w => w.Field == "base_image");
+    }
+
+    // --- Static OCI validation method ---
+
+    [Fact]
+    public void ValidateOciImageRef_StaticMethod_ValidRef()
+    {
+        var result = TemplateYamlValidator.ValidateOciImageRef("ubuntu:24.04");
+        result.IsValid.Should().BeTrue();
+        result.IsUntagged.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValidateOciImageRef_StaticMethod_UntaggedRef()
+    {
+        var result = TemplateYamlValidator.ValidateOciImageRef("ubuntu");
+        result.IsValid.Should().BeTrue();
+        result.IsUntagged.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ValidateOciImageRef_StaticMethod_InvalidRef()
+    {
+        var result = TemplateYamlValidator.ValidateOciImageRef("bad image!");
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Contain("OCI");
+    }
+
+    [Fact]
+    public void ValidateOciImageRef_StaticMethod_EmptyRef()
+    {
+        var result = TemplateYamlValidator.ValidateOciImageRef("");
+        result.IsValid.Should().BeFalse();
+    }
 }

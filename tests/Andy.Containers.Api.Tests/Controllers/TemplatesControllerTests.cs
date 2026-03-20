@@ -16,6 +16,7 @@ public class TemplatesControllerTests : IDisposable
     private readonly ContainersDbContext _db;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly Mock<ITemplateValidator> _mockValidator;
+    private readonly Mock<ITemplateYamlPersistence> _mockYamlPersistence;
     private readonly TemplatesController _controller;
 
     public TemplatesControllerTests()
@@ -28,7 +29,8 @@ public class TemplatesControllerTests : IDisposable
         var mockEnv = new Mock<IWebHostEnvironment>();
         mockEnv.Setup(e => e.ContentRootPath).Returns(Directory.GetCurrentDirectory());
         _mockValidator = new Mock<ITemplateValidator>();
-        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object, _mockValidator.Object);
+        _mockYamlPersistence = new Mock<ITemplateYamlPersistence>();
+        _controller = new TemplatesController(_db, mockEnv.Object, _mockCurrentUser.Object, _mockValidator.Object, _mockYamlPersistence.Object);
     }
 
     public void Dispose()
@@ -634,5 +636,354 @@ public class TemplatesControllerTests : IDisposable
             CancellationToken.None);
 
         result.Should().BeOfType<ForbidResult>();
+    }
+
+    // === Story #6: Template Audit Events ===
+
+    [Fact]
+    public async Task Create_EmitsCreatedEvent()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "audit-create",
+            Name = "Audit Create",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+
+        await _controller.Create(template, CancellationToken.None);
+
+        var events = _db.TemplateEvents.Where(e => e.TemplateId == template.Id).ToList();
+        events.Should().ContainSingle(e => e.EventType == TemplateEventType.Created);
+        var evt = events[0];
+        evt.SubjectId.Should().Be("test-user");
+        evt.AfterSnapshot.Should().Contain("audit-create");
+        evt.BeforeSnapshot.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Update_EmitsUpdatedEventWithBeforeAfterSnapshots()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "audit-update",
+            Name = "Original",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var update = new ContainerTemplate
+        {
+            Code = "audit-update",
+            Name = "Updated",
+            Version = "2.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+
+        await _controller.Update(template.Id, update, CancellationToken.None);
+
+        var events = _db.TemplateEvents.Where(e => e.TemplateId == template.Id).ToList();
+        events.Should().ContainSingle(e => e.EventType == TemplateEventType.Updated);
+        var evt = events.First(e => e.EventType == TemplateEventType.Updated);
+        evt.BeforeSnapshot.Should().Contain("Original");
+        evt.AfterSnapshot.Should().Contain("Updated");
+    }
+
+    [Fact]
+    public async Task Delete_EmitsDeletedEventWithBeforeSnapshot()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "audit-delete",
+            Name = "To Delete",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        await _controller.Delete(template.Id, CancellationToken.None);
+
+        var events = _db.TemplateEvents.Where(e => e.TemplateId == template.Id).ToList();
+        events.Should().ContainSingle(e => e.EventType == TemplateEventType.Deleted);
+        var evt = events[0];
+        evt.BeforeSnapshot.Should().Contain("audit-delete");
+        evt.AfterSnapshot.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Publish_EmitsPublishedEvent()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "audit-publish",
+            Name = "To Publish",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user",
+            IsPublished = false
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        await _controller.Publish(template.Id, CancellationToken.None);
+
+        var events = _db.TemplateEvents.Where(e => e.TemplateId == template.Id).ToList();
+        events.Should().ContainSingle(e => e.EventType == TemplateEventType.Published);
+    }
+
+    [Fact]
+    public async Task CreateFromYaml_EmitsCreatedEvent()
+    {
+        var parsedTemplate = new ContainerTemplate
+        {
+            Code = "yaml-audit",
+            Name = "From YAML Audit",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        _mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parsedTemplate);
+
+        await _controller.CreateFromYaml(
+            new ValidateYamlRequest { Yaml = "code: yaml-audit\nname: From YAML Audit\nversion: 1.0.0\nbase_image: ubuntu:24.04" },
+            CancellationToken.None);
+
+        var events = _db.TemplateEvents.Where(e => e.TemplateId == parsedTemplate.Id).ToList();
+        events.Should().ContainSingle(e => e.EventType == TemplateEventType.Created);
+    }
+
+    [Fact]
+    public async Task UpdateDefinition_EmitsDefinitionUpdatedEvent()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "def-audit",
+            Name = "Def Audit",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:22.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var parsedTemplate = new ContainerTemplate
+        {
+            Code = "def-audit",
+            Name = "Updated Def",
+            Version = "2.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        _mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parsedTemplate);
+
+        await _controller.UpdateDefinition(template.Id,
+            new UpdateDefinitionRequest { Yaml = "code: def-audit\nversion: 2.0.0" },
+            CancellationToken.None);
+
+        var events = _db.TemplateEvents.Where(e => e.TemplateId == template.Id).ToList();
+        events.Should().ContainSingle(e => e.EventType == TemplateEventType.DefinitionUpdated);
+        var evt = events[0];
+        evt.BeforeSnapshot.Should().Contain("1.0.0");
+        evt.AfterSnapshot.Should().Contain("2.0.0");
+    }
+
+    [Fact]
+    public async Task UpdateDependencies_EmitsDependenciesUpdatedEvent()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "dep-audit",
+            Name = "Dep Audit",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var newDeps = new[]
+        {
+            new DependencySpec { Name = "dotnet-sdk", VersionConstraint = "8.0.*", Type = DependencyType.Sdk }
+        };
+
+        await _controller.UpdateDependencies(template.Id, newDeps, CancellationToken.None);
+
+        var events = _db.TemplateEvents.Where(e => e.TemplateId == template.Id).ToList();
+        events.Should().ContainSingle(e => e.EventType == TemplateEventType.DependenciesUpdated);
+        var evt = events[0];
+        evt.AfterSnapshot.Should().Contain("dotnet-sdk");
+    }
+
+    [Fact]
+    public async Task GetEvents_ReturnsEventsForTemplate()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "events-query",
+            Name = "Events Query",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _db.Templates.Add(template);
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = template.Id,
+            EventType = TemplateEventType.Created,
+            SubjectId = "test-user",
+            AfterSnapshot = "{}"
+        });
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = template.Id,
+            EventType = TemplateEventType.Updated,
+            SubjectId = "test-user",
+            BeforeSnapshot = "{}",
+            AfterSnapshot = "{}"
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.GetEvents(template.Id, ct: CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var events = ok.Value.Should().BeAssignableTo<List<TemplateEvent>>().Subject;
+        events.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task GetEvents_NonExistent_ReturnsNotFound()
+    {
+        var result = await _controller.GetEvents(Guid.NewGuid(), ct: CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    // === Story #7: YAML Persistence ===
+
+    [Fact]
+    public async Task CreateFromYaml_CallsYamlPersistence()
+    {
+        var parsedTemplate = new ContainerTemplate
+        {
+            Code = "persist-create",
+            Name = "Persist Create",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        _mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parsedTemplate);
+
+        var yaml = "code: persist-create\nname: Persist Create\nversion: 1.0.0\nbase_image: ubuntu:24.04";
+        await _controller.CreateFromYaml(new ValidateYamlRequest { Yaml = yaml }, CancellationToken.None);
+
+        _mockYamlPersistence.Verify(p => p.WriteYamlAsync(
+            It.Is<ContainerTemplate>(t => t.Code == "persist-create"),
+            yaml,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateDefinition_CallsYamlPersistence()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "persist-update",
+            Name = "Persist Update",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            OwnerId = "test-user"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        var parsedTemplate = new ContainerTemplate
+        {
+            Code = "persist-update",
+            Name = "Updated",
+            Version = "2.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _mockValidator.Setup(v => v.ValidateYamlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TemplateValidationResult { Valid = true });
+        _mockValidator.Setup(v => v.ParseYamlToTemplateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parsedTemplate);
+
+        var yaml = "code: persist-update\nversion: 2.0.0";
+        await _controller.UpdateDefinition(template.Id, new UpdateDefinitionRequest { Yaml = yaml }, CancellationToken.None);
+
+        _mockYamlPersistence.Verify(p => p.WriteYamlAsync(
+            It.IsAny<ContainerTemplate>(),
+            yaml,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetDefinition_ReturnsPersistedYamlWhenAvailable()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "persisted-def",
+            Name = "Persisted Def",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04"
+        };
+        _db.Templates.Add(template);
+        await _db.SaveChangesAsync();
+
+        _mockYamlPersistence.Setup(p => p.ReadYamlAsync(It.IsAny<ContainerTemplate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("code: persisted-def\nname: Persisted Def\nversion: 1.0.0\nbase_image: ubuntu:24.04");
+
+        var result = await _controller.GetDefinition(template.Id, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var value = ok.Value!;
+        var content = value.GetType().GetProperty("content")!.GetValue(value) as string;
+        content.Should().Contain("code: persisted-def");
+    }
+
+    // === Story #8: OCI Image Reference Validation ===
+
+    [Fact]
+    public async Task Create_InvalidOciImage_Returns422()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "bad-image",
+            Name = "Bad Image",
+            Version = "1.0.0",
+            BaseImage = "not a valid image!"
+        };
+
+        var result = await _controller.Create(template, CancellationToken.None);
+
+        var unprocessable = result.Should().BeOfType<UnprocessableEntityObjectResult>().Subject;
+        var validation = unprocessable.Value.Should().BeOfType<TemplateValidationResult>().Subject;
+        validation.Errors.Should().Contain(e => e.Field == "base_image" && e.Message.Contains("OCI"));
+    }
+
+    [Fact]
+    public async Task Create_ValidOciImage_Succeeds()
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "good-image",
+            Name = "Good Image",
+            Version = "1.0.0",
+            BaseImage = "ghcr.io/org/image:1.0"
+        };
+
+        var result = await _controller.Create(template, CancellationToken.None);
+
+        result.Should().BeOfType<CreatedAtActionResult>();
     }
 }

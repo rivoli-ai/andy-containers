@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -16,13 +17,15 @@ public class TemplatesController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ICurrentUserService _currentUser;
     private readonly ITemplateValidator _validator;
+    private readonly ITemplateYamlPersistence _yamlPersistence;
 
-    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, ITemplateValidator validator)
+    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, ITemplateValidator validator, ITemplateYamlPersistence yamlPersistence)
     {
         _db = db;
         _env = env;
         _currentUser = currentUser;
         _validator = validator;
+        _yamlPersistence = yamlPersistence;
     }
 
     [HttpGet]
@@ -82,8 +85,12 @@ public class TemplatesController : ControllerBase
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
 
+        // Try persisted YAML first (story #7)
+        var persisted = await _yamlPersistence.ReadYamlAsync(template, ct);
+        if (persisted is not null)
+            return Ok(new { code = template.Code, content = persisted });
+
         // Search for the YAML file in config/templates directories
-        // Try multiple possible root locations to be resilient to different working directories
         string[] candidates = [];
         foreach (var root in GetConfigSearchPaths())
         {
@@ -105,13 +112,26 @@ public class TemplatesController : ControllerBase
         return Ok(new { code = template.Code, content = syntheticYaml });
     }
 
+    [HttpGet("{id:guid}/events")]
+    public async Task<IActionResult> GetEvents(Guid id, [FromQuery] int skip = 0, [FromQuery] int take = 50, CancellationToken ct = default)
+    {
+        var exists = await _db.Templates.AnyAsync(t => t.Id == id, ct);
+        if (!exists) return NotFound();
+
+        var events = await _db.TemplateEvents
+            .Where(e => e.TemplateId == id)
+            .OrderByDescending(e => e.Timestamp)
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(ct);
+
+        return Ok(events);
+    }
+
     private IEnumerable<string> GetConfigSearchPaths()
     {
-        // From ContentRootPath (project dir when using dotnet run)
         yield return Path.GetFullPath(Path.Combine(_env.ContentRootPath, "..", "..", "config", "templates"));
-        // From ContentRootPath (if run from repo root)
         yield return Path.Combine(_env.ContentRootPath, "config", "templates");
-        // Walk up from ContentRootPath to find config/templates
         var dir = _env.ContentRootPath;
         for (var i = 0; i < 5; i++)
         {
@@ -165,6 +185,15 @@ public class TemplatesController : ControllerBase
 
         template.OwnerId = _currentUser.GetUserId();
         _db.Templates.Add(template);
+
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = template.Id,
+            EventType = TemplateEventType.Created,
+            SubjectId = _currentUser.GetUserId(),
+            AfterSnapshot = SnapshotTemplate(template)
+        });
+
         await _db.SaveChangesAsync(ct);
         return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
     }
@@ -180,12 +209,24 @@ public class TemplatesController : ControllerBase
         if (errors.Count > 0)
             return UnprocessableEntity(new TemplateValidationResult { Valid = false, Errors = errors });
 
+        var before = SnapshotTemplate(template);
+
         template.Name = update.Name;
         template.Description = update.Description;
         template.Version = update.Version;
         template.IdeType = update.IdeType;
         template.Tags = update.Tags;
         template.UpdatedAt = DateTime.UtcNow;
+
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = id,
+            EventType = TemplateEventType.Updated,
+            SubjectId = _currentUser.GetUserId(),
+            BeforeSnapshot = before,
+            AfterSnapshot = SnapshotTemplate(template)
+        });
+
         await _db.SaveChangesAsync(ct);
         return Ok(template);
     }
@@ -197,8 +238,20 @@ public class TemplatesController : ControllerBase
         if (template is null) return NotFound();
         if (!CanModifyTemplate(template)) return Forbid();
 
+        var before = SnapshotTemplate(template);
+
         template.IsPublished = true;
         template.UpdatedAt = DateTime.UtcNow;
+
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = id,
+            EventType = TemplateEventType.Published,
+            SubjectId = _currentUser.GetUserId(),
+            BeforeSnapshot = before,
+            AfterSnapshot = SnapshotTemplate(template)
+        });
+
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }
@@ -209,6 +262,14 @@ public class TemplatesController : ControllerBase
         var template = await _db.Templates.FindAsync([id], ct);
         if (template is null) return NotFound();
         if (!CanModifyTemplate(template)) return Forbid();
+
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = id,
+            EventType = TemplateEventType.Deleted,
+            SubjectId = _currentUser.GetUserId(),
+            BeforeSnapshot = SnapshotTemplate(template)
+        });
 
         _db.Templates.Remove(template);
         await _db.SaveChangesAsync(ct);
@@ -243,6 +304,8 @@ public class TemplatesController : ControllerBase
         if (parsed is null)
             return UnprocessableEntity(new { error = "Failed to parse YAML into template" });
 
+        var before = SnapshotTemplate(template);
+
         template.Name = parsed.Name;
         template.Description = parsed.Description;
         template.Version = parsed.Version;
@@ -256,6 +319,17 @@ public class TemplatesController : ControllerBase
         template.Ports = parsed.Ports;
         template.Scripts = parsed.Scripts;
         template.UpdatedAt = DateTime.UtcNow;
+
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = id,
+            EventType = TemplateEventType.DefinitionUpdated,
+            SubjectId = _currentUser.GetUserId(),
+            BeforeSnapshot = before,
+            AfterSnapshot = SnapshotTemplate(template)
+        });
+
+        await _yamlPersistence.WriteYamlAsync(template, request.Yaml, ct);
         await _db.SaveChangesAsync(ct);
         return Ok(template);
     }
@@ -280,6 +354,16 @@ public class TemplatesController : ControllerBase
 
         template.OwnerId = _currentUser.GetUserId();
         _db.Templates.Add(template);
+
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = template.Id,
+            EventType = TemplateEventType.Created,
+            SubjectId = _currentUser.GetUserId(),
+            AfterSnapshot = SnapshotTemplate(template)
+        });
+
+        await _yamlPersistence.WriteYamlAsync(template, request.Yaml, ct);
         await _db.SaveChangesAsync(ct);
         return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
     }
@@ -306,11 +390,12 @@ public class TemplatesController : ControllerBase
                 return UnprocessableEntity(new { error = $"Invalid version constraint: '{dep.VersionConstraint}'" });
         }
 
-        // Remove existing dependencies
-        var existing = _db.DependencySpecs.Where(d => d.TemplateId == id);
-        _db.DependencySpecs.RemoveRange(existing);
+        // Snapshot existing dependencies for audit
+        var existingDeps = await _db.DependencySpecs.Where(d => d.TemplateId == id).ToListAsync(ct);
+        var beforeDeps = JsonSerializer.Serialize(existingDeps.Select(d => new { d.Name, d.VersionConstraint, d.Type }));
 
-        // Add new dependencies
+        _db.DependencySpecs.RemoveRange(existingDeps);
+
         for (int i = 0; i < dependencies.Length; i++)
         {
             dependencies[i].Id = Guid.NewGuid();
@@ -318,11 +403,31 @@ public class TemplatesController : ControllerBase
             dependencies[i].SortOrder = i;
         }
         _db.DependencySpecs.AddRange(dependencies);
+
+        var afterDeps = JsonSerializer.Serialize(dependencies.Select(d => new { d.Name, d.VersionConstraint, d.Type }));
+
+        _db.TemplateEvents.Add(new TemplateEvent
+        {
+            TemplateId = id,
+            EventType = TemplateEventType.DependenciesUpdated,
+            SubjectId = _currentUser.GetUserId(),
+            BeforeSnapshot = beforeDeps,
+            AfterSnapshot = afterDeps
+        });
+
         template.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
 
         return Ok(dependencies);
     }
+
+    private static string SnapshotTemplate(ContainerTemplate t) =>
+        JsonSerializer.Serialize(new
+        {
+            t.Code, t.Name, t.Version, t.BaseImage, t.Description,
+            t.IdeType, t.CatalogScope, t.GpuRequired, t.GpuPreferred,
+            t.Tags, t.IsPublished
+        });
 
     private static List<TemplateValidationError> ValidateTemplateFields(ContainerTemplate t)
     {
@@ -335,6 +440,12 @@ public class TemplatesController : ControllerBase
             errors.Add(new TemplateValidationError { Field = "version", Message = "Field 'version' is required" });
         if (string.IsNullOrWhiteSpace(t.BaseImage))
             errors.Add(new TemplateValidationError { Field = "base_image", Message = "Field 'base_image' is required" });
+        else
+        {
+            var oci = TemplateYamlValidator.ValidateOciImageRef(t.BaseImage);
+            if (!oci.IsValid)
+                errors.Add(new TemplateValidationError { Field = "base_image", Message = oci.Error! });
+        }
         if (t.Tags is { Length: > 20 })
             errors.Add(new TemplateValidationError { Field = "tags", Message = "Maximum 20 tags allowed" });
         return errors;
@@ -343,9 +454,7 @@ public class TemplatesController : ControllerBase
     private bool CanModifyTemplate(ContainerTemplate template)
     {
         if (_currentUser.IsAdmin()) return true;
-        // Global templates can only be modified by admins
         if (template.CatalogScope == CatalogScope.Global) return false;
-        // User-scoped templates can be modified by their owner
         return template.OwnerId == _currentUser.GetUserId();
     }
 }
