@@ -103,6 +103,36 @@ public class ContainersApiService
         }
     }
 
+    public async Task<YamlValidationResultDto?> ValidateTemplateYamlAsync(string yaml)
+    {
+        var response = await _http.PostAsJsonAsync("api/templates/validate", new { content = yaml }, JsonOptions);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<YamlValidationResultDto>(JsonOptions);
+    }
+
+    public async Task<TemplateDto?> CreateTemplateFromYamlAsync(string yaml)
+    {
+        var response = await _http.PostAsJsonAsync("api/templates/from-yaml", new { content = yaml }, JsonOptions);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadFromJsonAsync<YamlValidationResultDto>(JsonOptions);
+            throw new YamlValidationException(error);
+        }
+        return await response.Content.ReadFromJsonAsync<TemplateDto>(JsonOptions);
+    }
+
+    public async Task<TemplateDto?> UpdateTemplateDefinitionAsync(Guid id, string yaml)
+    {
+        var response = await _http.PutAsJsonAsync($"api/templates/{id}/definition", new { content = yaml }, JsonOptions);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            var validation = await response.Content.ReadFromJsonAsync<YamlValidationResultDto>(JsonOptions);
+            throw new YamlValidationException(validation);
+        }
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<TemplateDto>(JsonOptions);
+    }
+
     // ---------- Providers ----------
 
     public async Task<List<ProviderDto>> GetProvidersAsync()
@@ -291,4 +321,34 @@ public class CostBreakdownDto
     public string Component { get; set; } = "";
     public decimal HourlyCostUsd { get; set; }
     public string? Unit { get; set; }
+}
+
+public class YamlValidationResultDto
+{
+    public bool IsValid { get; set; }
+    public List<YamlValidationErrorDto> Errors { get; set; } = [];
+    public List<YamlValidationWarningDto> Warnings { get; set; } = [];
+}
+
+public class YamlValidationErrorDto
+{
+    public string Field { get; set; } = "";
+    public string Message { get; set; } = "";
+    public int? Line { get; set; }
+}
+
+public class YamlValidationWarningDto
+{
+    public string Field { get; set; } = "";
+    public string Message { get; set; } = "";
+    public int? Line { get; set; }
+}
+
+public class YamlValidationException : Exception
+{
+    public YamlValidationResultDto? ValidationResult { get; }
+    public YamlValidationException(YamlValidationResultDto? result) : base("YAML validation failed")
+    {
+        ValidationResult = result;
+    }
 }

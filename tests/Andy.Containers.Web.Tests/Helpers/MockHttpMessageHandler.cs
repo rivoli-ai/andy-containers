@@ -47,6 +47,25 @@ public class MockHttpMessageHandler : HttpMessageHandler
         };
     }
 
+    public void SetupPut<T>(string urlContains, T responseBody, HttpStatusCode statusCode = HttpStatusCode.OK)
+    {
+        _handlers[urlContains] = _ => new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(responseBody, JsonOptions),
+                System.Text.Encoding.UTF8,
+                "application/json")
+        };
+    }
+
+    public void SetupPut(string urlContains, HttpStatusCode statusCode = HttpStatusCode.OK)
+    {
+        _handlers[urlContains] = _ => new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+
     public void SetupDelete(string urlContains, HttpStatusCode statusCode = HttpStatusCode.NoContent)
     {
         _handlers[urlContains] = _ => new HttpResponseMessage(statusCode);

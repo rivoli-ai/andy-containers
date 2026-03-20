@@ -1,0 +1,77 @@
+<div class="validation-panel">
+    @if (IsLoading)
+    {
+        <div style="padding: 1rem; color: var(--text-muted);">
+            <span class="spinner-sm"></span> Validating...
+        </div>
+    }
+    else if (Result is null)
+    {
+        <div style="padding: 1rem; color: var(--text-muted);">
+            <i class="bi bi-info-circle"></i> Start typing to see validation results.
+        </div>
+    }
+    else
+    {
+        <div class="validation-summary" style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.9rem;">
+            @if (Result.IsValid)
+            {
+                <span style="color: var(--success);"><i class="bi bi-check-circle-fill"></i> Valid</span>
+            }
+            else
+            {
+                <span style="color: var(--danger);"><i class="bi bi-x-circle-fill"></i> @Result.Errors.Count error(s)</span>
+            }
+            @if (Result.Warnings.Count > 0)
+            {
+                <span style="color: #856404; margin-left: 1rem;"><i class="bi bi-exclamation-triangle-fill"></i> @Result.Warnings.Count warning(s)</span>
+            }
+        </div>
+
+        @if (Result.Errors.Count > 0)
+        {
+            <div class="validation-section">
+                <div class="validation-section-header" style="padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 600; color: var(--danger); background: rgba(220, 53, 69, 0.05);">
+                    Errors
+                </div>
+                @foreach (var err in Result.Errors)
+                {
+                    <div class="validation-item" style="padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; cursor: pointer;" @onclick="() => OnLineClicked.InvokeAsync(err.Line ?? 1)">
+                        <i class="bi bi-x-circle" style="color: var(--danger); margin-right: 0.5rem;"></i>
+                        <strong>@err.Field</strong>: @err.Message
+                        @if (err.Line.HasValue)
+                        {
+                            <span class="text-muted" style="margin-left: 0.5rem; font-size: 0.8rem;">line @err.Line</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @if (Result.Warnings.Count > 0)
+        {
+            <div class="validation-section">
+                <div class="validation-section-header" style="padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 600; color: #856404; background: rgba(255, 193, 7, 0.05);">
+                    Warnings
+                </div>
+                @foreach (var warn in Result.Warnings)
+                {
+                    <div class="validation-item" style="padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; cursor: pointer;" @onclick="() => OnLineClicked.InvokeAsync(warn.Line ?? 1)">
+                        <i class="bi bi-exclamation-triangle" style="color: #856404; margin-right: 0.5rem;"></i>
+                        <strong>@warn.Field</strong>: @warn.Message
+                        @if (warn.Line.HasValue)
+                        {
+                            <span class="text-muted" style="margin-left: 0.5rem; font-size: 0.8rem;">line @warn.Line</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public YamlValidationResultDto? Result { get; set; }
+    [Parameter] public bool IsLoading { get; set; }
+    [Parameter] public EventCallback<int> OnLineClicked { get; set; }
+}

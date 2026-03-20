@@ -537,6 +537,75 @@
         }
         .btn-login:hover { background: rgba(0, 102, 204, 0.1); border-color: rgba(0, 102, 204, 0.3); }
 
+        /* ───── Tabs ───── */
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            border-bottom: 2px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+
+        .tab-item {
+            padding: 0.75rem 1.25rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+            background: none;
+            border-top: none;
+            border-left: none;
+            border-right: none;
+            font-family: inherit;
+        }
+
+        .tab-item:hover {
+            color: var(--text);
+        }
+
+        .tab-item.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        .tab-item .unsaved-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--warning);
+            margin-left: 0.5rem;
+        }
+
+        /* ───── Diff ───── */
+        .diff-removed {
+            background: rgba(220, 53, 69, 0.08);
+        }
+
+        .diff-added {
+            background: rgba(40, 167, 69, 0.08);
+        }
+
+        .diff-context {
+            background: transparent;
+        }
+
+        /* ───── Split Panel ───── */
+        .split-panel {
+            display: grid;
+            grid-template-columns: 3fr 2fr;
+            gap: 1rem;
+            min-height: 500px;
+        }
+
+        .split-panel-equal {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
         /* ───── Responsive ───── */
         @@media (max-width: 768px) {
             .sidebar { transform: translateX(-100%); }

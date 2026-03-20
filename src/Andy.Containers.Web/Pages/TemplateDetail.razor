@@ -1,5 +1,6 @@
 @page "/templates/{Id:guid}"
 @inject ContainersApiService Api
+@inject IJSRuntime JS
 
 <PageTitle>Template Detail - Andy Containers</PageTitle>
 
@@ -24,82 +25,182 @@ else if (_error is not null)
 }
 else if (_template is not null)
 {
-    @* ───── Overview Card ───── *@
-    <div class="card" style="margin-bottom: 1.5rem;">
-        <div class="card-body">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
-                <h5>@_template.Name</h5>
-                <span class="info-badge">@_template.Version</span>
-            </div>
-            <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1rem;">
-                @(_template.Description ?? "No description.")
-            </p>
-            <div class="detail-row"><strong>Code:</strong> <span class="text-mono">@_template.Code</span></div>
-            <div class="detail-row"><strong>ID:</strong> <span class="text-mono">@_template.Id</span></div>
-            <div class="detail-row"><strong>Base Image:</strong> <span class="text-mono">@_template.BaseImage</span></div>
-            <div class="detail-row"><strong>IDE Type:</strong> @_template.IdeType</div>
-            <div class="detail-row"><strong>Scope:</strong> <span class="scope-badge @_template.CatalogScope.ToLowerInvariant()">@_template.CatalogScope</span></div>
-            @if (_template.GpuRequired)
+    @* ───── Tab Bar ───── *@
+    <div class="tab-bar">
+        <button class="tab-item @(_activeTab == "details" ? "active" : "")" @onclick='() => _activeTab = "details"'>
+            <i class="bi bi-info-circle"></i> Details
+        </button>
+        <button class="tab-item @(_activeTab == "edit" ? "active" : "")" @onclick="SwitchToEditTab">
+            <i class="bi bi-pencil-square"></i> Edit YAML
+            @if (_hasUnsavedChanges)
             {
-                <div class="detail-row"><strong>GPU:</strong> <span class="info-badge badge-gpu-required"><i class="bi bi-gpu-card"></i> Required</span></div>
+                <span class="unsaved-dot" title="Unsaved changes"></span>
             }
-            else if (_template.GpuPreferred)
-            {
-                <div class="detail-row"><strong>GPU:</strong> <span class="info-badge badge-gpu-preferred"><i class="bi bi-gpu-card"></i> Preferred</span></div>
-            }
-            @if (_template.Tags is { Length: > 0 })
-            {
-                <div style="margin-top: 0.5rem;">
-                    @foreach (var tag in _template.Tags)
-                    {
-                        <span class="tag-badge">@tag</span>
-                    }
-                </div>
-            }
-            <div class="detail-row" style="margin-top: 0.5rem;">
-                <strong>Created:</strong> @_template.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
-            </div>
-            @if (_template.UpdatedAt.HasValue)
-            {
-                <div class="detail-row"><strong>Updated:</strong> @_template.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm:ss")</div>
-            }
-        </div>
+        </button>
     </div>
 
-    @* ───── Definition YAML Card ───── *@
-    <div class="card" style="margin-bottom: 1.5rem;">
-        <div class="card-body">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                <h5 style="margin: 0;">Definition</h5>
-                @if (_definition is null && !_defLoading)
+    @* ───── Details Tab ───── *@
+    @if (_activeTab == "details")
+    {
+        @* ───── Overview Card ───── *@
+        <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+                    <h5>@_template.Name</h5>
+                    <span class="info-badge">@_template.Version</span>
+                </div>
+                <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1rem;">
+                    @(_template.Description ?? "No description.")
+                </p>
+                <div class="detail-row"><strong>Code:</strong> <span class="text-mono">@_template.Code</span></div>
+                <div class="detail-row"><strong>ID:</strong> <span class="text-mono">@_template.Id</span></div>
+                <div class="detail-row"><strong>Base Image:</strong> <span class="text-mono">@_template.BaseImage</span></div>
+                <div class="detail-row"><strong>IDE Type:</strong> @_template.IdeType</div>
+                <div class="detail-row"><strong>Scope:</strong> <span class="scope-badge @_template.CatalogScope.ToLowerInvariant()">@_template.CatalogScope</span></div>
+                @if (_template.GpuRequired)
                 {
-                    <button class="btn btn-secondary btn-sm" @onclick="LoadDefinitionAsync">
-                        <i class="bi bi-file-earmark-code"></i> Load YAML
-                    </button>
+                    <div class="detail-row"><strong>GPU:</strong> <span class="info-badge badge-gpu-required"><i class="bi bi-gpu-card"></i> Required</span></div>
+                }
+                else if (_template.GpuPreferred)
+                {
+                    <div class="detail-row"><strong>GPU:</strong> <span class="info-badge badge-gpu-preferred"><i class="bi bi-gpu-card"></i> Preferred</span></div>
+                }
+                @if (_template.Tags is { Length: > 0 })
+                {
+                    <div style="margin-top: 0.5rem;">
+                        @foreach (var tag in _template.Tags)
+                        {
+                            <span class="tag-badge">@tag</span>
+                        }
+                    </div>
+                }
+                <div class="detail-row" style="margin-top: 0.5rem;">
+                    <strong>Created:</strong> @_template.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                </div>
+                @if (_template.UpdatedAt.HasValue)
+                {
+                    <div class="detail-row"><strong>Updated:</strong> @_template.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm:ss")</div>
                 }
             </div>
+        </div>
 
-            @if (_defLoading)
-            {
-                <div><span class="spinner-sm"></span> Loading definition...</div>
-            }
-            else if (_defError is not null)
-            {
-                <div class="alert alert-error">
-                    <i class="bi bi-exclamation-triangle"></i>
-                    @_defError
+        @* ───── Definition YAML Card ───── *@
+        <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                    <h5 style="margin: 0;">Definition</h5>
+                    @if (_definition is null && !_defLoading)
+                    {
+                        <button class="btn btn-secondary btn-sm" @onclick="LoadDefinitionAsync">
+                            <i class="bi bi-file-earmark-code"></i> Load YAML
+                        </button>
+                    }
                 </div>
-            }
-            else if (_definition is not null)
+
+                @if (_defLoading)
+                {
+                    <div><span class="spinner-sm"></span> Loading definition...</div>
+                }
+                else if (_defError is not null)
+                {
+                    <div class="alert alert-error">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        @_defError
+                    </div>
+                }
+                else if (_definition is not null)
+                {
+                    <YamlEditor Value="@_definition.Content" ReadOnly="true" Height="500px" />
+                }
+                else
+                {
+                    <p class="text-muted" style="font-size: 0.9rem; margin: 0;">Click "Load YAML" to view the template definition file.</p>
+                }
+            </div>
+        </div>
+    }
+
+    @* ───── Edit YAML Tab ───── *@
+    @if (_activeTab == "edit")
+    {
+        @* ───── Toolbar ───── *@
+        <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem;">
+            <button class="btn btn-primary btn-sm" @onclick="SaveAsync" disabled="@(_saving || !_hasUnsavedChanges)">
+                @if (_saving)
+                {
+                    <span class="spinner-sm"></span>
+                }
+                else
+                {
+                    <i class="bi bi-save"></i>
+                }
+                Save
+            </button>
+            <button class="btn btn-secondary btn-sm" @onclick="RevertChanges" disabled="@(!_hasUnsavedChanges)">
+                <i class="bi bi-arrow-counterclockwise"></i> Revert
+            </button>
+            <button class="btn btn-secondary btn-sm" @onclick="DownloadYaml">
+                <i class="bi bi-download"></i> Download YAML
+            </button>
+
+            @if (_hasUnsavedChanges)
             {
-                <YamlEditor Value="@_definition.Content" ReadOnly="true" Height="500px" />
+                <span style="font-size: 0.8rem; color: var(--warning); font-weight: 600; margin-left: 0.5rem;">
+                    <i class="bi bi-circle-fill" style="font-size: 0.5rem; vertical-align: middle;"></i> Unsaved changes
+                </span>
             }
-            else
+
+            @if (_saveSuccess)
             {
-                <p class="text-muted" style="font-size: 0.9rem; margin: 0;">Click "Load YAML" to view the template definition file.</p>
+                <span style="font-size: 0.8rem; color: var(--success); font-weight: 600; margin-left: 0.5rem;">
+                    <i class="bi bi-check-circle"></i> Saved successfully
+                </span>
+            }
+
+            @if (_saveError is not null)
+            {
+                <span style="font-size: 0.8rem; color: var(--danger); font-weight: 600; margin-left: 0.5rem;">
+                    <i class="bi bi-x-circle"></i> @_saveError
+                </span>
             }
         </div>
-    </div>
+
+        @* ───── Split View: Editor + Validation ───── *@
+        <div class="split-panel" style="margin-bottom: 1.5rem;">
+            <div>
+                <YamlEditor Value="@_editYaml"
+                            ReadOnly="false"
+                            Height="500px"
+                            OnChanged="OnYamlChanged"
+                            OnSave="SaveAsync"
+                            Errors="@_editorErrors"
+                            Warnings="@_editorWarnings" />
+            </div>
+            <div>
+                <ValidationPanel Result="@_validationResult" IsLoading="@_validating" />
+            </div>
+        </div>
+
+        @* ───── Diff Preview ───── *@
+        <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; cursor: pointer;" @onclick="ToggleDiffPreview">
+                    <h5 style="margin: 0;">
+                        <i class="bi @(_showDiff ? "bi-chevron-down" : "bi-chevron-right")"></i>
+                        Diff Preview
+                    </h5>
+                    @if (_hasUnsavedChanges)
+                    {
+                        <span style="font-size: 0.8rem; color: var(--text-muted);">Changes detected</span>
+                    }
+                </div>
+                @if (_showDiff)
+                {
+                    <DiffViewer Original="@_originalYaml" Modified="@_editYaml" MaxHeight="400px" />
+                }
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -113,6 +214,25 @@ else if (_template is not null)
     private TemplateDefinitionDto? _definition;
     private bool _defLoading;
     private string? _defError;
+
+    // Tab state
+    private string _activeTab = "details";
+
+    // Edit tab state
+    private string _originalYaml = "";
+    private string _editYaml = "";
+    private bool _hasUnsavedChanges;
+    private bool _saving;
+    private bool _saveSuccess;
+    private string? _saveError;
+    private bool _showDiff;
+
+    // Validation state
+    private YamlValidationResultDto? _validationResult;
+    private bool _validating;
+    private List<EditorMarker>? _editorErrors;
+    private List<EditorMarker>? _editorWarnings;
+    private CancellationTokenSource? _validateCts;
 
     protected override async Task OnInitializedAsync()
     {
@@ -161,6 +281,12 @@ else if (_template is not null)
             {
                 _defError = "No definition file found for this template.";
             }
+            else
+            {
+                _originalYaml = _definition.Content;
+                _editYaml = _definition.Content;
+                _hasUnsavedChanges = false;
+            }
         }
         catch (Exception ex)
         {
@@ -170,5 +296,135 @@ else if (_template is not null)
         {
             _defLoading = false;
         }
+    }
+
+    private void SwitchToEditTab()
+    {
+        _activeTab = "edit";
+        _saveSuccess = false;
+        _saveError = null;
+    }
+
+    private async Task OnYamlChanged(string value)
+    {
+        _editYaml = value;
+        _hasUnsavedChanges = _editYaml != _originalYaml;
+        _saveSuccess = false;
+        _saveError = null;
+
+        // Debounced validation
+        _validateCts?.Cancel();
+        _validateCts = new CancellationTokenSource();
+        var token = _validateCts.Token;
+
+        try
+        {
+            await Task.Delay(500, token);
+            if (!token.IsCancellationRequested)
+            {
+                await ValidateAsync();
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // Debounce cancelled, ignore
+        }
+    }
+
+    private async Task ValidateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_editYaml)) return;
+
+        _validating = true;
+        StateHasChanged();
+
+        try
+        {
+            _validationResult = await Api.ValidateTemplateYamlAsync(_editYaml);
+            _editorErrors = _validationResult?.Errors
+                .Select(e => new EditorMarker(e.Line ?? 1, $"{e.Field}: {e.Message}"))
+                .ToList();
+            _editorWarnings = _validationResult?.Warnings
+                .Select(w => new EditorMarker(w.Line ?? 1, $"{w.Field}: {w.Message}"))
+                .ToList();
+        }
+        catch (Exception)
+        {
+            // Validation API error - clear markers
+            _editorErrors = null;
+            _editorWarnings = null;
+        }
+        finally
+        {
+            _validating = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!_hasUnsavedChanges || _saving) return;
+
+        _saving = true;
+        _saveSuccess = false;
+        _saveError = null;
+        StateHasChanged();
+
+        try
+        {
+            var updated = await Api.UpdateTemplateDefinitionAsync(Id, _editYaml);
+            if (updated is not null)
+            {
+                _template = updated;
+            }
+            _originalYaml = _editYaml;
+            _hasUnsavedChanges = false;
+            _saveSuccess = true;
+
+            // Reload definition to sync
+            _definition = await Api.GetTemplateDefinitionAsync(Id);
+        }
+        catch (YamlValidationException ex)
+        {
+            _validationResult = ex.ValidationResult;
+            _editorErrors = _validationResult?.Errors
+                .Select(e => new EditorMarker(e.Line ?? 1, $"{e.Field}: {e.Message}"))
+                .ToList();
+            _editorWarnings = _validationResult?.Warnings
+                .Select(w => new EditorMarker(w.Line ?? 1, $"{w.Field}: {w.Message}"))
+                .ToList();
+            _saveError = "Validation failed. Fix errors and try again.";
+        }
+        catch (Exception ex)
+        {
+            _saveError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void RevertChanges()
+    {
+        _editYaml = _originalYaml;
+        _hasUnsavedChanges = false;
+        _saveSuccess = false;
+        _saveError = null;
+        _validationResult = null;
+        _editorErrors = null;
+        _editorWarnings = null;
+    }
+
+    private async Task DownloadYaml()
+    {
+        var filename = $"{_template?.Code ?? "template"}.yaml";
+        await JS.InvokeVoidAsync("yamlEditor.downloadFile", filename, _editYaml);
+    }
+
+    private void ToggleDiffPreview()
+    {
+        _showDiff = !_showDiff;
     }
 }

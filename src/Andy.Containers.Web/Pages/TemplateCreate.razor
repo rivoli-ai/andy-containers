@@ -1,0 +1,346 @@
+@page "/templates/create"
+@inject ContainersApiService Api
+@inject NavigationManager Nav
+@implements IDisposable
+
+<PageTitle>Create Template - Andy Containers</PageTitle>
+
+<div class="page-header">
+    <h1>Create Template from YAML</h1>
+    <a href="templates" class="btn btn-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Back to Catalog
+    </a>
+</div>
+
+<div style="margin-bottom: 1rem;">
+    <span style="font-size: 0.9rem; font-weight: 600; margin-right: 0.5rem;">Starter Templates:</span>
+    <button class="btn btn-secondary btn-sm" @onclick="() => LoadStarter(BlankTemplate)">Blank</button>
+    <button class="btn btn-secondary btn-sm" @onclick="() => LoadStarter(DotNetTemplate)">.NET</button>
+    <button class="btn btn-secondary btn-sm" @onclick="() => LoadStarter(PythonTemplate)">Python + Jupyter</button>
+    <button class="btn btn-secondary btn-sm" @onclick="() => LoadStarter(FullStackTemplate)">Full Stack</button>
+</div>
+
+<div style="display: flex; gap: 1rem; min-height: 500px;">
+    <div style="flex: 6; min-width: 0;">
+        <YamlEditor Value="@_yaml"
+                    Height="500px"
+                    Errors="@_editorErrors"
+                    Warnings="@_editorWarnings"
+                    OnChanged="OnYamlChanged" />
+    </div>
+    <div style="flex: 4; min-width: 0; border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: 500px;">
+        <ValidationPanel Result="@_validationResult" IsLoading="@_validating" OnLineClicked="OnLineClicked" />
+
+        @if (_validationResult is { IsValid: true })
+        {
+            <div style="padding: 0.75rem 1rem; border-top: 1px solid var(--border); font-size: 0.85rem;">
+                <div style="font-weight: 600; margin-bottom: 0.5rem;">Parsed Preview</div>
+                @if (!string.IsNullOrEmpty(_parsedName))
+                {
+                    <div><strong>Name:</strong> @_parsedName</div>
+                }
+                @if (!string.IsNullOrEmpty(_parsedCode))
+                {
+                    <div><strong>Code:</strong> @_parsedCode</div>
+                }
+                @if (!string.IsNullOrEmpty(_parsedVersion))
+                {
+                    <div><strong>Version:</strong> @_parsedVersion</div>
+                }
+                @if (!string.IsNullOrEmpty(_parsedBaseImage))
+                {
+                    <div><strong>Base Image:</strong> @_parsedBaseImage</div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+<div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+    <button class="btn btn-primary" @onclick="CreateTemplateAsync" disabled="@(!_isValid || _submitting)">
+        @if (_submitting)
+        {
+            <span class="spinner-sm"></span>
+        }
+        <i class="bi bi-plus-lg"></i> Create Template
+    </button>
+    <button class="btn btn-secondary" @onclick="Reset">
+        <i class="bi bi-arrow-counterclockwise"></i> Reset
+    </button>
+</div>
+
+@if (_successMessage is not null)
+{
+    <div class="alert alert-success" style="margin-top: 1rem;">
+        <i class="bi bi-check-circle"></i> @_successMessage
+    </div>
+}
+
+@if (_errorMessage is not null)
+{
+    <div class="alert alert-error" style="margin-top: 1rem;">
+        <i class="bi bi-exclamation-triangle"></i> @_errorMessage
+    </div>
+}
+
+@code {
+    private string _yaml = "";
+    private bool _validating;
+    private bool _isValid;
+    private bool _submitting;
+    private string? _successMessage;
+    private string? _errorMessage;
+    private YamlValidationResultDto? _validationResult;
+    private List<EditorMarker> _editorErrors = [];
+    private List<EditorMarker> _editorWarnings = [];
+    private Timer? _debounceTimer;
+
+    // Parsed preview fields
+    private string? _parsedName;
+    private string? _parsedCode;
+    private string? _parsedVersion;
+    private string? _parsedBaseImage;
+
+    private void LoadStarter(string template)
+    {
+        _yaml = template;
+        _validationResult = null;
+        _editorErrors = [];
+        _editorWarnings = [];
+        _isValid = false;
+        _successMessage = null;
+        _errorMessage = null;
+        ClearParsedPreview();
+        StateHasChanged();
+        ScheduleValidation();
+    }
+
+    private void OnYamlChanged(string value)
+    {
+        _yaml = value;
+        _successMessage = null;
+        _errorMessage = null;
+        ScheduleValidation();
+    }
+
+    private void ScheduleValidation()
+    {
+        _debounceTimer?.Dispose();
+        _debounceTimer = new Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await ValidateAsync();
+                StateHasChanged();
+            });
+        }, null, 500, Timeout.Infinite);
+    }
+
+    private async Task ValidateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_yaml))
+        {
+            _validationResult = null;
+            _isValid = false;
+            _editorErrors = [];
+            _editorWarnings = [];
+            ClearParsedPreview();
+            return;
+        }
+
+        _validating = true;
+        StateHasChanged();
+
+        try
+        {
+            _validationResult = await Api.ValidateTemplateYamlAsync(_yaml);
+            _isValid = _validationResult?.IsValid ?? false;
+
+            _editorErrors = _validationResult?.Errors
+                .Select(e => new EditorMarker(e.Line ?? 1, e.Message))
+                .ToList() ?? [];
+            _editorWarnings = _validationResult?.Warnings
+                .Select(w => new EditorMarker(w.Line ?? 1, w.Message))
+                .ToList() ?? [];
+
+            if (_isValid)
+            {
+                ParsePreview();
+            }
+            else
+            {
+                ClearParsedPreview();
+            }
+        }
+        catch
+        {
+            _validationResult = null;
+            _isValid = false;
+        }
+        finally
+        {
+            _validating = false;
+        }
+    }
+
+    private void ParsePreview()
+    {
+        _parsedName = ExtractYamlField("name");
+        _parsedCode = ExtractYamlField("code");
+        _parsedVersion = ExtractYamlField("version");
+        _parsedBaseImage = ExtractYamlField("base_image");
+    }
+
+    private string? ExtractYamlField(string field)
+    {
+        foreach (var line in _yaml.Split('\n'))
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith(field + ":", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = trimmed[(field.Length + 1)..].Trim().Trim('"');
+                return string.IsNullOrEmpty(value) ? null : value;
+            }
+        }
+        return null;
+    }
+
+    private void ClearParsedPreview()
+    {
+        _parsedName = null;
+        _parsedCode = null;
+        _parsedVersion = null;
+        _parsedBaseImage = null;
+    }
+
+    private async Task CreateTemplateAsync()
+    {
+        if (!_isValid || _submitting) return;
+
+        _submitting = true;
+        _errorMessage = null;
+        _successMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var template = await Api.CreateTemplateFromYamlAsync(_yaml);
+            if (template is not null)
+            {
+                _successMessage = $"Template '{template.Name}' created successfully!";
+                Nav.NavigateTo($"templates/{template.Id}");
+            }
+        }
+        catch (YamlValidationException ex)
+        {
+            _validationResult = ex.ValidationResult;
+            _isValid = false;
+            _errorMessage = "YAML validation failed. See errors above.";
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to create template: {ex.Message}";
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private void Reset()
+    {
+        _yaml = "";
+        _validationResult = null;
+        _editorErrors = [];
+        _editorWarnings = [];
+        _isValid = false;
+        _submitting = false;
+        _successMessage = null;
+        _errorMessage = null;
+        ClearParsedPreview();
+    }
+
+    private void OnLineClicked(int line)
+    {
+        // Could scroll editor to line in future
+    }
+
+    public void Dispose()
+    {
+        _debounceTimer?.Dispose();
+    }
+
+    private static readonly string BlankTemplate = @"code: my-template
+name: My Template
+description: ""A custom container template""
+version: 1.0.0
+base_image: ubuntu:24.04
+ide_type: CodeServer
+scope: User
+";
+
+    private static readonly string DotNetTemplate = @"code: dotnet-dev
+name: .NET Development
+description: "".NET 8 SDK with VS Code""
+version: 1.0.0
+base_image: mcr.microsoft.com/dotnet/sdk:8.0
+ide_type: CodeServer
+scope: User
+dependencies:
+  - type: sdk
+    name: dotnet-sdk
+    version: ""8.0.*""
+  - type: tool
+    name: dotnet-ef
+    version: ""8.0.*""
+ports:
+  - 5000
+  - 5001
+tags: [dotnet, csharp]
+";
+
+    private static readonly string PythonTemplate = @"code: python-jupyter
+name: Python with Jupyter
+description: ""Python 3.12 with Jupyter Lab""
+version: 1.0.0
+base_image: python:3.12-slim
+ide_type: CodeServer
+scope: User
+dependencies:
+  - type: runtime
+    name: python
+    version: ""3.12.*""
+  - type: tool
+    name: jupyter
+    version: latest
+ports:
+  - 8888
+tags: [python, jupyter, data-science]
+";
+
+    private static readonly string FullStackTemplate = @"code: full-stack-dev
+name: Full Stack Development
+description: ""Node.js, Python, and .NET with VS Code""
+version: 1.0.0
+base_image: ubuntu:24.04
+ide_type: CodeServer
+scope: User
+dependencies:
+  - type: sdk
+    name: dotnet-sdk
+    version: ""8.0.*""
+  - type: runtime
+    name: node
+    version: ""20.*""
+  - type: runtime
+    name: python
+    version: ""3.12.*""
+ports:
+  - 3000
+  - 5000
+  - 8080
+environment:
+  NODE_ENV: development
+tags: [fullstack, node, python, dotnet]
+";
+}

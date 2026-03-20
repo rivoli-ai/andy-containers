@@ -142,6 +142,18 @@ window.yamlEditor = {
         view.dispatch(cm.setDiagnostics(view.state, cmDiagnostics));
     },
 
+    downloadFile: function (filename, content) {
+        const blob = new Blob([content], { type: 'text/yaml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    },
+
     dispose: function (elementId) {
         const entry = editors.get(elementId);
         if (!entry) return;
