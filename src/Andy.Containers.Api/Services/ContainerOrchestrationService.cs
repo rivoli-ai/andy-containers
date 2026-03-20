@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +34,10 @@ public class ContainerOrchestrationService : IContainerService
 
     public async Task<Container> CreateContainerAsync(CreateContainerRequest request, CancellationToken ct)
     {
+        using var activity = ActivitySources.Provisioning.StartActivity("CreateContainer");
+        activity?.SetTag("templateId", request.TemplateId?.ToString() ?? request.TemplateCode);
+        activity?.SetTag("provider", request.ProviderCode ?? request.ProviderId?.ToString());
+
         // Resolve template
         var template = request.TemplateId.HasValue
             ? await _db.Templates.FindAsync([request.TemplateId.Value], ct)
@@ -167,6 +173,8 @@ public class ContainerOrchestrationService : IContainerService
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",
             container.Id, provider.Code);
 
+        Meters.ContainersCreated.Add(1, new KeyValuePair<string, object?>("provider", container.Provider));
+
         return container;
     }
 
@@ -246,6 +254,9 @@ public class ContainerOrchestrationService : IContainerService
 
     public async Task DestroyContainerAsync(Guid containerId, CancellationToken ct)
     {
+        using var activity = ActivitySources.Provisioning.StartActivity("DeleteContainer");
+        activity?.SetTag("containerId", containerId.ToString());
+
         var container = await GetContainerAsync(containerId, ct);
         if (container.ExternalId is not null)
         {
@@ -256,6 +267,8 @@ public class ContainerOrchestrationService : IContainerService
         container.Status = ContainerStatus.Destroyed;
         _db.Events.Add(new ContainerEvent { ContainerId = containerId, EventType = ContainerEventType.Destroyed });
         await _db.SaveChangesAsync(ct);
+
+        Meters.ContainersDeleted.Add(1);
     }
 
     public async Task<ExecResult> ExecAsync(Guid containerId, string command, CancellationToken ct)

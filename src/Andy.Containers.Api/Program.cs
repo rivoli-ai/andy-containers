@@ -4,19 +4,35 @@ using Andy.Containers.Api.Data;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Andy.Containers.Api.Telemetry;
 using Serilog;
 using System.Text.Json.Serialization;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
-    .CreateLogger();
+    .CreateBootstrapLogger();
 
 try
 {
     var builder = WebApplication.CreateBuilder(args);
 
     // Logging
-    builder.Host.UseSerilog();
+    builder.Host.UseSerilog((context, config) =>
+    {
+        config.WriteTo.Console();
+        var otlpEndpoint = context.Configuration["OpenTelemetry:OtlpEndpoint"];
+        if (!string.IsNullOrEmpty(otlpEndpoint))
+        {
+            config.WriteTo.OpenTelemetry(o =>
+            {
+                o.Endpoint = otlpEndpoint;
+                o.ResourceAttributes = new Dictionary<string, object>
+                {
+                    ["service.name"] = context.Configuration["OpenTelemetry:ServiceName"] ?? "andy-containers-api"
+                };
+            });
+        }
+    });
 
     // Swagger
     builder.Services.AddEndpointsApiExplorer();
@@ -93,6 +109,9 @@ try
                 .AllowAnyMethod();
         });
     });
+
+    // OpenTelemetry
+    builder.Services.AddAndyTelemetry(builder.Configuration);
 
     var app = builder.Build();
 

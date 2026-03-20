@@ -1,4 +1,5 @@
 using Andy.Containers.Abstractions;
+using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Providers.Apple;
 using Andy.Containers.Infrastructure.Providers.Aws;
 using Andy.Containers.Infrastructure.Providers.Azure;
@@ -32,6 +33,9 @@ public class InfrastructureProviderFactory : IInfrastructureProviderFactory
 
     public IInfrastructureProvider GetProvider(InfrastructureProvider providerEntity)
     {
+        using var activity = ActivitySources.Infrastructure.StartActivity("ResolveProvider");
+        activity?.SetTag("provider", providerEntity.Type.ToString());
+
         return providerEntity.Type switch
         {
             ProviderType.Docker => new DockerInfrastructureProvider(

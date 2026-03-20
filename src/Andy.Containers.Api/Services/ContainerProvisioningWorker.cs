@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.Extensions.DependencyInjection;
@@ -56,6 +58,11 @@ public class ContainerProvisioningWorker : BackgroundService
 
     private async Task ProcessJobAsync(ContainerProvisionJob job, CancellationToken stoppingToken)
     {
+        using var activity = ActivitySources.Provisioning.StartActivity("ProvisionContainer");
+        activity?.SetTag("containerId", job.ContainerId.ToString());
+        activity?.SetTag("provider", job.ProviderCode);
+        var sw = Stopwatch.StartNew();
+
         _logger.LogInformation("Processing provisioning job for container {ContainerId} on provider {Provider}",
             job.ContainerId, job.ProviderCode);
 
@@ -119,6 +126,8 @@ public class ContainerProvisioningWorker : BackgroundService
             });
 
             await db.SaveChangesAsync(stoppingToken);
+            sw.Stop();
+            Meters.ProvisioningDuration.Record(sw.Elapsed.TotalMilliseconds);
             _logger.LogInformation("Container {ContainerId} provisioned successfully on {Provider}",
                 job.ContainerId, job.ProviderCode);
 
@@ -142,12 +151,16 @@ public class ContainerProvisioningWorker : BackgroundService
         {
             _logger.LogError("Provisioning timed out for container {ContainerId} on {Provider}",
                 job.ContainerId, job.ProviderCode);
+            Meters.ProvisioningErrors.Add(1);
+            activity?.SetStatus(ActivityStatusCode.Error, "Provisioning timed out after 5 minutes");
             await MarkFailedAsync(db, job.ContainerId, "Provisioning timed out after 5 minutes");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to provision container {ContainerId} on provider {Provider}",
                 job.ContainerId, job.ProviderCode);
+            Meters.ProvisioningErrors.Add(1);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             await MarkFailedAsync(db, job.ContainerId, ex.Message);
         }
     }

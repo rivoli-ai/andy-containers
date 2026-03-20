@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -31,6 +32,9 @@ public class ImageManifestService : IImageManifestService
     public async Task<(ImageToolManifest Manifest, ContainerImage Image)> GenerateManifestAsync(
         Guid imageId, CancellationToken ct = default)
     {
+        using var activity = ActivitySources.Introspection.StartActivity("ResolveImageManifest");
+        activity?.SetTag("imageId", imageId.ToString());
+
         var image = await _db.Images
             .Include(i => i.Template)
             .FirstOrDefaultAsync(i => i.Id == imageId, ct)

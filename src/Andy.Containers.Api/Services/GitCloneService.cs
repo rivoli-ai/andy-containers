@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -119,6 +121,11 @@ public class GitCloneService : IGitCloneService
 
     private async Task CloneRepositoryInternalAsync(Guid containerId, ContainerGitRepository repo, CancellationToken ct)
     {
+        using var activity = ActivitySources.Git.StartActivity("GitClone");
+        activity?.SetTag("url", repo.Url);
+        activity?.SetTag("branch", repo.Branch);
+        var sw = Stopwatch.StartNew();
+
         repo.CloneStatus = GitCloneStatus.Cloning;
         repo.CloneStartedAt = DateTime.UtcNow;
         repo.CloneError = null;
@@ -190,6 +197,10 @@ public class GitCloneService : IGitCloneService
 
                 _logger.LogWarning("Git clone failed for {RepoUrl} in container {ContainerId}: {Error}",
                     repo.Url, containerId, result.StdErr);
+                sw.Stop();
+                Meters.GitCloneDuration.Record(sw.Elapsed.TotalMilliseconds);
+                Meters.GitClonesFailed.Add(1);
+                activity?.SetStatus(ActivityStatusCode.Error, result.StdErr);
                 return;
             }
 
@@ -206,6 +217,9 @@ public class GitCloneService : IGitCloneService
             });
             await _db.SaveChangesAsync(ct);
 
+            sw.Stop();
+            Meters.GitCloneDuration.Record(sw.Elapsed.TotalMilliseconds);
+            Meters.GitClonesCompleted.Add(1);
             _logger.LogInformation("Successfully cloned {RepoUrl} for container {ContainerId}", repo.Url, containerId);
         }
         catch (Exception ex) when (ex is not KeyNotFoundException)
@@ -222,6 +236,11 @@ public class GitCloneService : IGitCloneService
                 Details = System.Text.Json.JsonSerializer.Serialize(new { repoId = repo.Id, url = repo.Url, error = ex.Message })
             });
             await _db.SaveChangesAsync(ct);
+
+            sw.Stop();
+            Meters.GitCloneDuration.Record(sw.Elapsed.TotalMilliseconds);
+            Meters.GitClonesFailed.Add(1);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
 
             throw;
         }

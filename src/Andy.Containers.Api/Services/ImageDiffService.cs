@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 
@@ -17,6 +19,11 @@ public class ImageDiffService : IImageDiffService
 
     public async Task<ImageDiffResponse> DiffAsync(Guid fromImageId, Guid toImageId, CancellationToken ct = default)
     {
+        using var activity = ActivitySources.Introspection.StartActivity("ComputeImageDiff");
+        activity?.SetTag("fromImageId", fromImageId.ToString());
+        activity?.SetTag("toImageId", toImageId.ToString());
+        var sw = Stopwatch.StartNew();
+
         var fromImage = await _db.Images.FindAsync([fromImageId], ct)
             ?? throw new KeyNotFoundException($"Image {fromImageId} not found");
         var toImage = await _db.Images.FindAsync([toImageId], ct)
@@ -28,6 +35,7 @@ public class ImageDiffService : IImageDiffService
         // Handle missing manifests
         if (fromManifest is null || toManifest is null)
         {
+            Meters.ImageDiffDuration.Record(sw.Elapsed.TotalMilliseconds);
             return new ImageDiffResponse(
                 FromImageId: fromImageId,
                 ToImageId: toImageId,
@@ -48,6 +56,8 @@ public class ImageDiffService : IImageDiffService
         {
             osVersionChanged = $"{fromManifest.OperatingSystem.Version} → {toManifest.OperatingSystem.Version}";
         }
+
+        Meters.ImageDiffDuration.Record(sw.Elapsed.TotalMilliseconds);
 
         return new ImageDiffResponse(
             FromImageId: fromImageId,
