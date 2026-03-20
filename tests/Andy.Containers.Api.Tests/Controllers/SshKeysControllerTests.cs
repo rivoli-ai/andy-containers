@@ -16,6 +16,7 @@ public class SshKeysControllerTests : IDisposable
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly ISshKeyService _sshKeyService;
     private readonly Mock<ISshProvisioningService> _mockProvisioning;
+    private readonly Mock<IContainerPermissionService> _mockPermissions;
     private readonly SshKeysController _controller;
 
     private const string TestUserId = "test-user";
@@ -32,7 +33,10 @@ public class SshKeysControllerTests : IDisposable
 
         _sshKeyService = new SshKeyService(_db);
         _mockProvisioning = new Mock<ISshProvisioningService>();
-        _controller = new SshKeysController(_sshKeyService, _mockProvisioning.Object, _mockCurrentUser.Object, _db);
+        _mockPermissions = new Mock<IContainerPermissionService>();
+        _mockPermissions.Setup(p => p.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _controller = new SshKeysController(_sshKeyService, _mockProvisioning.Object, _mockCurrentUser.Object, _mockPermissions.Object, _db);
     }
 
     public void Dispose() => _db.Dispose();
@@ -268,5 +272,38 @@ public class SshKeysControllerTests : IDisposable
         var keys = ok.Value.Should().BeAssignableTo<IEnumerable<SshKeyDto>>().Subject.ToList();
         keys.Should().HaveCount(1);
         keys[0].LastUsedAt.Should().NotBeNull();
+    }
+
+    // === Story 17: container:connect permission ===
+
+    [Fact]
+    public async Task InjectKey_NoPermission_Returns403()
+    {
+        var container = new Container { Name = "denied", OwnerId = "other-user", SshEnabled = true };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockPermissions.Setup(p => p.HasPermissionAsync(TestUserId, container.Id, "container:connect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var request = new InjectSshKeyRequest { PublicKey = ValidEd25519Key };
+        var result = await _controller.InjectKey(container.Id, request, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+    }
+
+    [Fact]
+    public async Task GetSshConfig_NoPermission_Returns403()
+    {
+        var container = new Container { Name = "denied-config", OwnerId = "other-user", SshEnabled = true };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockPermissions.Setup(p => p.HasPermissionAsync(TestUserId, container.Id, "container:connect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var result = await _controller.GetSshConfig(container.Id, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
     }
 }

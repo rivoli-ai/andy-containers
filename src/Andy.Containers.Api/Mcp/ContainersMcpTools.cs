@@ -14,14 +14,17 @@ public class ContainersMcpTools
     private readonly ISshKeyService _sshKeyService;
     private readonly ISshProvisioningService _sshProvisioning;
     private readonly ICurrentUserService _currentUser;
+    private readonly IContainerPermissionService _permissions;
 
     public ContainersMcpTools(ContainersDbContext db, ISshKeyService sshKeyService,
-        ISshProvisioningService sshProvisioning, ICurrentUserService currentUser)
+        ISshProvisioningService sshProvisioning, ICurrentUserService currentUser,
+        IContainerPermissionService permissions)
     {
         _db = db;
         _sshKeyService = sshKeyService;
         _sshProvisioning = sshProvisioning;
         _currentUser = currentUser;
+        _permissions = permissions;
     }
 
     [McpServerTool, Description("List all containers with their status")]
@@ -124,6 +127,10 @@ public class ContainersMcpTools
         var container = await _db.Containers.FindAsync(id);
         if (container is null) return null;
 
+        var userId = _currentUser.GetUserId();
+        if (!await _permissions.HasPermissionAsync(userId, id, "container:connect"))
+            return new McpSshConnectionInfo(false, null, null, null, "Permission denied: you do not have container:connect access");
+
         if (!container.SshEnabled)
             return new McpSshConnectionInfo(false, null, null, null, "SSH is not enabled on this container");
 
@@ -151,6 +158,10 @@ public class ContainersMcpTools
         var container = await _db.Containers.FindAsync(id);
         if (container is null)
             return new McpSshKeyInjectResult(false, "Container not found");
+
+        var userId = _currentUser.GetUserId();
+        if (!await _permissions.HasPermissionAsync(userId, id, "container:connect"))
+            return new McpSshKeyInjectResult(false, "Permission denied: you do not have container:connect access");
 
         if (!container.SshEnabled)
             return new McpSshKeyInjectResult(false, "SSH is not enabled on this container");

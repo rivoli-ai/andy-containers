@@ -56,4 +56,11 @@ public class CurrentUserService : ICurrentUserService
             ?.FindFirst("org_id")?.Value;
         return orgClaim is not null && Guid.TryParse(orgClaim, out var orgId) ? orgId : null;
     }
+
+    public Guid? GetTeamId()
+    {
+        var teamClaim = _httpContextAccessor.HttpContext?.User
+            ?.FindFirst("team_id")?.Value;
+        return teamClaim is not null && Guid.TryParse(teamClaim, out var teamId) ? teamId : null;
+    }
 }

@@ -12,4 +12,5 @@ public interface ICurrentUserService
     bool IsAuthenticated();
     bool IsAdmin();
     Guid? GetOrganizationId();
+    Guid? GetTeamId();
 }

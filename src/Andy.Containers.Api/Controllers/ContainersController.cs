@@ -15,15 +15,18 @@ public class ContainersController : ControllerBase
 {
     private readonly IContainerService _containerService;
     private readonly ICurrentUserService _currentUser;
+    private readonly IContainerPermissionService _permissions;
     private readonly ContainersDbContext _db;
     private readonly ISshKeyService _sshKeyService;
     private readonly ISshProvisioningService _sshProvisioning;
 
-    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db,
+    public ContainersController(IContainerService containerService, ICurrentUserService currentUser,
+        IContainerPermissionService permissions, ContainersDbContext db,
         ISshKeyService sshKeyService, ISshProvisioningService sshProvisioning)
     {
         _containerService = containerService;
         _currentUser = currentUser;
+        _permissions = permissions;
         _db = db;
         _sshKeyService = sshKeyService;
         _sshProvisioning = sshProvisioning;
@@ -159,7 +162,8 @@ public class ContainersController : ControllerBase
     public async Task<IActionResult> EnableSsh(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
-        if (!CanAccess(container)) return Forbid();
+        if (!await _permissions.HasPermissionAsync(_currentUser.GetUserId(), id, "container:connect", ct))
+            return Forbid();
 
         var dbContainer = await _db.Containers.FindAsync([id], ct);
         if (dbContainer is null) return NotFound();
@@ -182,7 +186,8 @@ public class ContainersController : ControllerBase
     public async Task<IActionResult> DisableSsh(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
-        if (!CanAccess(container)) return Forbid();
+        if (!await _permissions.HasPermissionAsync(_currentUser.GetUserId(), id, "container:connect", ct))
+            return Forbid();
 
         var dbContainer = await _db.Containers.FindAsync([id], ct);
         if (dbContainer is null) return NotFound();

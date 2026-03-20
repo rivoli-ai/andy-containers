@@ -55,6 +55,9 @@ try
     builder.Services.AddScoped<ISshKeyService, SshKeyService>();
     builder.Services.AddSingleton<ISshProvisioningService, SshProvisioningService>();
 
+    // Container permissions
+    builder.Services.AddScoped<IContainerPermissionService, ContainerPermissionService>();
+
     // gRPC
     builder.Services.AddGrpc();
 

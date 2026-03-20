@@ -15,6 +15,7 @@ public class ContainersMcpToolsTests : IDisposable
     private readonly Mock<ISshKeyService> _mockSshKeyService;
     private readonly Mock<ISshProvisioningService> _mockSshProvisioning;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
+    private readonly Mock<IContainerPermissionService> _mockPermissions;
     private readonly ContainersMcpTools _tools;
 
     public ContainersMcpToolsTests()
@@ -24,7 +25,10 @@ public class ContainersMcpToolsTests : IDisposable
         _mockSshProvisioning = new Mock<ISshProvisioningService>();
         _mockCurrentUser = new Mock<ICurrentUserService>();
         _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
-        _tools = new ContainersMcpTools(_db, _mockSshKeyService.Object, _mockSshProvisioning.Object, _mockCurrentUser.Object);
+        _mockPermissions = new Mock<IContainerPermissionService>();
+        _mockPermissions.Setup(p => p.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _tools = new ContainersMcpTools(_db, _mockSshKeyService.Object, _mockSshProvisioning.Object, _mockCurrentUser.Object, _mockPermissions.Object);
     }
 
     public void Dispose() => _db.Dispose();
@@ -341,5 +345,50 @@ public class ContainersMcpToolsTests : IDisposable
 
         result.Success.Should().BeFalse();
         result.Message.Should().Contain("not found");
+    }
+
+    // === Permission tests ===
+
+    [Fact]
+    public async Task GetSshConnectionInfo_NoPermission_ReturnsDenied()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "denied-ssh", OwnerId = "other-user", TemplateId = template.Id,
+            ProviderId = provider.Id, SshEnabled = true
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockPermissions.Setup(p => p.HasPermissionAsync("test-user", container.Id, "container:connect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var result = await _tools.GetSshConnectionInfo(container.Id.ToString());
+
+        result.Should().NotBeNull();
+        result!.SshEnabled.Should().BeFalse();
+        result.ConfigSnippet.Should().Contain("Permission denied");
+    }
+
+    [Fact]
+    public async Task AddSshKeyToContainer_NoPermission_ReturnsDenied()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "denied-inject", OwnerId = "other-user", TemplateId = template.Id,
+            ProviderId = provider.Id, SshEnabled = true
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockPermissions.Setup(p => p.HasPermissionAsync("test-user", container.Id, "container:connect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var result = await _tools.AddSshKeyToContainer(container.Id.ToString(), "ssh-ed25519 AAAA");
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("Permission denied");
     }
 }

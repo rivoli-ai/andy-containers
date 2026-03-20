@@ -15,14 +15,16 @@ public class SshKeysController : ControllerBase
     private readonly ISshKeyService _sshKeyService;
     private readonly ISshProvisioningService _sshProvisioning;
     private readonly ICurrentUserService _currentUser;
+    private readonly IContainerPermissionService _permissions;
     private readonly ContainersDbContext _db;
 
     public SshKeysController(ISshKeyService sshKeyService, ISshProvisioningService sshProvisioning,
-        ICurrentUserService currentUser, ContainersDbContext db)
+        ICurrentUserService currentUser, IContainerPermissionService permissions, ContainersDbContext db)
     {
         _sshKeyService = sshKeyService;
         _sshProvisioning = sshProvisioning;
         _currentUser = currentUser;
+        _permissions = permissions;
         _db = db;
     }
 
@@ -93,7 +95,9 @@ public class SshKeysController : ControllerBase
         var container = await _db.Containers.FindAsync([containerId], ct);
         if (container is null) return NotFound();
 
-        if (!CanAccessContainer(container)) return Forbid();
+        var userId = _currentUser.GetUserId();
+        if (!await _permissions.HasPermissionAsync(userId, containerId, "container:connect", ct))
+            return Forbid();
 
         if (!container.SshEnabled)
             return BadRequest(new { error = "SSH is not enabled on this container" });
@@ -104,7 +108,6 @@ public class SshKeysController : ControllerBase
         var fingerprint = _sshKeyService.ComputeFingerprint(request.PublicKey);
 
         // Update LastUsedAt if this matches a registered key
-        var userId = _currentUser.GetUserId();
         var userKeys = await _sshKeyService.ListKeysAsync(userId, ct);
         var matchingKey = userKeys.FirstOrDefault(k => k.Fingerprint == fingerprint);
         if (matchingKey is not null)
@@ -121,7 +124,9 @@ public class SshKeysController : ControllerBase
         var container = await _db.Containers.FindAsync([containerId], ct);
         if (container is null) return NotFound();
 
-        if (!CanAccessContainer(container)) return Forbid();
+        var userId = _currentUser.GetUserId();
+        if (!await _permissions.HasPermissionAsync(userId, containerId, "container:connect", ct))
+            return Forbid();
 
         if (!container.SshEnabled)
             return BadRequest(new { error = "SSH is not enabled on this container" });
@@ -140,11 +145,6 @@ public class SshKeysController : ControllerBase
         return Ok(new { sshEnabled = true, host = "localhost", port = 22, username = "dev", configSnippet });
     }
 
-    private bool CanAccessContainer(Container container)
-    {
-        if (_currentUser.IsAdmin()) return true;
-        return container.OwnerId == _currentUser.GetUserId();
-    }
 }
 
 public class RegisterSshKeyRequest

@@ -15,6 +15,7 @@ public class ContainersControllerTests : IDisposable
 {
     private readonly Mock<IContainerService> _mockService;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
+    private readonly Mock<IContainerPermissionService> _mockPermissions;
     private readonly ContainersDbContext _db;
     private readonly ContainersController _controller;
 
@@ -25,10 +26,13 @@ public class ContainersControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
         _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
+        _mockPermissions = new Mock<IContainerPermissionService>();
+        _mockPermissions.Setup(p => p.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         _db = InMemoryDbHelper.CreateContext();
         var mockSshKeyService = new Mock<ISshKeyService>();
         var mockSshProvisioning = new Mock<ISshProvisioningService>();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, mockSshKeyService.Object, mockSshProvisioning.Object);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _mockPermissions.Object, _db, mockSshKeyService.Object, mockSshProvisioning.Object);
     }
 
     public void Dispose()
@@ -245,5 +249,43 @@ public class ContainersControllerTests : IDisposable
         var info = ok.Value.Should().BeOfType<ConnectionInfo>().Subject;
         info.SshEndpoint.Should().BeNull();
         info.SshUser.Should().BeNull();
+    }
+
+    // === Story 17: container:connect permission ===
+
+    [Fact]
+    public async Task EnableSsh_NoPermission_Returns403()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "denied-enable", OwnerId = "other-user" };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockPermissions.Setup(p => p.HasPermissionAsync("test-user", id, "container:connect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var result = await _controller.EnableSsh(id, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+    }
+
+    [Fact]
+    public async Task DisableSsh_NoPermission_Returns403()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "denied-disable", OwnerId = "other-user" };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockPermissions.Setup(p => p.HasPermissionAsync("test-user", id, "container:connect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var result = await _controller.DisableSsh(id, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
     }
 }
