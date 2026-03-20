@@ -67,14 +67,15 @@ public class TemplateDetailEditTests : TestContext
     }
 
     [Fact]
-    public void RendersTabBarWithDetailsAndEditYamlTabs()
+    public void RendersTabBarWithDetailsEditYamlAndDependenciesTabs()
     {
         var cut = RenderAndWait();
 
         var tabs = cut.FindAll(".tab-item");
-        tabs.Should().HaveCount(2);
+        tabs.Should().HaveCount(3);
         cut.Markup.Should().Contain("Details");
         cut.Markup.Should().Contain("Edit YAML");
+        cut.Markup.Should().Contain("Dependencies");
     }
 
     [Fact]
@@ -176,5 +177,23 @@ public class TemplateDetailEditTests : TestContext
         cut.Markup.Should().Contain("Download YAML");
         var buttons = cut.FindAll("button");
         buttons.Should().Contain(b => b.TextContent.Contains("Download YAML"));
+    }
+
+    [Fact]
+    public void ClickingDependenciesTabShowsDependencyManager()
+    {
+        var cut = RenderAndWait();
+
+        // Click Dependencies tab
+        var depsTab = cut.FindAll(".tab-item")[2];
+        depsTab.TextContent.Should().Contain("Dependencies");
+        depsTab.Click();
+
+        // The active tab should now be Dependencies
+        var activeTab = cut.Find(".tab-item.active");
+        activeTab.TextContent.Should().Contain("Dependencies");
+
+        // Should show the dependency manager component
+        cut.Markup.Should().Contain("dependency-manager");
     }
 }

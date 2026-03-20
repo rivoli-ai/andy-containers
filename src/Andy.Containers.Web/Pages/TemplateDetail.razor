@@ -37,6 +37,9 @@ else if (_template is not null)
                 <span class="unsaved-dot" title="Unsaved changes"></span>
             }
         </button>
+        <button class="tab-item @(_activeTab == "deps" ? "active" : "")" @onclick='() => _activeTab = "deps"'>
+            <i class="bi bi-boxes"></i> Dependencies
+        </button>
     </div>
 
     @* ───── Details Tab ───── *@
@@ -201,6 +204,15 @@ else if (_template is not null)
             </div>
         </div>
     }
+
+    @* ───── Dependencies Tab ───── *@
+    @if (_activeTab == "deps")
+    {
+        <DependencyManager Dependencies="@_dependencies"
+                           OnAdd="AddDependency"
+                           OnEdit="EditDependency"
+                           OnRemove="RemoveDependency" />
+    }
 }
 
 @code {
@@ -217,6 +229,9 @@ else if (_template is not null)
 
     // Tab state
     private string _activeTab = "details";
+
+    // Dependencies state
+    private List<DependencyItem> _dependencies = [];
 
     // Edit tab state
     private string _originalYaml = "";
@@ -286,6 +301,7 @@ else if (_template is not null)
                 _originalYaml = _definition.Content;
                 _editYaml = _definition.Content;
                 _hasUnsavedChanges = false;
+                _dependencies = ParseDependencies(_definition.Content);
             }
         }
         catch (Exception ex)
@@ -426,5 +442,141 @@ else if (_template is not null)
     private void ToggleDiffPreview()
     {
         _showDiff = !_showDiff;
+    }
+
+    private static List<DependencyItem> ParseDependencies(string yaml)
+    {
+        var deps = new List<DependencyItem>();
+        var lines = yaml.Split('\n');
+        bool inDeps = false;
+        DependencyItem? current = null;
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var trimmed = line.TrimStart();
+
+            if (trimmed.StartsWith("dependencies:"))
+            {
+                inDeps = true;
+                continue;
+            }
+
+            if (inDeps)
+            {
+                if (!string.IsNullOrWhiteSpace(trimmed) && !trimmed.StartsWith("-") && !trimmed.StartsWith("type:")
+                    && !trimmed.StartsWith("name:") && !trimmed.StartsWith("version:")
+                    && !trimmed.StartsWith("auto_update:") && !trimmed.StartsWith("update_policy:")
+                    && !line.StartsWith("  ") && !line.StartsWith("\t"))
+                {
+                    inDeps = false;
+                    if (current is not null) deps.Add(current);
+                    current = null;
+                    continue;
+                }
+
+                if (trimmed.StartsWith("- type:") || trimmed == "-")
+                {
+                    if (current is not null) deps.Add(current);
+                    current = new DependencyItem();
+                    if (trimmed.StartsWith("- type:"))
+                        current.Type = trimmed["- type:".Length..].Trim().Trim('"');
+                }
+                else if (current is not null)
+                {
+                    if (trimmed.StartsWith("type:"))
+                        current.Type = trimmed["type:".Length..].Trim().Trim('"');
+                    else if (trimmed.StartsWith("name:"))
+                        current.Name = trimmed["name:".Length..].Trim().Trim('"');
+                    else if (trimmed.StartsWith("version:"))
+                        current.VersionConstraint = trimmed["version:".Length..].Trim().Trim('"');
+                    else if (trimmed.StartsWith("auto_update:"))
+                        current.AutoUpdate = trimmed["auto_update:".Length..].Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+                    else if (trimmed.StartsWith("update_policy:"))
+                        current.UpdatePolicy = trimmed["update_policy:".Length..].Trim().Trim('"');
+                }
+            }
+        }
+        if (current is not null) deps.Add(current);
+        return deps;
+    }
+
+    private void AddDependency(DependencyItem dep)
+    {
+        _dependencies.Add(dep);
+        SyncDependenciesToYaml();
+    }
+
+    private void EditDependency((int index, DependencyItem dep) edit)
+    {
+        if (edit.index >= 0 && edit.index < _dependencies.Count)
+        {
+            _dependencies[edit.index] = edit.dep;
+            SyncDependenciesToYaml();
+        }
+    }
+
+    private void RemoveDependency(int index)
+    {
+        if (index >= 0 && index < _dependencies.Count)
+        {
+            _dependencies.RemoveAt(index);
+            SyncDependenciesToYaml();
+        }
+    }
+
+    private void SyncDependenciesToYaml()
+    {
+        var lines = _editYaml.Split('\n').ToList();
+        int depsStart = -1, depsEnd = -1;
+
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (lines[i].TrimStart().StartsWith("dependencies:"))
+            {
+                depsStart = i;
+                for (int j = i + 1; j < lines.Count; j++)
+                {
+                    var l = lines[j];
+                    if (!string.IsNullOrWhiteSpace(l) && !l.StartsWith("  ") && !l.StartsWith("\t") && !l.TrimStart().StartsWith("-"))
+                    {
+                        depsEnd = j;
+                        break;
+                    }
+                }
+                if (depsEnd == -1) depsEnd = lines.Count;
+                break;
+            }
+        }
+
+        var newDepsLines = new List<string>();
+        if (_dependencies.Count > 0)
+        {
+            newDepsLines.Add("dependencies:");
+            foreach (var dep in _dependencies)
+            {
+                newDepsLines.Add($"  - type: {dep.Type}");
+                newDepsLines.Add($"    name: {dep.Name}");
+                newDepsLines.Add($"    version: \"{dep.VersionConstraint}\"");
+                if (dep.AutoUpdate)
+                    newDepsLines.Add($"    auto_update: true");
+                if (!string.IsNullOrEmpty(dep.UpdatePolicy))
+                    newDepsLines.Add($"    update_policy: {dep.UpdatePolicy}");
+            }
+        }
+
+        if (depsStart >= 0)
+        {
+            lines.RemoveRange(depsStart, depsEnd - depsStart);
+            lines.InsertRange(depsStart, newDepsLines);
+        }
+        else if (_dependencies.Count > 0)
+        {
+            lines.Add("");
+            lines.AddRange(newDepsLines);
+        }
+
+        _editYaml = string.Join('\n', lines);
+        _hasUnsavedChanges = _editYaml != _originalYaml;
     }
 }
