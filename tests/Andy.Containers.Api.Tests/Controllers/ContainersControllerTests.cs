@@ -172,4 +172,40 @@ public class ContainersControllerTests : IDisposable
         var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
         okResult.Value.Should().Be(execResult);
     }
+
+    // === Story 10: SSH fields pass-through ===
+
+    [Fact]
+    public async Task Create_WithSshEnabled_PassesFlagToService()
+    {
+        CreateContainerRequest? capturedRequest = null;
+        _mockService
+            .Setup(s => s.CreateContainerAsync(It.IsAny<CreateContainerRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<CreateContainerRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new Container { Name = "ssh-test", OwnerId = "test-user" });
+
+        var request = new CreateContainerRequest { Name = "ssh-test", SshEnabled = true };
+        await _controller.Create(request, CancellationToken.None);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.SshEnabled.Should().BeTrue();
+        capturedRequest.OwnerId.Should().Be("test-user");
+    }
+
+    [Fact]
+    public async Task Create_WithSshPublicKeys_PassesKeysToService()
+    {
+        CreateContainerRequest? capturedRequest = null;
+        var keys = new[] { "ssh-ed25519 AAAA user@host", "ssh-rsa BBBB user@host" };
+        _mockService
+            .Setup(s => s.CreateContainerAsync(It.IsAny<CreateContainerRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<CreateContainerRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new Container { Name = "ssh-keys-test", OwnerId = "test-user" });
+
+        var request = new CreateContainerRequest { Name = "ssh-keys-test", SshEnabled = true, SshPublicKeys = keys };
+        await _controller.Create(request, CancellationToken.None);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.SshPublicKeys.Should().BeEquivalentTo(keys);
+    }
 }
