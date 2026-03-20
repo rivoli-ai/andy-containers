@@ -55,7 +55,8 @@ public static class DataSeeder
                 Version = "1.0.0", BaseImage = "ubuntu:24.04",
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["dotnet", "python", "node", "angular", "full-stack"],
-                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":40}"""
+                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":40}""",
+                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
             },
             new ContainerTemplate
             {
@@ -64,7 +65,8 @@ public static class DataSeeder
                 Version = "1.0.0", BaseImage = "ubuntu:24.04",
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.Both, GpuPreferred = true,
                 IsPublished = true, Tags = ["agent", "devpilot", "ui", "vnc"],
-                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}"""
+                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
+                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
             },
             new ContainerTemplate
             {
@@ -73,7 +75,8 @@ public static class DataSeeder
                 Version = "1.0.0", BaseImage = "ubuntu:24.04",
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["dotnet"],
-                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}"""
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
+                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
             },
             new ContainerTemplate
             {
@@ -82,7 +85,8 @@ public static class DataSeeder
                 Version = "1.0.0", BaseImage = "ubuntu:24.04",
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["python"],
-                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}"""
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
+                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
             },
             new ContainerTemplate
             {
@@ -91,7 +95,8 @@ public static class DataSeeder
                 Version = "1.0.0", BaseImage = "ubuntu:24.04",
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["angular", "node"],
-                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}"""
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
+                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
             },
             new ContainerTemplate
             {
@@ -100,7 +105,8 @@ public static class DataSeeder
                 Version = "1.0.0", BaseImage = "ubuntu:24.04",
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["andy-cli", "dotnet", "ai"],
-                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}"""
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
+                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
             }
         );
 

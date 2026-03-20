@@ -11,7 +11,8 @@ public record ContainerProvisionJob(
     string OwnerId,
     Abstractions.ResourceSpec? Resources,
     Abstractions.GpuSpec? Gpu,
-    bool HasGitRepositories = false);
+    bool HasGitRepositories = false,
+    IReadOnlyList<string>? PostCreateScripts = null);
 
 public class ContainerProvisioningQueue
 {

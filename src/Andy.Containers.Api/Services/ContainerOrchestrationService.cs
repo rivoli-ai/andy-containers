@@ -157,6 +157,22 @@ public class ContainerOrchestrationService : IContainerService
 
         await _db.SaveChangesAsync(ct);
 
+        // Parse post-create scripts from template
+        IReadOnlyList<string>? postCreateScripts = null;
+        if (!string.IsNullOrEmpty(template.Scripts))
+        {
+            try
+            {
+                var scripts = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(template.Scripts);
+                if (scripts?.TryGetValue("post_create", out var script) == true && !string.IsNullOrWhiteSpace(script))
+                    postCreateScripts = [script];
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                _logger.LogWarning("Failed to parse scripts for template {TemplateCode}", template.Code);
+            }
+        }
+
         // Enqueue the provisioning job for the background worker
         var job = new ContainerProvisionJob(
             ContainerId: container.Id,
@@ -167,7 +183,8 @@ public class ContainerOrchestrationService : IContainerService
             OwnerId: container.OwnerId,
             Resources: request.Resources,
             Gpu: request.Gpu,
-            HasGitRepositories: hasGitRepos);
+            HasGitRepositories: hasGitRepos,
+            PostCreateScripts: postCreateScripts);
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",

@@ -131,6 +131,27 @@ public class ContainerProvisioningWorker : BackgroundService
             _logger.LogInformation("Container {ContainerId} provisioned successfully on {Provider}",
                 job.ContainerId, job.ProviderCode);
 
+            // Run post-create scripts (e.g., install git, dev tools)
+            if (job.PostCreateScripts is { Count: > 0 })
+            {
+                var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
+                foreach (var script in job.PostCreateScripts)
+                {
+                    try
+                    {
+                        _logger.LogInformation("Running post-create script for container {ContainerId}", job.ContainerId);
+                        var scriptResult = await containerService.ExecAsync(job.ContainerId, script, stoppingToken);
+                        if (scriptResult.ExitCode != 0)
+                            _logger.LogWarning("Post-create script exited with {ExitCode} for container {ContainerId}: {StdErr}",
+                                scriptResult.ExitCode, job.ContainerId, scriptResult.StdErr);
+                    }
+                    catch (Exception scriptEx)
+                    {
+                        _logger.LogWarning(scriptEx, "Post-create script failed for container {ContainerId}", job.ContainerId);
+                    }
+                }
+            }
+
             // Clone git repositories after container is running
             if (job.HasGitRepositories)
             {
