@@ -18,6 +18,7 @@
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Moq" />
     <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 
 </Project>
