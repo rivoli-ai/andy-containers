@@ -1,14 +1,20 @@
 @page "/containers/{Id:guid}"
 @inject ContainersApiService Api
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>Container Detail - Andy Containers</PageTitle>
 
 <div class="page-header">
     <h1>Container Detail</h1>
-    <a href="containers" class="btn btn-secondary btn-sm">
-        <i class="bi bi-arrow-left"></i> Back to Containers
-    </a>
+    <div style="display: flex; gap: 0.5rem;">
+        <button class="btn btn-secondary btn-sm" @onclick="RefreshAsync" disabled="@_loading">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+        <a href="containers" class="btn btn-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Back to Containers
+        </a>
+    </div>
 </div>
 
 @if (_loading)
@@ -43,7 +49,7 @@ else if (_container is not null)
         {
             <div class="alert alert-success" style="margin-bottom: 1.5rem; background: rgba(0, 164, 220, 0.1); border-color: rgba(0, 164, 220, 0.3); color: var(--accent);">
                 <i class="bi bi-hourglass-split"></i>
-                Container is being provisioned... (auto-refreshing)
+                Container is starting... (auto-refreshing every 3 seconds)
             </div>
         }
     }
@@ -116,13 +122,13 @@ else if (_container is not null)
         </div>
     </div>
 
-    @* ───── Connection Info Card (Running only) ───── *@
+    @* ───── Connect Section (Running only) ───── *@
     @if (_container.Status is "Running")
     {
         <div class="card" style="margin-bottom: 1.5rem;">
             <div class="card-body">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                    <h5 style="margin: 0;">Connection Info</h5>
+                    <h5 style="margin: 0;">Connect</h5>
                     <button class="btn btn-secondary btn-sm" @onclick="LoadConnectionInfoAsync" disabled="@_connLoading">
                         @if (_connLoading)
                         {
@@ -149,42 +155,113 @@ else if (_container is not null)
                 }
                 else if (_connectionInfo is not null)
                 {
-                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
-                        @if (!string.IsNullOrEmpty(_connectionInfo.IdeEndpoint))
+                    @* --- SSH Connection --- *@
+                    <div class="connect-row">
+                        <span class="connect-dot @(HasIpAddress ? "available" : "unavailable")"></span>
+                        <span class="connect-label">SSH</span>
+                        @if (HasIpAddress)
                         {
-                            <a href="@_connectionInfo.IdeEndpoint" target="_blank" class="btn btn-primary btn-sm">
-                                <i class="bi bi-code-square"></i> Open IDE
-                            </a>
+                            <span class="connect-value">@SshCommand</span>
+                            <button class="btn-copy @CopyBtnClass("ssh")"
+                                    title="@CopyBtnTitle("ssh")"
+                                    @onclick="() => CopyToClipboardAsync(SshCommand, CopyFieldSsh)">
+                                <i class="bi @CopyIconClass("ssh")"></i>
+                            </button>
                         }
-                        @if (!string.IsNullOrEmpty(_connectionInfo.VncEndpoint))
+                        else
                         {
-                            <a href="@_connectionInfo.VncEndpoint" target="_blank" class="btn btn-primary btn-sm">
-                                <i class="bi bi-display"></i> Open VNC
-                            </a>
+                            <span class="connect-value" style="color: var(--text-muted);">Not available</span>
                         }
                     </div>
 
-                    @if (!string.IsNullOrEmpty(_connectionInfo.SshEndpoint))
-                    {
-                        <div class="detail-row">
-                            <strong>SSH:</strong>
-                            <code class="text-mono">@_connectionInfo.SshEndpoint</code>
-                        </div>
-                    }
+                    @* --- Container Exec --- *@
+                    <div class="connect-row">
+                        <span class="connect-dot @(HasExecCommand ? "available" : "unavailable")"></span>
+                        <span class="connect-label">Exec</span>
+                        @if (HasExecCommand)
+                        {
+                            <span class="connect-value">@ExecCommand</span>
+                            <button class="btn-copy @CopyBtnClass("exec")"
+                                    title="@CopyBtnTitle("exec")"
+                                    @onclick="() => CopyToClipboardAsync(ExecCommand!, CopyFieldExec)">
+                                <i class="bi @CopyIconClass("exec")"></i>
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="connect-value" style="color: var(--text-muted);">Not available</span>
+                        }
+                    </div>
 
+                    @* --- IDE Link --- *@
+                    <div class="connect-row">
+                        <span class="connect-dot @(!string.IsNullOrEmpty(_connectionInfo.IdeEndpoint) ? "available" : "unavailable")"></span>
+                        <span class="connect-label">IDE</span>
+                        @if (!string.IsNullOrEmpty(_connectionInfo.IdeEndpoint))
+                        {
+                            <a href="@_connectionInfo.IdeEndpoint" target="_blank" class="connect-value" style="color: var(--primary); text-decoration: none;">
+                                @_connectionInfo.IdeEndpoint
+                            </a>
+                            <a href="@_connectionInfo.IdeEndpoint" target="_blank" class="btn-copy" title="Open IDE" style="text-decoration: none;">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        }
+                        else
+                        {
+                            <span class="connect-value" style="color: var(--text-muted);">Not available</span>
+                        }
+                    </div>
+
+                    @* --- VNC Link --- *@
+                    <div class="connect-row">
+                        <span class="connect-dot @(!string.IsNullOrEmpty(_connectionInfo.VncEndpoint) ? "available" : "unavailable")"></span>
+                        <span class="connect-label">VNC</span>
+                        @if (!string.IsNullOrEmpty(_connectionInfo.VncEndpoint))
+                        {
+                            <a href="@_connectionInfo.VncEndpoint" target="_blank" class="connect-value" style="color: var(--primary); text-decoration: none;">
+                                @_connectionInfo.VncEndpoint
+                            </a>
+                            <a href="@_connectionInfo.VncEndpoint" target="_blank" class="btn-copy" title="Open VNC" style="text-decoration: none;">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        }
+                        else
+                        {
+                            <span class="connect-value" style="color: var(--text-muted);">Not available</span>
+                        }
+                    </div>
+
+                    @* --- IP Address --- *@
+                    <div class="connect-row">
+                        <span class="connect-dot @(HasIpAddress ? "available" : "unavailable")"></span>
+                        <span class="connect-label">IP Address</span>
+                        @if (HasIpAddress)
+                        {
+                            <span class="connect-value">@_connectionInfo.IpAddress</span>
+                            <button class="btn-copy @CopyBtnClass("ip")"
+                                    title="@CopyBtnTitle("ip")"
+                                    @onclick="() => CopyToClipboardAsync(_connectionInfo.IpAddress!, CopyFieldIp)">
+                                <i class="bi @CopyIconClass("ip")"></i>
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="connect-value" style="color: var(--text-muted);">Not available</span>
+                        }
+                    </div>
+
+                    @* --- Agent Endpoint --- *@
                     @if (!string.IsNullOrEmpty(_connectionInfo.AgentEndpoint))
                     {
-                        <div class="detail-row">
-                            <strong>Agent:</strong>
-                            <code class="text-mono">@_connectionInfo.AgentEndpoint</code>
-                        </div>
-                    }
-
-                    @if (!string.IsNullOrEmpty(_connectionInfo.IpAddress))
-                    {
-                        <div class="detail-row">
-                            <strong>IP Address:</strong>
-                            <span class="text-mono">@_connectionInfo.IpAddress</span>
+                        <div class="connect-row">
+                            <span class="connect-dot available"></span>
+                            <span class="connect-label">Agent</span>
+                            <span class="connect-value">@_connectionInfo.AgentEndpoint</span>
+                            <button class="btn-copy @CopyBtnClass("agent")"
+                                    title="@CopyBtnTitle("agent")"
+                                    @onclick="() => CopyToClipboardAsync(_connectionInfo.AgentEndpoint!, CopyFieldAgent)">
+                                <i class="bi @CopyIconClass("agent")"></i>
+                            </button>
                         </div>
                     }
 
@@ -401,7 +478,7 @@ else if (_container is not null)
     </div>
 }
 
-@implements IDisposable
+@implements IAsyncDisposable
 
 @code {
     [Parameter]
@@ -419,6 +496,19 @@ else if (_container is not null)
     private bool _connLoading;
     private string? _connError;
 
+    // Provider info (for exec command)
+    private ProviderDto? _provider;
+
+    // Copy feedback
+    private string? _copiedField;
+    private Timer? _copiedTimer;
+
+    // Copy field constants (to avoid string allocations in lambdas)
+    private const string CopyFieldSsh = "ssh";
+    private const string CopyFieldExec = "exec";
+    private const string CopyFieldIp = "ip";
+    private const string CopyFieldAgent = "agent";
+
     // Exec
     private string _execCommand = "";
     private bool _execRunning;
@@ -435,7 +525,18 @@ else if (_container is not null)
     private string? _eventsError;
 
     // Auto-refresh polling
-    private Timer? _pollTimer;
+    private PeriodicTimer? _periodicTimer;
+    private CancellationTokenSource? _pollingCts;
+
+    // Computed properties for connect section
+    private bool HasIpAddress => !string.IsNullOrEmpty(_connectionInfo?.IpAddress);
+    private string SshCommand => HasIpAddress ? $"ssh root@{_connectionInfo!.IpAddress}" : "";
+    private string? ExecCommand => GetExecCommand();
+    private bool HasExecCommand => !string.IsNullOrEmpty(ExecCommand);
+
+    private string CopyBtnClass(string field) => _copiedField == field ? "copied" : "";
+    private string CopyBtnTitle(string field) => _copiedField == field ? "Copied!" : "Copy to clipboard";
+    private string CopyIconClass(string field) => _copiedField == field ? "bi-check-lg" : "bi-clipboard";
 
     protected override async Task OnInitializedAsync()
     {
@@ -443,16 +544,28 @@ else if (_container is not null)
         StartPollingIfNeeded();
     }
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
-        _pollTimer?.Dispose();
+        StopPolling();
+        _copiedTimer?.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     private void StartPollingIfNeeded()
     {
-        if (_container?.Status is "Pending" or "Creating")
+        if (_container?.Status is "Pending" or "Creating" && _pollingCts is null)
         {
-            _pollTimer ??= new Timer(async _ =>
+            _pollingCts = new CancellationTokenSource();
+            _periodicTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            _ = PollLoopAsync(_pollingCts.Token);
+        }
+    }
+
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (_periodicTimer is not null && await _periodicTimer.WaitForNextTickAsync(ct))
             {
                 try
                 {
@@ -463,7 +576,6 @@ else if (_container is not null)
                         if (updated.Status is not "Pending" and not "Creating")
                         {
                             StopPolling();
-                            // Load connection info and events now that status changed
                             if (updated.Status is "Running")
                                 _ = LoadConnectionInfoAsync();
                             _ = LoadEventsAsync();
@@ -471,15 +583,30 @@ else if (_container is not null)
                         await InvokeAsync(StateHasChanged);
                     }
                 }
-                catch { /* ignore transient errors during polling */ }
-            }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+                catch
+                {
+                    // ignore transient errors during polling
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // expected on dispose
         }
     }
 
     private void StopPolling()
     {
-        _pollTimer?.Dispose();
-        _pollTimer = null;
+        _pollingCts?.Cancel();
+        _pollingCts?.Dispose();
+        _pollingCts = null;
+        _periodicTimer?.Dispose();
+        _periodicTimer = null;
+    }
+
+    private async Task RefreshAsync()
+    {
+        await LoadContainerAsync();
     }
 
     private async Task LoadContainerAsync()
@@ -501,6 +628,7 @@ else if (_container is not null)
                 // Always load events and cost
                 _ = LoadEventsAsync();
                 _ = LoadCostEstimateAsync();
+                _ = LoadProviderAsync();
 
                 if (_container.Status is "Running")
                 {
@@ -537,6 +665,16 @@ else if (_container is not null)
         catch { /* silently fail */ }
     }
 
+    private async Task LoadProviderAsync()
+    {
+        if (_container?.ProviderId == Guid.Empty) return;
+        try
+        {
+            _provider = await Api.GetProviderAsync(_container!.ProviderId);
+        }
+        catch { /* silently fail */ }
+    }
+
     private async Task LoadConnectionInfoAsync()
     {
         _connLoading = true;
@@ -554,6 +692,42 @@ else if (_container is not null)
         finally
         {
             _connLoading = false;
+        }
+    }
+
+    private string? GetExecCommand()
+    {
+        if (string.IsNullOrEmpty(_container?.ExternalId))
+            return null;
+
+        var providerType = _provider?.Type ?? "";
+        return providerType switch
+        {
+            "Docker" => $"docker exec -it {_container.ExternalId} bash",
+            "Apple" => $"container exec {_container.ExternalId} bash",
+            _ => $"exec into {_container.ExternalId} (see provider docs)"
+        };
+    }
+
+    private async Task CopyToClipboardAsync(string text, string field)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("copyToClipboard", text);
+            _copiedField = field;
+            StateHasChanged();
+
+            // Reset after 2 seconds
+            _copiedTimer?.Dispose();
+            _copiedTimer = new Timer(_ =>
+            {
+                _copiedField = null;
+                InvokeAsync(StateHasChanged);
+            }, null, 2000, Timeout.Infinite);
+        }
+        catch
+        {
+            // clipboard API may not be available
         }
     }
 

@@ -1,5 +1,6 @@
 @page "/"
 @inject ContainersApiService Api
+@inject NavigationManager Navigation
 
 <PageTitle>Dashboard - Andy Containers</PageTitle>
 
@@ -72,7 +73,7 @@ else
                 <tbody>
                     @foreach (var c in _recentContainers.Take(5))
                     {
-                        <tr>
+                        <tr class="clickable-row" @onclick="() => NavigateToContainer(c.Id)">
                             <td>
                                 <i class="bi bi-box" style="color: var(--text-muted); margin-right: 0.5rem;"></i>
                                 @c.Name
@@ -101,6 +102,8 @@ else
     {
         await LoadDataAsync();
     }
+
+    private void NavigateToContainer(Guid id) => Navigation.NavigateTo($"containers/{id}");
 
     private async Task LoadDataAsync()
     {

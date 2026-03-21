@@ -368,6 +368,8 @@
         }
 
         .data-table tbody tr:hover { background: var(--surface-2); }
+        .data-table tbody tr.clickable-row { cursor: pointer; }
+        .data-table tbody tr.clickable-row:hover { background: rgba(0, 102, 204, 0.04); }
         .data-table tbody tr:last-child td { border-bottom: none; }
 
         .text-muted { color: var(--text-muted); }
@@ -606,6 +608,75 @@
             gap: 1rem;
         }
 
+        /* ───── Connect Section ───── */
+        .connect-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.625rem 0.75rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            margin-bottom: 0.5rem;
+        }
+
+        .connect-row .connect-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .connect-dot.available { background: var(--success); }
+        .connect-dot.unavailable { background: var(--text-muted); opacity: 0.4; }
+
+        .connect-row .connect-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            min-width: 100px;
+            flex-shrink: 0;
+        }
+
+        .connect-row .connect-value {
+            flex: 1;
+            font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .btn-copy {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+            transition: all 0.2s;
+        }
+
+        .btn-copy:hover {
+            color: var(--primary);
+            border-color: var(--primary);
+            background: rgba(0, 102, 204, 0.05);
+        }
+
+        .btn-copy.copied {
+            color: var(--success);
+            border-color: var(--success);
+            background: rgba(40, 167, 69, 0.1);
+        }
+
         /* ───── Responsive ───── */
         @@media (max-width: 768px) {
             .sidebar { transform: translateX(-100%); }
@@ -622,6 +693,15 @@
 <body>
     <component type="typeof(Andy.Containers.Web.App)" render-mode="ServerPrerendered" />
     <script src="js/yaml-editor.js"></script>
+    <script>
+        window.copyToClipboard = function (text) {
+            return navigator.clipboard.writeText(text).then(function () {
+                return true;
+            }).catch(function () {
+                return false;
+            });
+        };
+    </script>
     <script src="_framework/blazor.server.js"></script>
 </body>
 </html>
