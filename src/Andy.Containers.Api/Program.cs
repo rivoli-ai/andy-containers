@@ -125,11 +125,10 @@ try
 
     var app = builder.Build();
 
-    // Auto-migrate and seed
+    // Auto-create DB (if missing) and seed
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<ContainersDbContext>();
-        await db.Database.EnsureDeletedAsync();
         await db.Database.EnsureCreatedAsync();
         await DataSeeder.SeedAsync(db);
     }

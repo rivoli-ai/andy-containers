@@ -59,7 +59,10 @@ else
 
     @if (_recentContainers.Any())
     {
-        <h3>Recent Containers</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem;">
+            <h3 style="margin: 0;">Recent Containers</h3>
+            <a href="containers" class="stat-link">View all &rarr;</a>
+        </div>
         <div class="data-table-wrapper">
             <table class="data-table">
                 <thead>
@@ -68,42 +71,97 @@ else
                         <th>Status</th>
                         <th>Owner</th>
                         <th>Created</th>
+                        <th>Endpoints</th>
+                        <th style="text-align: right;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var c in _recentContainers.Take(5))
                     {
-                        <tr class="clickable-row" @onclick="() => NavigateToContainer(c.Id)">
+                        <tr>
                             <td>
-                                <i class="bi bi-box" style="color: var(--text-muted); margin-right: 0.5rem;"></i>
-                                @c.Name
+                                <a href="containers/@c.Id"><strong>@c.Name</strong></a>
+                                <br />
+                                <small class="text-muted text-mono">@c.Id.ToString()[..8]...</small>
                             </td>
                             <td><StatusBadge Status="@c.Status" /></td>
                             <td class="text-muted">@c.OwnerId</td>
                             <td class="text-muted">@c.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>
+                                @if (!string.IsNullOrEmpty(c.IdeEndpoint))
+                                {
+                                    <a href="@c.IdeEndpoint" target="_blank" class="endpoint-link" title="Open IDE">
+                                        <i class="bi bi-code-square"></i> IDE
+                                    </a>
+                                }
+                                @if (!string.IsNullOrEmpty(c.VncEndpoint))
+                                {
+                                    <a href="@c.VncEndpoint" target="_blank" class="endpoint-link" title="Open VNC">
+                                        <i class="bi bi-display"></i> VNC
+                                    </a>
+                                }
+                            </td>
+                            <td style="text-align: right; white-space: nowrap;">
+                                @if (c.Status is "Stopped" or "Pending" or "Failed")
+                                {
+                                    <button class="btn-action btn-success"
+                                            @onclick="() => StartAsync(c)"
+                                            disabled="@(c == _actionTarget)"
+                                            title="Start">
+                                        <i class="bi bi-play-fill"></i>
+                                    </button>
+                                }
+                                @if (c.Status is "Running")
+                                {
+                                    <button class="btn-action btn-warning"
+                                            @onclick="() => StopAsync(c)"
+                                            disabled="@(c == _actionTarget)"
+                                            title="Stop">
+                                        <i class="bi bi-stop-fill"></i>
+                                    </button>
+                                }
+                                @if (c.Status is not "Destroying" and not "Destroyed")
+                                {
+                                    <button class="btn-action btn-danger"
+                                            @onclick="() => DestroyAsync(c)"
+                                            disabled="@(c == _actionTarget)"
+                                            title="Destroy">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
+                            </td>
                         </tr>
                     }
                 </tbody>
             </table>
         </div>
+
+        @if (_actionError is not null)
+        {
+            <div class="alert alert-error" style="margin-top: 1rem;">
+                <i class="bi bi-exclamation-triangle"></i>
+                @_actionError
+                <button class="alert-dismiss" @onclick="() => _actionError = null"><i class="bi bi-x-lg"></i></button>
+            </div>
+        }
     }
 }
 
 @code {
     private bool _loading = true;
     private string? _error;
+    private string? _actionError;
     private int _containerCount;
     private int _providerCount;
     private int _templateCount;
     private int _workspaceCount;
     private List<ContainerDto> _recentContainers = [];
+    private ContainerDto? _actionTarget;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadDataAsync();
     }
-
-    private void NavigateToContainer(Guid id) => Navigation.NavigateTo($"containers/{id}");
 
     private async Task LoadDataAsync()
     {
@@ -138,6 +196,69 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task StartAsync(ContainerDto container)
+    {
+        _actionTarget = container;
+        _actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            await Api.StartContainerAsync(container.Id);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _actionError = $"Failed to start '{container.Name}': {ex.Message}";
+        }
+        finally
+        {
+            _actionTarget = null;
+        }
+    }
+
+    private async Task StopAsync(ContainerDto container)
+    {
+        _actionTarget = container;
+        _actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            await Api.StopContainerAsync(container.Id);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _actionError = $"Failed to stop '{container.Name}': {ex.Message}";
+        }
+        finally
+        {
+            _actionTarget = null;
+        }
+    }
+
+    private async Task DestroyAsync(ContainerDto container)
+    {
+        _actionTarget = container;
+        _actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            await Api.DestroyContainerAsync(container.Id);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _actionError = $"Failed to destroy '{container.Name}': {ex.Message}";
+        }
+        finally
+        {
+            _actionTarget = null;
         }
     }
 }

@@ -155,18 +155,18 @@ else if (_container is not null)
                 }
                 else if (_connectionInfo is not null)
                 {
-                    @* --- SSH Connection --- *@
+                    @* --- Terminal (web-based) --- *@
                     <div class="connect-row">
-                        <span class="connect-dot @(HasIpAddress ? "available" : "unavailable")"></span>
-                        <span class="connect-label">SSH</span>
-                        @if (HasIpAddress)
+                        <span class="connect-dot @(HasExecCommand ? "available" : "unavailable")"></span>
+                        <span class="connect-label">Terminal</span>
+                        @if (HasExecCommand)
                         {
-                            <span class="connect-value">@SshCommand</span>
-                            <button class="btn-copy @CopyBtnClass("ssh")"
-                                    title="@CopyBtnTitle("ssh")"
-                                    @onclick="() => CopyToClipboardAsync(SshCommand, CopyFieldSsh)">
-                                <i class="bi @CopyIconClass("ssh")"></i>
-                            </button>
+                            <a href="containers/@_container.Id/terminal" class="connect-value" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                                Open Web Terminal
+                            </a>
+                            <a href="containers/@_container.Id/terminal" class="btn-copy" title="Open Terminal" style="text-decoration: none;">
+                                <i class="bi bi-terminal"></i>
+                            </a>
                         }
                         else
                         {
@@ -174,10 +174,10 @@ else if (_container is not null)
                         }
                     </div>
 
-                    @* --- Container Exec --- *@
+                    @* --- CLI Exec command (copy to local terminal) --- *@
                     <div class="connect-row">
                         <span class="connect-dot @(HasExecCommand ? "available" : "unavailable")"></span>
-                        <span class="connect-label">Exec</span>
+                        <span class="connect-label">CLI</span>
                         @if (HasExecCommand)
                         {
                             <span class="connect-value">@ExecCommand</span>
@@ -192,6 +192,21 @@ else if (_container is not null)
                             <span class="connect-value" style="color: var(--text-muted);">Not available</span>
                         }
                     </div>
+
+                    @* --- SSH Connection (Docker only — Apple Containers use exec) --- *@
+                    @if (IsDockerProvider && HasIpAddress)
+                    {
+                        <div class="connect-row">
+                            <span class="connect-dot available"></span>
+                            <span class="connect-label">SSH</span>
+                            <span class="connect-value">@SshCommand <span style="color: var(--text-muted); font-size: 0.8rem;">(password: container)</span></span>
+                            <button class="btn-copy @CopyBtnClass("ssh")"
+                                    title="@CopyBtnTitle("ssh")"
+                                    @onclick="() => CopyToClipboardAsync(SshCommand, CopyFieldSsh)">
+                                <i class="bi @CopyIconClass("ssh")"></i>
+                            </button>
+                        </div>
+                    }
 
                     @* --- IDE Link --- *@
                     <div class="connect-row">
@@ -530,6 +545,7 @@ else if (_container is not null)
 
     // Computed properties for connect section
     private bool HasIpAddress => !string.IsNullOrEmpty(_connectionInfo?.IpAddress);
+    private bool IsDockerProvider => _provider?.Type == "Docker";
     private string SshCommand => HasIpAddress ? $"ssh root@{_connectionInfo!.IpAddress}" : "";
     private string? ExecCommand => GetExecCommand();
     private bool HasExecCommand => !string.IsNullOrEmpty(ExecCommand);
@@ -573,14 +589,18 @@ else if (_container is not null)
                     if (updated is not null)
                     {
                         _container = updated;
+                        await InvokeAsync(StateHasChanged);
+
                         if (updated.Status is not "Pending" and not "Creating")
                         {
                             StopPolling();
                             if (updated.Status is "Running")
-                                _ = LoadConnectionInfoAsync();
-                            _ = LoadEventsAsync();
+                            {
+                                await LoadConnectionInfoAsync();
+                                await InvokeAsync(StateHasChanged);
+                            }
+                            await LoadEventsAsync();
                         }
-                        await InvokeAsync(StateHasChanged);
                     }
                 }
                 catch
@@ -679,7 +699,7 @@ else if (_container is not null)
     {
         _connLoading = true;
         _connError = null;
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
 
         try
         {
@@ -692,6 +712,7 @@ else if (_container is not null)
         finally
         {
             _connLoading = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -704,8 +725,8 @@ else if (_container is not null)
         return providerType switch
         {
             "Docker" => $"docker exec -it {_container.ExternalId} bash",
-            "Apple" => $"container exec {_container.ExternalId} bash",
-            _ => $"exec into {_container.ExternalId} (see provider docs)"
+            "AppleContainer" => $"container exec -it {_container.ExternalId} bash",
+            _ => null
         };
     }
 

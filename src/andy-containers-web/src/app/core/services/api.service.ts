@@ -1,0 +1,131 @@
+import { Injectable } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { environment } from '../../../environments/environment';
+import {
+  Container,
+  Template,
+  TemplateDefinition,
+  ValidationResult,
+  Provider,
+  Workspace,
+  ContainerEvent,
+  ConnectionInfo,
+  ExecResult,
+  ProviderHealthResult,
+  CostEstimate,
+  PaginatedResult,
+} from '../models';
+
+@Injectable({ providedIn: 'root' })
+export class ContainersApiService {
+  private readonly baseUrl = environment.apiUrl;
+
+  constructor(private http: HttpClient) {}
+
+  // Containers
+  getContainers(params?: Record<string, string>): Observable<PaginatedResult<Container>> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        httpParams = httpParams.set(key, value);
+      });
+    }
+    return this.http.get<PaginatedResult<Container>>(`${this.baseUrl}/containers`, { params: httpParams });
+  }
+
+  getContainer(id: string): Observable<Container> {
+    return this.http.get<Container>(`${this.baseUrl}/containers/${id}`);
+  }
+
+  createContainer(data: Partial<Container>): Observable<Container> {
+    return this.http.post<Container>(`${this.baseUrl}/containers`, data);
+  }
+
+  startContainer(id: string): Observable<void> {
+    return this.http.post<void>(`${this.baseUrl}/containers/${id}/start`, {});
+  }
+
+  stopContainer(id: string): Observable<void> {
+    return this.http.post<void>(`${this.baseUrl}/containers/${id}/stop`, {});
+  }
+
+  destroyContainer(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/containers/${id}`);
+  }
+
+  execCommand(id: string, command: string): Observable<ExecResult> {
+    return this.http.post<ExecResult>(`${this.baseUrl}/containers/${id}/exec`, { command });
+  }
+
+  getConnectionInfo(id: string): Observable<ConnectionInfo> {
+    return this.http.get<ConnectionInfo>(`${this.baseUrl}/containers/${id}/connection`);
+  }
+
+  getContainerEvents(id: string): Observable<ContainerEvent[]> {
+    return this.http.get<ContainerEvent[]>(`${this.baseUrl}/containers/${id}/events`);
+  }
+
+  // Providers
+  getCostEstimate(providerId: string): Observable<CostEstimate> {
+    return this.http.get<CostEstimate>(`${this.baseUrl}/providers/${providerId}/cost-estimate`);
+  }
+
+  getProviders(): Observable<Provider[]> {
+    return this.http.get<Provider[]>(`${this.baseUrl}/providers`);
+  }
+
+  getProvider(id: string): Observable<Provider> {
+    return this.http.get<Provider>(`${this.baseUrl}/providers/${id}`);
+  }
+
+  checkProviderHealth(id: string): Observable<ProviderHealthResult> {
+    return this.http.get<ProviderHealthResult>(`${this.baseUrl}/providers/${id}/health`);
+  }
+
+  // Templates
+  getTemplates(params?: Record<string, string>): Observable<PaginatedResult<Template>> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        httpParams = httpParams.set(key, value);
+      });
+    }
+    return this.http.get<PaginatedResult<Template>>(`${this.baseUrl}/templates`, { params: httpParams });
+  }
+
+  getTemplate(id: string): Observable<Template> {
+    return this.http.get<Template>(`${this.baseUrl}/templates/${id}`);
+  }
+
+  getTemplateDefinition(id: string): Observable<TemplateDefinition> {
+    return this.http.get<TemplateDefinition>(`${this.baseUrl}/templates/${id}/definition`);
+  }
+
+  validateTemplateYaml(content: string): Observable<ValidationResult> {
+    return this.http.post<ValidationResult>(`${this.baseUrl}/templates/validate`, { content });
+  }
+
+  updateTemplateDefinition(id: string, content: string): Observable<Template> {
+    return this.http.put<Template>(`${this.baseUrl}/templates/${id}/definition`, { content });
+  }
+
+  updateTemplate(id: string, template: Partial<Template>): Observable<Template> {
+    return this.http.put<Template>(`${this.baseUrl}/templates/${id}`, template);
+  }
+
+  deleteTemplate(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/templates/${id}`);
+  }
+
+  // Workspaces
+  getWorkspaces(params?: Record<string, string>): Observable<PaginatedResult<Workspace>> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        httpParams = httpParams.set(key, value);
+      });
+    }
+    return this.http.get<PaginatedResult<Workspace>>(`${this.baseUrl}/workspaces`, { params: httpParams });
+  }
+}

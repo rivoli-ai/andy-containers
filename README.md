@@ -32,6 +32,10 @@ Development container management platform for the Andy ecosystem.
 - **Andy Auth Integration** - OAuth 2.0 / OIDC authentication via Andy Auth
 - **Andy RBAC Integration** - Fine-grained permissions for all container operations
 - **DevPilot Integration** - Spawn AI agents on containers with UI (noVNC) or headless
+- **Organization-Scoped RBAC** - JWT claims + RBAC API fallback for org-level permissions with caching
+- **OpenTelemetry** - Distributed tracing and metrics with OTLP or console exporters
+- **Web Terminal** - Browser-based terminal for executing commands in running containers
+- **Post-Create Scripts** - Template-defined lifecycle scripts for multi-distro package installation and SSH setup
 - **gRPC & REST APIs** - High-performance service-to-service and user-facing APIs
 - **MCP Support** - Model Context Protocol tools for AI assistants (Claude Desktop, Cursor)
 - **YAML-First Config** - All templates, providers, and dependencies defined in YAML files
@@ -42,6 +46,7 @@ Development container management platform for the Andy ecosystem.
 
 - .NET 8.0 SDK
 - Docker Desktop (for PostgreSQL and local container provider)
+- Apple Containers CLI (optional, macOS only — `brew install container`)
 
 ### Local Development
 
@@ -49,12 +54,15 @@ Development container management platform for the Andy ecosystem.
 # 1. Start PostgreSQL
 docker-compose up -d postgres
 
-# 2. Run the API server
-cd src/Andy.Containers.Api
-dotnet run
+# 2. Run the API server and Web UI
+dotnet run --project src/Andy.Containers.Api --launch-profile "Andy.Containers.Api"
+dotnet run --project src/Andy.Containers.Web --launch-profile "Andy.Containers.Web"
 ```
 
-API runs at: **https://localhost:5200**
+- API: **https://localhost:5200**
+- Web UI: **https://localhost:5280**
+
+The database schema is auto-created on first startup and seed data (providers, templates) is inserted automatically. Data persists across restarts.
 
 ## Project Structure
 
@@ -139,16 +147,24 @@ When upstream versions change, images are automatically rebuilt and a changelog 
 
 ### Containers
 - `POST /api/containers` - Create a container
-- `GET /api/containers` - List containers
+- `GET /api/containers` - List containers (supports owner, org, team, status, template, provider filters)
 - `GET /api/containers/{id}` - Get container details
 - `POST /api/containers/{id}/start` - Start container
 - `POST /api/containers/{id}/stop` - Stop container
 - `POST /api/containers/{id}/exec` - Execute command
 - `GET /api/containers/{id}/connection` - Get IDE/VNC/SSH endpoints
+- `GET /api/containers/{id}/cost-estimate` - Get hourly/monthly cost estimate
 - `DELETE /api/containers/{id}` - Destroy container
 - `GET /api/containers/{id}/repositories` - List cloned git repositories
 - `POST /api/containers/{id}/repositories` - Clone a new repository
 - `POST /api/containers/{id}/repositories/{repoId}/pull` - Pull latest changes
+
+### Organizations
+- `GET /api/organizations/{orgId}/images` - List organization images
+- `POST /api/organizations/{orgId}/images` - Publish image to organization
+- `DELETE /api/organizations/{orgId}/images/{imageId}` - Delete organization image
+- `GET /api/organizations/{orgId}/templates` - List organization templates
+- `GET /api/organizations/{orgId}/providers` - List organization providers
 
 ### Workspaces
 - `POST /api/workspaces` - Create workspace
@@ -234,10 +250,11 @@ dotnet test --settings coverlet.runsettings --collect:"XPlat Code Coverage"
 - **Azure**: Azure.ResourceManager SDK
 - **SSH**: SSH.NET
 - **Auth**: JWT Bearer (Andy Auth)
-- **AuthZ**: Andy RBAC Client
+- **AuthZ**: Organization-scoped RBAC (JWT claims + HTTP fallback with IMemoryCache)
+- **Observability**: OpenTelemetry (tracing + metrics), Serilog
 - **Config**: YAML (source of truth) + Database (runtime)
 - **Caching**: IMemoryCache
-- **Testing**: xUnit, FluentAssertions, Moq
+- **Testing**: xUnit, FluentAssertions, Moq, bUnit (Blazor)
 
 ## Documentation
 
@@ -254,4 +271,4 @@ Apache 2.0
 
 **Status:** Alpha
 **Version:** 0.1.0-alpha
-**Last Updated:** 2026-03-20
+**Last Updated:** 2026-03-23

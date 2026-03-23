@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #2563eb;
+  --primary-light: #3b82f6;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --success: #16a34a;
+  --accent: #00a4dc;
+}
+
+body {
+  @apply bg-surface-50 dark:bg-surface-950 text-surface-900 dark:text-surface-100 font-sans;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Buttons */
+.btn-primary { @apply px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-all hover:-translate-y-px; }
+.btn-secondary { @apply px-4 py-2 bg-surface-200 dark:bg-surface-700 hover:bg-surface-300 dark:hover:bg-surface-600 text-surface-700 dark:text-surface-200 rounded-lg text-sm font-medium transition-all hover:-translate-y-px; }
+.btn-danger { @apply px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-all hover:-translate-y-px; }
+.btn-warning { @apply px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-all hover:-translate-y-px; }
+.btn-success { @apply px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-all hover:-translate-y-px; }
+.btn-sm { @apply px-3 py-1.5 text-xs; }
+.btn-icon { @apply p-1.5 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors; }
+
+/* Cards */
+.card { @apply bg-white dark:bg-surface-800 rounded-xl shadow-sm border border-surface-200 dark:border-surface-700; }
+.card-body { @apply p-5; }
+
+/* Badges */
+.badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold; }
+.badge-running, .badge-healthy, .badge-active { @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400; }
+.badge-stopped { @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300; }
+.badge-pending, .badge-creating { @apply bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400; }
+.badge-failed, .badge-unreachable { @apply bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400; }
+.badge-destroyed { @apply bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500; }
+.badge-degraded { @apply bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400; }
+.badge-unknown { @apply bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400; }
+
+/* Forms */
+.form-input { @apply block w-full rounded-lg border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm; }
+.form-select { @apply block w-full rounded-lg border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm; }
+.form-label { @apply block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1; }
+
+/* Stat cards */
+.stat-card {
+  @apply flex items-center gap-4 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5;
+  @apply transition-all hover:-translate-y-0.5 hover:shadow-lg cursor-pointer no-underline;
+}
+
+.stat-icon {
+  @apply flex items-center justify-center w-12 h-12 rounded-xl;
+}
+
+/* Endpoint links */
+.endpoint-link {
+  @apply inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-surface-200 dark:border-surface-600;
+  @apply text-xs font-medium text-primary-600 dark:text-primary-400 bg-white dark:bg-surface-800;
+  @apply hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors no-underline;
+}
+
+/* Connect rows (container detail) */
+.connect-row {
+  @apply flex items-center gap-3 px-3 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-900;
+}
+
+.connect-dot {
+  @apply w-2 h-2 rounded-full flex-shrink-0;
+}
+
+.connect-label {
+  @apply text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase w-16 flex-shrink-0;
+}
+
+/* Copy button */
+.copy-btn {
+  @apply inline-flex items-center justify-center w-7 h-7 rounded-md border border-surface-200 dark:border-surface-600;
+  @apply text-surface-400 dark:text-surface-500 bg-white dark:bg-surface-800;
+  @apply hover:text-primary-600 hover:border-primary-300 dark:hover:text-primary-400 dark:hover:border-primary-600;
+  @apply transition-all flex-shrink-0;
+}
+
+.copy-btn.copied {
+  @apply text-green-600 border-green-300 bg-green-50 dark:text-green-400 dark:border-green-700 dark:bg-green-900/20;
+}
+
+/* CodeMirror container styling */
+.cm-editor {
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid rgb(229 231 235); /* surface-200 */
+}
+
+.dark .cm-editor {
+  border-color: rgb(55 65 81); /* surface-700 */
+}
+
+.cm-editor .cm-scroller {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace !important;
+  font-size: 0.85rem;
+}
+
+.cm-editor .cm-content {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace !important;
+  font-size: 0.85rem;
+}
+
+.cm-editor .cm-gutters {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace !important;
+  font-size: 0.85rem;
+}
+
+/* Scope badges */
+.scope-badge-global { @apply bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400; }
+.scope-badge-organization { @apply bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400; }
+.scope-badge-team { @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400; }
+.scope-badge-user { @apply bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400; }
+
+/* Animations */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}

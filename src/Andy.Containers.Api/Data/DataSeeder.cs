@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -6,10 +7,45 @@ namespace Andy.Containers.Api.Data;
 
 public static class DataSeeder
 {
+    // Post-create script that works across popular Linux distros:
+    // 1. Installs essential tools (git, curl, wget, ca-certificates)
+    // 2. Installs and starts SSH server for remote access
+    private const string PostCreateScript =
+        // Install base packages
+        "if command -v apt-get >/dev/null 2>&1; then " +
+            "export DEBIAN_FRONTEND=noninteractive && " +
+            "apt-get update -qq && " +
+            "apt-get install -y -qq git curl wget ca-certificates openssh-server >/dev/null 2>&1; " +
+        "elif command -v apk >/dev/null 2>&1; then " +
+            "apk add --quiet --no-cache git curl wget ca-certificates openssh; " +
+        "elif command -v dnf >/dev/null 2>&1; then " +
+            "dnf install -y -q git curl wget ca-certificates openssh-server; " +
+        "elif command -v yum >/dev/null 2>&1; then " +
+            "yum install -y -q git curl wget ca-certificates openssh-server; " +
+        "elif command -v zypper >/dev/null 2>&1; then " +
+            "zypper install -y -n git curl wget ca-certificates openssh; " +
+        "elif command -v pacman >/dev/null 2>&1; then " +
+            "pacman -Sy --noconfirm git curl wget ca-certificates openssh; " +
+        "fi && " +
+        // Configure and start SSH
+        "mkdir -p /run/sshd && " +
+        "sed -i 's/#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && " +
+        "sed -i 's/#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && " +
+        "echo 'root:container' | chpasswd && " +
+        "ssh-keygen -A 2>/dev/null; " +
+        "/usr/sbin/sshd 2>/dev/null || true";
+
+    private static string ScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string> { ["post_create"] = PostCreateScript });
+
     public static async Task SeedAsync(ContainersDbContext db)
     {
         if (await db.Providers.AnyAsync())
+        {
+            // DB already seeded — update template scripts if they changed
+            await UpdateTemplateScriptsAsync(db);
             return;
+        }
 
         // Seed infrastructure providers
         db.Providers.AddRange(
@@ -56,7 +92,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["dotnet", "python", "node", "angular", "full-stack"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":40}""",
-                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
+                Scripts = ScriptsJson
             },
             new ContainerTemplate
             {
@@ -66,7 +102,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.Both, GpuPreferred = true,
                 IsPublished = true, Tags = ["agent", "devpilot", "ui", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
-                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
+                Scripts = ScriptsJson
             },
             new ContainerTemplate
             {
@@ -76,7 +112,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["dotnet"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
+                Scripts = ScriptsJson
             },
             new ContainerTemplate
             {
@@ -86,7 +122,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["python"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
+                Scripts = ScriptsJson
             },
             new ContainerTemplate
             {
@@ -96,7 +132,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["angular", "node"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
+                Scripts = ScriptsJson
             },
             new ContainerTemplate
             {
@@ -106,7 +142,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["andy-cli", "dotnet", "ai"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = """{"post_create":"if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq git curl wget ca-certificates >/dev/null 2>&1; elif command -v apk >/dev/null 2>&1; then apk add --quiet --no-cache git curl wget ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q git curl wget ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y -q git curl wget ca-certificates; elif command -v zypper >/dev/null 2>&1; then zypper install -y -n git curl wget ca-certificates; elif command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm git curl wget ca-certificates; fi"}"""
+                Scripts = ScriptsJson
             }
         );
 
@@ -121,5 +157,41 @@ public static class DataSeeder
         );
 
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Updates existing seed templates' scripts when they change between versions.
+    /// Only updates templates that were originally seeded (by well-known ID).
+    /// </summary>
+    private static async Task UpdateTemplateScriptsAsync(ContainersDbContext db)
+    {
+        var seedTemplateIds = new[]
+        {
+            Guid.Parse("00000002-0001-0001-0001-000000000001"),
+            Guid.Parse("00000002-0001-0001-0001-000000000002"),
+            Guid.Parse("00000002-0001-0001-0001-000000000003"),
+            Guid.Parse("00000002-0001-0001-0001-000000000004"),
+            Guid.Parse("00000002-0001-0001-0001-000000000005"),
+            Guid.Parse("00000002-0001-0001-0001-000000000006"),
+        };
+
+        var templates = await db.Templates
+            .Where(t => seedTemplateIds.Contains(t.Id))
+            .ToListAsync();
+
+        var updated = false;
+        foreach (var template in templates)
+        {
+            // Compare by checking if the script contains expected content,
+            // since JSON formatting may differ between C# and PostgreSQL
+            if (template.Scripts is null || !template.Scripts.Contains("openssh"))
+            {
+                template.Scripts = ScriptsJson;
+                updated = true;
+            }
+        }
+
+        if (updated)
+            await db.SaveChangesAsync();
     }
 }

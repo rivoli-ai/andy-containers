@@ -71,6 +71,7 @@ Presentation Layer
          │
 Business Logic Layer
 ├── Container Orchestration Service
+├── Container Provisioning Worker (Channel-based background queue)
 ├── Workspace Service
 ├── Template Catalog Service
 ├── Session Management Service
@@ -79,7 +80,9 @@ Business Logic Layer
 ├── Image Manifest & Introspection Service
 ├── Image Diff Service
 ├── Git Clone Service
-└── Git Credential Service
+├── Git Credential Service
+├── Organization Membership Service (JWT claims + RBAC API fallback)
+└── Container Authorization Service
          │
 Domain Layer (Andy.Containers)
 ├── Models (Container, Workspace, Template, etc.)
@@ -338,11 +341,13 @@ public interface IInfrastructureProvider
 
 #### Apple Container Provider (macOS)
 - Native integration with Apple's container runtime on macOS
-- Uses the `container` CLI tool and Swift APIs
+- Uses the `container` CLI tool (`container run`, `container exec -it`, `container inspect`)
 - Lightweight Linux VMs on Apple Silicon
 - Fast startup times, low overhead
 - Rosetta 2 for x86_64 compatibility
 - Shared filesystem via virtiofs
+- Pre-creation cleanup: automatically removes existing containers with the same name
+- Shell access via `container exec -it <name> bash` (direct SSH not supported due to vmnet limitations)
 - Ideal for local development on Mac
 
 #### Rivoli Provider
@@ -697,7 +702,8 @@ AI assistant integration for managing containers from Claude Desktop, Cursor, et
 | **AuthZ** | Andy RBAC Client |
 | **Caching** | IMemoryCache (Redis-ready) |
 | **Logging** | Serilog |
-| **Testing** | xUnit, FluentAssertions, Moq |
+| **Observability** | OpenTelemetry (tracing + metrics), Serilog |
+| **Testing** | xUnit, FluentAssertions, Moq, bUnit |
 
 ## 13. Deployment
 
@@ -885,9 +891,34 @@ Beyond compilers and tools, templates can track **library dependencies** per eco
 
 Library dependencies follow the same versioning, locking, and auto-update model. When a library update matches the update policy, the image is rebuilt with the new version and the change is recorded in the changelog.
 
-## 15. Git Repository Management
+## 15. Container Provisioning Pipeline
 
-### 15.1 Multi-Repository Clone
+### 15.1 Channel-Based Queue
+
+Container creation is asynchronous. The `ContainerOrchestrationService` validates the request, creates a `Pending` container in the database, and enqueues a `ContainerProvisionJob` to a `System.Threading.Channels`-based queue. The `ContainerProvisioningWorker` (a `BackgroundService`) reads from this queue and handles provisioning with a 5-minute timeout.
+
+### 15.2 Post-Create Scripts
+
+Templates define lifecycle scripts in their `Scripts` JSONB field. The `post_create` script runs after the container reaches `Running` status, before git clones. The seed templates include a multi-distro script that:
+
+1. Detects the package manager (apt-get, apk, dnf, yum, zypper, pacman)
+2. Installs essential tools: git, curl, wget, ca-certificates, openssh-server
+3. Configures and starts SSH (root login with password `container`)
+4. Generates SSH host keys
+
+Failed post-create scripts log a warning but do not fail the container.
+
+### 15.3 Crash Recovery
+
+On startup, the provisioning worker scans for containers stuck in `Creating` or `Pending` status for more than 2 minutes and marks them as `Failed`.
+
+### 15.4 Web Terminal
+
+The Web UI provides a browser-based terminal at `/containers/{id}/terminal` that executes commands via the container exec API. Features include command history (arrow keys), working directory tracking, Ctrl+L to clear, and color-coded output. This is the primary access method for Apple Containers where direct SSH is not available.
+
+## 16. Git Repository Management
+
+### 16.1 Multi-Repository Clone
 
 Containers support cloning multiple git repositories at creation time or into running containers. Each repository is tracked as a `ContainerGitRepository` entity with individual clone status (`Pending`, `Cloning`, `Cloned`, `Failed`).
 
@@ -898,7 +929,7 @@ Repository sources:
 
 Template repos are automatically merged with request repos unless `ExcludeTemplateRepos` is set.
 
-### 15.2 Git Credential Management
+### 16.2 Git Credential Management
 
 Private repository access is handled via `GitCredential` entities:
 
@@ -907,7 +938,7 @@ Private repository access is handled via `GitCredential` entities:
 - Resolution order: explicit `credentialRef` label match, then auto-match by git host
 - Credential injection uses HTTPS URL format (`https://token@host/...`), cleaned up after clone
 
-### 15.3 Clone Flow
+### 16.3 Clone Flow
 
 1. Validate repository URLs (HTTPS and SSH only, no embedded credentials, no path traversal)
 2. Resolve credential if needed (by label or host auto-match)
@@ -919,4 +950,4 @@ Private repository access is handled via `GitCredential` entities:
 
 **Status:** Alpha
 **Version:** 0.1.0-alpha
-**Last Updated:** 2026-03-20
+**Last Updated:** 2026-03-23
