@@ -64,6 +64,9 @@ try
     builder.Services.AddSingleton<ContainerProvisioningQueue>();
     builder.Services.AddHostedService<ContainerProvisioningWorker>();
 
+    // Provider health check background worker
+    builder.Services.AddHostedService<ProviderHealthCheckWorker>();
+
     // Git credential + clone services
     builder.Services.AddDataProtection();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();

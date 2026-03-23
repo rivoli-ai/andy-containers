@@ -6,6 +6,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Andy.Containers.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Andy.Containers\Andy.Containers.csproj" />
     <ProjectReference Include="..\Andy.Containers.Infrastructure\Andy.Containers.Infrastructure.csproj" />
   </ItemGroup>

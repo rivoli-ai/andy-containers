@@ -17,6 +17,10 @@ public static class Meters
         "andy.containers.git.clones_failed", "clones", "Number of git clones that failed");
     public static readonly Counter<long> ProvisioningErrors = ContainerMeter.CreateCounter<long>(
         "andy.containers.provisioning.errors", "errors", "Number of provisioning errors");
+    public static readonly Counter<long> HealthChecksCompleted = ContainerMeter.CreateCounter<long>(
+        "andy.containers.health_checks.completed", "checks", "Number of provider health checks completed");
+    public static readonly Counter<long> HealthCheckErrors = ContainerMeter.CreateCounter<long>(
+        "andy.containers.health_checks.errors", "errors", "Number of provider health check errors");
 
     // Histograms
     public static readonly Histogram<double> ProvisioningDuration = ContainerMeter.CreateHistogram<double>(
