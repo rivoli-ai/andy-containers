@@ -44,6 +44,8 @@ public static class DataSeeder
         {
             // DB already seeded — update template scripts if they changed
             await UpdateTemplateScriptsAsync(db);
+            // Backfill missing dependency specs for seed templates
+            await BackfillDependencySpecsAsync(db);
             return;
         }
 
@@ -146,17 +148,56 @@ public static class DataSeeder
             }
         );
 
-        // Seed dependencies for full-stack template
+        // Seed dependencies for all templates
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId);
+
+        await db.SaveChangesAsync();
+    }
+
+    private static void SeedDependencySpecs(ContainersDbContext db,
+        Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId)
+    {
         db.DependencySpecs.AddRange(
+            // Full Stack: dotnet + python + node + angular + git + code-server
             new DependencySpec { TemplateId = fullStackId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
             new DependencySpec { TemplateId = fullStackId, Type = DependencyType.Runtime, Name = "python", VersionConstraint = ">=3.12,<4.0", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
             new DependencySpec { TemplateId = fullStackId, Type = DependencyType.Tool, Name = "node", VersionConstraint = "20.x", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 },
             new DependencySpec { TemplateId = fullStackId, Type = DependencyType.Tool, Name = "angular-cli", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Major, SortOrder = 4 },
             new DependencySpec { TemplateId = fullStackId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 5 },
-            new DependencySpec { TemplateId = fullStackId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 6 }
-        );
+            new DependencySpec { TemplateId = fullStackId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 6 },
 
-        await db.SaveChangesAsync();
+            // Agent Sandbox: dotnet + python + node + code-server + git + xfce4 + tigervnc
+            new DependencySpec { TemplateId = agentSandboxId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = agentSandboxId, Type = DependencyType.Runtime, Name = "python", VersionConstraint = ">=3.12,<4.0", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
+            new DependencySpec { TemplateId = agentSandboxId, Type = DependencyType.Tool, Name = "node", VersionConstraint = "20.x", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 },
+            new DependencySpec { TemplateId = agentSandboxId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 },
+            new DependencySpec { TemplateId = agentSandboxId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 5 },
+            new DependencySpec { TemplateId = agentSandboxId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 6 },
+            new DependencySpec { TemplateId = agentSandboxId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 7 },
+
+            // .NET 8: dotnet-sdk + git + code-server
+            new DependencySpec { TemplateId = dotnetId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = dotnetId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
+            new DependencySpec { TemplateId = dotnetId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 },
+
+            // Python 3.12: python + pip + git + code-server
+            new DependencySpec { TemplateId = pythonId, Type = DependencyType.Runtime, Name = "python", VersionConstraint = ">=3.12,<4.0", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 1 },
+            new DependencySpec { TemplateId = pythonId, Type = DependencyType.Tool, Name = "pip", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
+            new DependencySpec { TemplateId = pythonId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 3 },
+            new DependencySpec { TemplateId = pythonId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 },
+
+            // Angular 18: node + angular-cli + git + code-server
+            new DependencySpec { TemplateId = angularId, Type = DependencyType.Tool, Name = "node", VersionConstraint = "20.x", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 1 },
+            new DependencySpec { TemplateId = angularId, Type = DependencyType.Tool, Name = "angular-cli", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Major, SortOrder = 2 },
+            new DependencySpec { TemplateId = angularId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 3 },
+            new DependencySpec { TemplateId = angularId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 },
+
+            // Andy CLI: dotnet-sdk + andy-cli + git + code-server
+            new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Tool, Name = "andy-cli", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
+            new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 3 },
+            new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 }
+        );
     }
 
     /// <summary>
@@ -193,5 +234,45 @@ public static class DataSeeder
 
         if (updated)
             await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Adds dependency specs for seed templates that are missing them.
+    /// This handles upgrades where templates were seeded before dependency specs were added.
+    /// </summary>
+    private static async Task BackfillDependencySpecsAsync(ContainersDbContext db)
+    {
+        var fullStackId = Guid.Parse("00000002-0001-0001-0001-000000000001");
+        var agentSandboxId = Guid.Parse("00000002-0001-0001-0001-000000000002");
+        var dotnetId = Guid.Parse("00000002-0001-0001-0001-000000000003");
+        var pythonId = Guid.Parse("00000002-0001-0001-0001-000000000004");
+        var angularId = Guid.Parse("00000002-0001-0001-0001-000000000005");
+        var andyCliId = Guid.Parse("00000002-0001-0001-0001-000000000006");
+
+        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId };
+
+        // Find which seed templates have no dependency specs at all
+        var templatesWithDeps = await db.DependencySpecs
+            .Where(d => seedIds.Contains(d.TemplateId))
+            .Select(d => d.TemplateId)
+            .Distinct()
+            .ToListAsync();
+
+        var missing = seedIds.Except(templatesWithDeps).ToList();
+        if (missing.Count == 0)
+            return;
+
+        // Only seed deps for templates that have none — use a temporary context
+        // to avoid duplicating the full-stack deps that may already exist
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId);
+
+        // Remove specs for templates that already had them (we just re-added everything)
+        var duplicates = db.ChangeTracker.Entries<DependencySpec>()
+            .Where(e => e.State == EntityState.Added && !missing.Contains(e.Entity.TemplateId))
+            .ToList();
+        foreach (var dup in duplicates)
+            dup.State = EntityState.Detached;
+
+        await db.SaveChangesAsync();
     }
 }
