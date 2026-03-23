@@ -210,6 +210,7 @@ export class ContainerCreateComponent implements OnInit {
     const request: any = {
       name: this.name,
       templateId: this.selectedTemplateId,
+      source: 'WebUi',
     };
     if (this.selectedProviderId) {
       request.providerId = this.selectedProviderId;

@@ -85,6 +85,8 @@ public class ContainerOrchestrationService : IContainerService
             OrganizationId = request.OrganizationId,
             TeamId = request.TeamId,
             Status = ContainerStatus.Pending,
+            CreationSource = request.Source,
+            ClientInfo = request.ClientInfo,
             ExpiresAt = request.ExpiresAfter.HasValue
                 ? DateTime.UtcNow.Add(request.ExpiresAfter.Value)
                 : null
@@ -237,6 +239,8 @@ public class ContainerOrchestrationService : IContainerService
             query = query.Where(c => c.TemplateId == filter.TemplateId);
         if (filter.ProviderId.HasValue)
             query = query.Where(c => c.ProviderId == filter.ProviderId);
+        if (filter.Source.HasValue)
+            query = query.Where(c => c.CreationSource == filter.Source);
 
         query = query.OrderByDescending(c => c.CreatedAt);
 

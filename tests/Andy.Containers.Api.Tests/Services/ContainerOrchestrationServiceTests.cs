@@ -559,4 +559,63 @@ public class ContainerOrchestrationServiceTests : IDisposable
             p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
+
+    [Fact]
+    public async Task CreateContainer_ShouldPersistCreationSource()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "cli-container",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            Source = CreationSource.Cli,
+            ClientInfo = "andy-cli/1.2.0"
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        container.CreationSource.Should().Be(CreationSource.Cli);
+        container.ClientInfo.Should().Be("andy-cli/1.2.0");
+
+        var persisted = await _db.Containers.FindAsync(container.Id);
+        persisted!.CreationSource.Should().Be(CreationSource.Cli);
+        persisted.ClientInfo.Should().Be("andy-cli/1.2.0");
+    }
+
+    [Fact]
+    public async Task CreateContainer_DefaultSource_ShouldBeUnknown()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "no-source",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        container.CreationSource.Should().Be(CreationSource.Unknown);
+        container.ClientInfo.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ListContainers_FilterBySource_ShouldReturnOnlyMatching()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        _db.Containers.AddRange(
+            new Container { Name = "web-1", TemplateId = template.Id, ProviderId = provider.Id, OwnerId = "u1", CreationSource = CreationSource.WebUi },
+            new Container { Name = "cli-1", TemplateId = template.Id, ProviderId = provider.Id, OwnerId = "u1", CreationSource = CreationSource.Cli },
+            new Container { Name = "api-1", TemplateId = template.Id, ProviderId = provider.Id, OwnerId = "u1", CreationSource = CreationSource.RestApi });
+        await _db.SaveChangesAsync();
+
+        var results = await _service.ListContainersAsync(new ContainerFilter { OwnerId = "u1", Source = CreationSource.Cli }, CancellationToken.None);
+
+        results.Should().HaveCount(1);
+        results[0].Name.Should().Be("cli-1");
+    }
 }

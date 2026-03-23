@@ -87,6 +87,10 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
               <dt class="text-sm text-surface-500 dark:text-surface-400">Created</dt>
               <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.createdAt | date:'medium' }}</dd>
             </div>
+            <div *ngIf="container.creationSource && container.creationSource !== 'Unknown'" class="flex justify-between">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Source</dt>
+              <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.creationSource }}</dd>
+            </div>
             <div *ngIf="container.startedAt" class="flex justify-between">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Started</dt>
               <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.startedAt | date:'medium' }}</dd>

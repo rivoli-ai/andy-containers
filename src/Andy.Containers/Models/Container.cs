@@ -24,6 +24,8 @@ public class Container
     public DateTime? StoppedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public DateTime? LastActivityAt { get; set; }
+    public CreationSource CreationSource { get; set; } = CreationSource.Unknown;
+    public string? ClientInfo { get; set; }
     public string? Metadata { get; set; }
 
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
@@ -41,4 +43,14 @@ public enum ContainerStatus
     Failed,
     Destroying,
     Destroyed
+}
+
+public enum CreationSource
+{
+    Unknown,
+    WebUi,
+    RestApi,
+    Mcp,
+    Grpc,
+    Cli,
 }

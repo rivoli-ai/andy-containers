@@ -19,6 +19,8 @@ export interface Container {
   stoppedAt?: string;
   expiresAt?: string;
   lastActivityAt?: string;
+  creationSource?: string;
+  clientInfo?: string;
 }
 
 export interface Template {

@@ -37,6 +37,8 @@ public class CreateContainerRequest
     public bool SkipUrlValidation { get; set; }
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
     public TimeSpan? ExpiresAfter { get; set; }
+    public CreationSource Source { get; set; } = CreationSource.Unknown;
+    public string? ClientInfo { get; set; }
 }
 
 public class GitRepositoryConfig
@@ -58,6 +60,7 @@ public class ContainerFilter
     public ContainerStatus? Status { get; set; }
     public Guid? TemplateId { get; set; }
     public Guid? ProviderId { get; set; }
+    public CreationSource? Source { get; set; }
     public int? Skip { get; set; }
     public int? Take { get; set; }
 }

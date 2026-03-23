@@ -58,7 +58,31 @@ public class ContainerTests
         container.StoppedAt.Should().BeNull();
         container.ExpiresAt.Should().BeNull();
         container.LastActivityAt.Should().BeNull();
+        container.ClientInfo.Should().BeNull();
         container.Metadata.Should().BeNull();
+    }
+
+    [Fact]
+    public void NewContainer_ShouldHaveDefaultCreationSource_Unknown()
+    {
+        var container = new Container { Name = "test", OwnerId = "user1" };
+
+        container.CreationSource.Should().Be(CreationSource.Unknown);
+    }
+
+    [Theory]
+    [InlineData(CreationSource.Unknown)]
+    [InlineData(CreationSource.WebUi)]
+    [InlineData(CreationSource.RestApi)]
+    [InlineData(CreationSource.Mcp)]
+    [InlineData(CreationSource.Grpc)]
+    [InlineData(CreationSource.Cli)]
+    public void CreationSource_ShouldAcceptAllValues(CreationSource source)
+    {
+        var container = new Container { Name = "test", OwnerId = "user1" };
+        container.CreationSource = source;
+
+        container.CreationSource.Should().Be(source);
     }
 
     [Theory]
