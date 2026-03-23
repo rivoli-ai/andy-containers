@@ -11,6 +11,7 @@ import {
   Workspace,
   ContainerEvent,
   ContainerGitRepository,
+  GitCredential,
   ConnectionInfo,
   ExecResult,
   ProviderHealthResult,
@@ -69,6 +70,15 @@ export class ContainersApiService {
 
   getContainerRepositories(id: string): Observable<ContainerGitRepository[]> {
     return this.http.get<ContainerGitRepository[]>(`${this.baseUrl}/containers/${id}/repositories`);
+  }
+
+  // Git Credentials
+  getGitCredentials(): Observable<GitCredential[]> {
+    return this.http.get<GitCredential[]>(`${this.baseUrl}/git-credentials`);
+  }
+
+  createGitCredential(data: { label: string; token: string; gitHost?: string }): Observable<GitCredential> {
+    return this.http.post<GitCredential>(`${this.baseUrl}/git-credentials`, data);
   }
 
   // Providers

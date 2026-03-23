@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Template, Provider } from '../../../core/models';
+import { Template, Provider, GitCredential } from '../../../core/models';
 
 @Component({
   selector: 'app-container-create',
@@ -58,7 +58,60 @@ import { Template, Provider } from '../../../core/models';
           <input id="gitRepo" type="text" [(ngModel)]="gitRepoUrl" name="gitRepo"
             class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             placeholder="https://github.com/user/repo.git" />
-          <div *ngIf="gitRepoUrl" class="mt-2 flex items-center gap-2">
+        </div>
+
+        <!-- Credential selector (shown when git URL is entered) -->
+        <div *ngIf="gitRepoUrl" class="space-y-3">
+          <div>
+            <label for="credential" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">
+              Git Credential <span class="text-surface-400">(for private repos)</span>
+            </label>
+            <select id="credential" [(ngModel)]="selectedCredentialLabel" name="credential"
+              class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+              <option value="">None (public repo)</option>
+              <option *ngFor="let c of credentials" [value]="c.label">{{ c.label }}{{ c.gitHost ? ' (' + c.gitHost + ')' : '' }}</option>
+              <option value="__new__">+ Add new credential...</option>
+            </select>
+          </div>
+
+          <!-- Inline credential creation -->
+          <div *ngIf="selectedCredentialLabel === '__new__'"
+            class="rounded-lg border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-primary-900/20 p-4 space-y-3">
+            <p class="text-sm font-medium text-primary-800 dark:text-primary-200">Store a new git credential</p>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-surface-600 dark:text-surface-400 mb-1">Label *</label>
+                <input type="text" [(ngModel)]="newCredLabel" name="newCredLabel"
+                  class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100"
+                  placeholder="e.g. github-work" />
+              </div>
+              <div>
+                <label class="block text-xs text-surface-600 dark:text-surface-400 mb-1">Git Host</label>
+                <input type="text" [(ngModel)]="newCredHost" name="newCredHost"
+                  class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100"
+                  [placeholder]="detectedHost || 'e.g. github.com'" />
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-surface-600 dark:text-surface-400 mb-1">Personal Access Token *</label>
+              <input type="password" [(ngModel)]="newCredToken" name="newCredToken"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100 font-mono"
+                placeholder="ghp_..." />
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" (click)="saveNewCredential()" [disabled]="savingCredential || !newCredLabel || !newCredToken"
+                class="px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50">
+                {{ savingCredential ? 'Saving...' : 'Save Credential' }}
+              </button>
+              <button type="button" (click)="selectedCredentialLabel = ''"
+                class="px-3 py-1.5 text-xs font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-600 dark:text-surface-400">
+                Cancel
+              </button>
+              <span *ngIf="credentialError" class="text-xs text-red-600 dark:text-red-400">{{ credentialError }}</span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
             <input id="skipValidation" type="checkbox" [(ngModel)]="skipUrlValidation" name="skipValidation"
               class="rounded border-surface-300 dark:border-surface-600 text-primary-600 focus:ring-primary-500" />
             <label for="skipValidation" class="text-xs text-surface-500 dark:text-surface-400">
@@ -73,7 +126,7 @@ import { Template, Provider } from '../../../core/models';
             class="px-4 py-2 text-sm font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-700">
             Cancel
           </a>
-          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId"
+          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId || selectedCredentialLabel === '__new__'"
             class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {{ submitting ? 'Creating...' : 'Create Container' }}
           </button>
@@ -87,11 +140,20 @@ export class ContainerCreateComponent implements OnInit {
   selectedTemplateId = '';
   selectedProviderId = '';
   gitRepoUrl = '';
+  selectedCredentialLabel = '';
   skipUrlValidation = false;
   templates: Template[] = [];
   providers: Provider[] = [];
+  credentials: GitCredential[] = [];
   submitting = false;
   error = '';
+
+  // Inline credential creation
+  newCredLabel = '';
+  newCredHost = '';
+  newCredToken = '';
+  savingCredential = false;
+  credentialError = '';
 
   constructor(private api: ContainersApiService, private router: Router) {}
 
@@ -101,6 +163,42 @@ export class ContainerCreateComponent implements OnInit {
     });
     this.api.getProviders().subscribe({
       next: (res) => { this.providers = res; },
+    });
+    this.api.getGitCredentials().subscribe({
+      next: (creds) => { this.credentials = creds; },
+    });
+  }
+
+  get detectedHost(): string {
+    try {
+      return new URL(this.gitRepoUrl).hostname;
+    } catch {
+      return '';
+    }
+  }
+
+  saveNewCredential(): void {
+    if (!this.newCredLabel || !this.newCredToken) return;
+    this.savingCredential = true;
+    this.credentialError = '';
+
+    this.api.createGitCredential({
+      label: this.newCredLabel,
+      token: this.newCredToken,
+      gitHost: this.newCredHost || this.detectedHost || undefined,
+    }).subscribe({
+      next: (cred) => {
+        this.credentials = [...this.credentials, cred];
+        this.selectedCredentialLabel = cred.label;
+        this.newCredLabel = '';
+        this.newCredHost = '';
+        this.newCredToken = '';
+        this.savingCredential = false;
+      },
+      error: (err) => {
+        this.credentialError = err?.error?.error || 'Failed to save credential';
+        this.savingCredential = false;
+      },
     });
   }
 
@@ -117,7 +215,12 @@ export class ContainerCreateComponent implements OnInit {
       request.providerId = this.selectedProviderId;
     }
     if (this.gitRepoUrl) {
-      request.gitRepository = { url: this.gitRepoUrl };
+      request.gitRepository = {
+        url: this.gitRepoUrl,
+        credentialRef: this.selectedCredentialLabel && this.selectedCredentialLabel !== '__new__'
+          ? this.selectedCredentialLabel
+          : undefined,
+      };
       if (this.skipUrlValidation) {
         request.skipUrlValidation = true;
       }

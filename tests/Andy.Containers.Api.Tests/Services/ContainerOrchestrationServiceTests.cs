@@ -36,7 +36,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
             .Returns(_mockInfraProvider.Object);
 
         // Default: probe passes
-        _mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string>());
 
         _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, logger.Object);
@@ -488,6 +488,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
             p => p.ProbeRepositoriesAsync(
                 It.Is<IReadOnlyList<GitRepositoryConfig>>(r => r.Count == 1),
                 It.IsAny<string>(),
+                It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -497,7 +498,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
     {
         var (template, provider) = await SeedTemplateAndProvider();
         _mockProbeService
-            .Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string> { "Repository not found or not accessible: https://github.com/owner/bad-repo.git" });
 
         var request = new CreateContainerRequest
@@ -533,7 +534,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
         await _service.CreateContainerAsync(request, CancellationToken.None);
 
         _mockProbeService.Verify(
-            p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Container should still be created
@@ -555,7 +556,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
         await _service.CreateContainerAsync(request, CancellationToken.None);
 
         _mockProbeService.Verify(
-            p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 }

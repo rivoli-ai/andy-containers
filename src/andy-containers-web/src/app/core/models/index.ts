@@ -114,6 +114,15 @@ export interface ValidationIssue {
   line?: number;
 }
 
+export interface GitCredential {
+  id: string;
+  label: string;
+  gitHost?: string;
+  credentialType: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
 export interface ContainerGitRepository {
   id: string;
   containerId: string;

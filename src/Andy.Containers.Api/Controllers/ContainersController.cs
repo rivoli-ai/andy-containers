@@ -17,14 +17,25 @@ public class ContainersController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly ContainersDbContext _db;
     private readonly IGitCloneService _gitCloneService;
+    private readonly IGitCredentialService _credentialService;
+    private readonly IGitRepositoryProbeService _probeService;
     private readonly IOrganizationMembershipService _orgMembership;
 
-    public ContainersController(IContainerService containerService, ICurrentUserService currentUser, ContainersDbContext db, IGitCloneService gitCloneService, IOrganizationMembershipService orgMembership)
+    public ContainersController(
+        IContainerService containerService,
+        ICurrentUserService currentUser,
+        ContainersDbContext db,
+        IGitCloneService gitCloneService,
+        IGitCredentialService credentialService,
+        IGitRepositoryProbeService probeService,
+        IOrganizationMembershipService orgMembership)
     {
         _containerService = containerService;
         _currentUser = currentUser;
         _db = db;
         _gitCloneService = gitCloneService;
+        _credentialService = credentialService;
+        _probeService = probeService;
         _orgMembership = orgMembership;
     }
 
@@ -203,6 +214,7 @@ public class ContainersController : ControllerBase
             Url = dto.Url,
             Branch = dto.Branch,
             TargetPath = dto.TargetPath,
+            CredentialRef = dto.CredentialRef,
             CloneDepth = dto.CloneDepth,
             Submodules = dto.Submodules
         };
@@ -210,6 +222,12 @@ public class ContainersController : ControllerBase
         var errors = GitRepositoryValidator.Validate(config);
         if (errors.Count > 0)
             return BadRequest(new { errors });
+
+        // Validate credential and probe URL
+        var probeErrors = await _probeService.ProbeRepositoriesAsync(
+            [config], container.OwnerId, requireCredentials: true, ct);
+        if (probeErrors.Count > 0)
+            return UnprocessableEntity(new { error = string.Join("; ", probeErrors) });
 
         var repo = new ContainerGitRepository
         {

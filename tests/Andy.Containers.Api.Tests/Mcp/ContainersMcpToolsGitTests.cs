@@ -28,7 +28,10 @@ public class ContainersMcpToolsGitTests : IDisposable
         var mockOrgMembership = new Mock<IOrganizationMembershipService>();
         mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        _tools = new ContainersMcpTools(_db, _mockGitCloneService.Object, _mockCredentialService.Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object);
+        var mockProbeService = new Mock<IGitRepositoryProbeService>();
+        mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string>());
+        _tools = new ContainersMcpTools(_db, _mockGitCloneService.Object, _mockCredentialService.Object, mockProbeService.Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object);
     }
 
     public void Dispose()
@@ -80,6 +83,8 @@ public class ContainersMcpToolsGitTests : IDisposable
     public async Task CloneRepository_ShouldPersistAndCallService()
     {
         var containerId = Guid.NewGuid();
+        _db.Containers.Add(new Container { Id = containerId, Name = "test", OwnerId = "test-user", Status = ContainerStatus.Running });
+        await _db.SaveChangesAsync();
         var clonedRepo = new ContainerGitRepository
         {
             ContainerId = containerId,
@@ -127,6 +132,8 @@ public class ContainersMcpToolsGitTests : IDisposable
     public async Task CloneRepository_WithAllOptions_ShouldPersistThem()
     {
         var containerId = Guid.NewGuid();
+        _db.Containers.Add(new Container { Id = containerId, Name = "test", OwnerId = "test-user", Status = ContainerStatus.Running });
+        await _db.SaveChangesAsync();
         _mockGitCloneService.Setup(s => s.CloneRepositoryAsync(containerId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid _, Guid repoId, CancellationToken _) =>
             {

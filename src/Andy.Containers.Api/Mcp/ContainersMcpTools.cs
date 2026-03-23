@@ -14,6 +14,7 @@ public class ContainersMcpTools
     private readonly ContainersDbContext _db;
     private readonly IGitCloneService _gitCloneService;
     private readonly IGitCredentialService _credentialService;
+    private readonly IGitRepositoryProbeService _probeService;
     private readonly IImageManifestService _manifestService;
     private readonly IImageDiffService _diffService;
     private readonly ICurrentUserService _currentUser;
@@ -23,6 +24,7 @@ public class ContainersMcpTools
         ContainersDbContext db,
         IGitCloneService gitCloneService,
         IGitCredentialService credentialService,
+        IGitRepositoryProbeService probeService,
         IImageManifestService manifestService,
         IImageDiffService diffService,
         ICurrentUserService currentUser,
@@ -31,6 +33,7 @@ public class ContainersMcpTools
         _db = db;
         _gitCloneService = gitCloneService;
         _credentialService = credentialService;
+        _probeService = probeService;
         _manifestService = manifestService;
         _diffService = diffService;
         _currentUser = currentUser;
@@ -172,9 +175,17 @@ public class ContainersMcpTools
     {
         if (!Guid.TryParse(containerId, out var id)) return null;
 
-        var config = new GitRepositoryConfig { Url = url, Branch = branch, TargetPath = targetPath, CloneDepth = cloneDepth, Submodules = submodules };
+        var config = new GitRepositoryConfig { Url = url, Branch = branch, TargetPath = targetPath, CredentialRef = credentialRef, CloneDepth = cloneDepth, Submodules = submodules };
         var errors = GitRepositoryValidator.Validate(config);
         if (errors.Count > 0) return null;
+
+        // Validate credentials — get container owner for credential resolution
+        var container = await _db.Containers.FindAsync(id);
+        if (container is null) return null;
+
+        var probeErrors = await _probeService.ProbeRepositoriesAsync(
+            [config], container.OwnerId, requireCredentials: true);
+        if (probeErrors.Count > 0) return null; // MCP tools return null for errors
 
         var repo = new ContainerGitRepository
         {

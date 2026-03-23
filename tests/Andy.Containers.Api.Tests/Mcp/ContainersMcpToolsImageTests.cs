@@ -32,6 +32,7 @@ public class ContainersMcpToolsImageTests : IDisposable
             _db,
             new Mock<IGitCloneService>().Object,
             new Mock<IGitCredentialService>().Object,
+            new Mock<IGitRepositoryProbeService>().Object,
             _mockManifestService.Object,
             _mockDiffService.Object,
             mockCurrentUser.Object,

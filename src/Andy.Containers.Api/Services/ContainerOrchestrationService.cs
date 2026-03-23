@@ -137,11 +137,11 @@ public class ContainerOrchestrationService : IContainerService
             }
         }
 
-        // Probe repository URLs for accessibility (unless skipped)
+        // Probe repository URLs for accessibility and credential validation (unless skipped)
         if (gitRepos.Count > 0 && !request.SkipUrlValidation)
         {
             var probeErrors = await _probeService.ProbeRepositoriesAsync(
-                gitRepos, request.OwnerId ?? "system", ct);
+                gitRepos, request.OwnerId ?? "system", requireCredentials: true, ct);
             if (probeErrors.Count > 0)
                 throw new ArgumentException(string.Join("; ", probeErrors));
         }

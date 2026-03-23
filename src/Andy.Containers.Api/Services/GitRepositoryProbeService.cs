@@ -22,6 +22,7 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
     public async Task<List<string>> ProbeRepositoriesAsync(
         IReadOnlyList<GitRepositoryConfig> repos,
         string ownerId,
+        bool requireCredentials,
         CancellationToken ct)
     {
         var errors = new List<string>();
@@ -29,7 +30,7 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
         for (var i = 0; i < repos.Count; i++)
         {
             var repo = repos[i];
-            var error = await ProbeRepositoryAsync(repo, ownerId, ct);
+            var error = await ProbeRepositoryAsync(repo, ownerId, requireCredentials, ct);
             if (error is not null)
                 errors.Add(repos.Count > 1 ? $"Repository [{i}]: {error}" : error);
         }
@@ -40,6 +41,7 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
     internal async Task<string?> ProbeRepositoryAsync(
         GitRepositoryConfig repo,
         string ownerId,
+        bool requireCredentials,
         CancellationToken ct)
     {
         // Only probe HTTPS URLs — SSH requires key setup we can't do from the host
@@ -49,9 +51,9 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
             return null;
         }
 
-        // Resolve credential if available
+        // Parse host from URL
         string probeUrl = repo.Url;
-        string? gitHost = null;
+        string? gitHost;
 
         try
         {
@@ -63,27 +65,38 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
             return $"Invalid URL: {repo.Url}";
         }
 
+        // Resolve credential if available
         var token = await _credentialService.ResolveTokenAsync(
             ownerId, repo.CredentialRef, gitHost, ct);
+
+        // If explicit credentialRef was given but not found, reject immediately
+        if (repo.CredentialRef is not null && token is null)
+        {
+            return $"Credential '{repo.CredentialRef}' not found. Store a credential with that label before cloning.";
+        }
 
         if (token is not null)
         {
             var uri = new Uri(probeUrl);
             probeUrl = $"https://{Uri.EscapeDataString(token)}@{uri.Host}{uri.PathAndQuery}";
         }
-        else if (repo.CredentialRef is not null)
-        {
-            // Explicit credential was requested but not found — skip probe,
-            // the clone will fail later with a clear credential error
-            _logger.LogDebug("Skipping probe for {Url}: credential '{Ref}' not resolved",
-                repo.Url, repo.CredentialRef);
-            return null;
-        }
 
-        return await RunGitLsRemoteAsync(probeUrl, repo.Url, ct);
+        var (result, errorMsg) = await RunGitLsRemoteAsync(probeUrl, repo.Url, ct);
+
+        return result switch
+        {
+            ProbeResult.Accessible => null,
+            ProbeResult.Skipped => null,
+            ProbeResult.AuthRequired when token is not null =>
+                $"Authentication failed for {repo.Url}. The stored credential may be expired or invalid.",
+            ProbeResult.AuthRequired when requireCredentials =>
+                $"Repository {repo.Url} requires authentication. Provide a credentialRef or store a credential for {gitHost}.",
+            ProbeResult.AuthRequired => null, // Silent skip when not requiring credentials
+            _ => errorMsg,
+        };
     }
 
-    internal async Task<string?> RunGitLsRemoteAsync(
+    internal async Task<(ProbeResult result, string? error)> RunGitLsRemoteAsync(
         string probeUrl, string displayUrl, CancellationToken ct)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -107,13 +120,12 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
 
             using var process = Process.Start(psi);
             if (process is null)
-                return $"Failed to start git process for {displayUrl}";
+                return (ProbeResult.Skipped, null);
 
             // Read stdout and stderr concurrently to avoid deadlock from full buffers
             var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
             var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
 
-            // Wait for exit with timeout
             try
             {
                 await process.WaitForExitAsync(timeoutCts.Token);
@@ -121,38 +133,32 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                // Timeout — not the caller's cancellation
                 try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                return $"Repository probe timed out for {displayUrl} (10s)";
+                return (ProbeResult.TimedOut, $"Repository probe timed out for {displayUrl} (10s)");
             }
 
             if (process.ExitCode == 0)
             {
                 _logger.LogDebug("Repository probe succeeded for {Url}", displayUrl);
-                return null;
+                return (ProbeResult.Accessible, null);
             }
 
             var stderr = stderrTask.Result;
 
-            // Exit code 2 = remote found but empty (no matching refs) — that's still valid
+            // Exit code 2 = remote found but empty (no matching refs) — still valid
             if (process.ExitCode == 2)
-                return null;
+                return (ProbeResult.Accessible, null);
 
-            // Authentication failures — if no credential was provided, this likely means
-            // it's a private repo. Skip with a warning rather than blocking.
-            if (stderr.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase) ||
-                stderr.Contains("could not read Username", StringComparison.OrdinalIgnoreCase) ||
-                process.ExitCode == 128 && stderr.Contains("fatal:", StringComparison.OrdinalIgnoreCase) &&
-                    (stderr.Contains("could not read", StringComparison.OrdinalIgnoreCase) ||
-                     stderr.Contains("terminal prompts disabled", StringComparison.OrdinalIgnoreCase)))
+            // Authentication failures
+            if (IsAuthError(stderr, process.ExitCode))
             {
-                _logger.LogDebug("Repository {Url} requires authentication, skipping probe", displayUrl);
-                return null;
+                _logger.LogDebug("Repository {Url} requires authentication", displayUrl);
+                return (ProbeResult.AuthRequired, null);
             }
 
             _logger.LogWarning("Repository probe failed for {Url}: exit={Exit} stderr={Stderr}",
                 displayUrl, process.ExitCode, stderr.Trim());
-            return $"Repository not found or not accessible: {displayUrl}";
+            return (ProbeResult.NotFound, $"Repository not found or not accessible: {displayUrl}");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -160,9 +166,21 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
         }
         catch (Exception ex)
         {
-            // git not installed or other system error — skip probe gracefully
             _logger.LogWarning(ex, "Git probe unavailable, skipping URL validation for {Url}", displayUrl);
-            return null;
+            return (ProbeResult.Skipped, null);
         }
+    }
+
+    private static bool IsAuthError(string stderr, int exitCode)
+    {
+        if (stderr.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (stderr.Contains("could not read Username", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (exitCode == 128 && stderr.Contains("fatal:", StringComparison.OrdinalIgnoreCase) &&
+            (stderr.Contains("could not read", StringComparison.OrdinalIgnoreCase) ||
+             stderr.Contains("terminal prompts disabled", StringComparison.OrdinalIgnoreCase)))
+            return true;
+        return false;
     }
 }
