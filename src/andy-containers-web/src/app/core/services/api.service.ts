@@ -10,6 +10,7 @@ import {
   Provider,
   Workspace,
   ContainerEvent,
+  ContainerGitRepository,
   ConnectionInfo,
   ExecResult,
   ProviderHealthResult,
@@ -64,6 +65,10 @@ export class ContainersApiService {
 
   getContainerEvents(id: string): Observable<ContainerEvent[]> {
     return this.http.get<ContainerEvent[]>(`${this.baseUrl}/containers/${id}/events`);
+  }
+
+  getContainerRepositories(id: string): Observable<ContainerGitRepository[]> {
+    return this.http.get<ContainerGitRepository[]>(`${this.baseUrl}/containers/${id}/repositories`);
   }
 
   // Providers

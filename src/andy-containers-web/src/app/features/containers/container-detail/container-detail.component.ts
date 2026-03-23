@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Container, ContainerEvent, ConnectionInfo, ExecResult } from '../../../core/models';
+import { Container, ContainerEvent, ContainerGitRepository, ConnectionInfo, ExecResult } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 
 @Component({
@@ -228,6 +228,39 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
         </div>
       </div>
 
+      <!-- Repositories Card -->
+      <div *ngIf="repositories.length > 0" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800">
+        <div class="px-5 py-4 border-b border-surface-200 dark:border-surface-700">
+          <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100">Repositories</h2>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-surface-200 dark:divide-surface-700">
+            <thead class="bg-surface-50 dark:bg-surface-800">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">URL</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Branch</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Path</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-surface-200 dark:divide-surface-700">
+              <tr *ngFor="let repo of repositories" class="hover:bg-surface-50 dark:hover:bg-surface-700/50">
+                <td class="px-4 py-3 text-sm font-mono text-surface-700 dark:text-surface-300 truncate max-w-xs">{{ repo.url }}</td>
+                <td class="px-4 py-3 text-sm text-surface-600 dark:text-surface-300">{{ repo.branch || 'default' }}</td>
+                <td class="px-4 py-3 text-sm font-mono text-surface-600 dark:text-surface-300">{{ repo.targetPath }}</td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                  <span [ngClass]="getCloneStatusClasses(repo.cloneStatus)">
+                    <span *ngIf="repo.cloneStatus === 'Cloning'" class="inline-block w-3 h-3 mr-1 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+                    {{ repo.cloneStatus }}
+                  </span>
+                  <span *ngIf="repo.cloneError" class="block text-xs text-red-500 dark:text-red-400 mt-1 truncate max-w-xs" [title]="repo.cloneError">{{ repo.cloneError }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Events Card -->
       <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800">
         <div class="flex items-center justify-between px-5 py-4 border-b border-surface-200 dark:border-surface-700">
@@ -269,6 +302,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   error = '';
   container: Container | null = null;
   events: ContainerEvent[] = [];
+  repositories: ContainerGitRepository[] = [];
   connectionInfo: ConnectionInfo | null = null;
   execCommand = '';
   execResult: ExecResult | null = null;
@@ -278,6 +312,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   isStuck = false;
 
   private pollTimer: any = null;
+  private eventPollTimer: any = null;
   private containerId = '';
   private copyTimeout: any = null;
   private createdTime: Date | null = null;
@@ -295,6 +330,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.clearPoll();
+    this.clearEventPoll();
     if (this.copyTimeout) clearTimeout(this.copyTimeout);
   }
 
@@ -321,6 +357,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
         }
 
         this.loadEvents();
+        this.loadRepositories();
 
         if (c.status === 'Running') {
           this.loadConnectionInfo();
@@ -410,6 +447,54 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
     this.copiedField = field;
     if (this.copyTimeout) clearTimeout(this.copyTimeout);
     this.copyTimeout = setTimeout(() => { this.copiedField = ''; }, 2000);
+  }
+
+  private loadRepositories(): void {
+    this.api.getContainerRepositories(this.containerId).subscribe({
+      next: (repos) => {
+        this.repositories = repos;
+        // Auto-refresh events while any repo is cloning or pending
+        const hasActiveClone = repos.some(r => r.cloneStatus === 'Pending' || r.cloneStatus === 'Cloning');
+        if (hasActiveClone) {
+          this.startEventPoll();
+        } else {
+          this.clearEventPoll();
+        }
+      },
+    });
+  }
+
+  private startEventPoll(): void {
+    if (this.eventPollTimer) return; // Already polling
+    this.eventPollTimer = setInterval(() => {
+      this.loadEvents();
+      this.loadRepositories();
+    }, 5000);
+  }
+
+  private clearEventPoll(): void {
+    if (this.eventPollTimer) {
+      clearInterval(this.eventPollTimer);
+      this.eventPollTimer = null;
+    }
+  }
+
+  getCloneStatusClasses(status: string): string[] {
+    const base = ['inline-flex', 'items-center', 'px-2', 'py-0.5', 'rounded-full', 'text-xs', 'font-semibold'];
+    switch (status) {
+      case 'Cloned':
+        return [...base, 'bg-green-100', 'text-green-800', 'dark:bg-green-900/30', 'dark:text-green-400'];
+      case 'Cloning':
+        return [...base, 'bg-cyan-100', 'text-cyan-800', 'dark:bg-cyan-900/30', 'dark:text-cyan-400'];
+      case 'Pending':
+        return [...base, 'bg-gray-100', 'text-gray-600', 'dark:bg-gray-700', 'dark:text-gray-400'];
+      case 'Failed':
+        return [...base, 'bg-red-100', 'text-red-800', 'dark:bg-red-900/30', 'dark:text-red-400'];
+      case 'Pulling':
+        return [...base, 'bg-yellow-100', 'text-yellow-800', 'dark:bg-yellow-900/30', 'dark:text-yellow-300'];
+      default:
+        return [...base, 'bg-gray-100', 'text-gray-600', 'dark:bg-gray-700', 'dark:text-gray-400'];
+    }
   }
 
   getEventBadgeClasses(eventType: string): string[] {

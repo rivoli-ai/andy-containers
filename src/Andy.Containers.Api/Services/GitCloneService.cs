@@ -131,6 +131,15 @@ public class GitCloneService : IGitCloneService
         repo.CloneError = null;
         await _db.SaveChangesAsync(ct);
 
+        // Emit GitCloneStarted event so the UI can show clone in progress
+        _db.Events.Add(new ContainerEvent
+        {
+            ContainerId = containerId,
+            EventType = ContainerEventType.GitCloneStarted,
+            Details = System.Text.Json.JsonSerializer.Serialize(new { repoId = repo.Id, url = repo.Url, targetPath = repo.TargetPath, branch = repo.Branch })
+        });
+        await _db.SaveChangesAsync(ct);
+
         try
         {
             // Resolve credential

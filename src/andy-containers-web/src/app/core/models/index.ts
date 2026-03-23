@@ -113,3 +113,15 @@ export interface ValidationIssue {
   message: string;
   line?: number;
 }
+
+export interface ContainerGitRepository {
+  id: string;
+  containerId: string;
+  url: string;
+  branch?: string;
+  targetPath: string;
+  cloneStatus: string;
+  cloneError?: string;
+  cloneStartedAt?: string;
+  cloneCompletedAt?: string;
+}

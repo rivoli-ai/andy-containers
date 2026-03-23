@@ -75,6 +75,59 @@ public class GitCloneServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CloneRepository_ShouldCreateGitCloneStartedEvent()
+    {
+        var container = await SeedContainer();
+        var repo = new ContainerGitRepository
+        {
+            ContainerId = container.Id,
+            Url = "https://github.com/owner/repo.git",
+            TargetPath = "/workspace/repo"
+        };
+        _db.ContainerGitRepositories.Add(repo);
+        await _db.SaveChangesAsync();
+
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await _service.CloneRepositoryAsync(container.Id, repo.Id);
+
+        var events = await _db.Events.Where(e => e.ContainerId == container.Id).ToListAsync();
+        events.Should().ContainSingle(e => e.EventType == ContainerEventType.GitCloneStarted);
+        var startedEvent = events.Single(e => e.EventType == ContainerEventType.GitCloneStarted);
+        startedEvent.Details.Should().Contain(repo.Url);
+        startedEvent.Details.Should().Contain(repo.TargetPath);
+    }
+
+    [Fact]
+    public async Task CloneRepository_GitCloneStartedEvent_ShouldAppearBeforeClonedEvent()
+    {
+        var container = await SeedContainer();
+        var repo = new ContainerGitRepository
+        {
+            ContainerId = container.Id,
+            Url = "https://github.com/owner/repo.git",
+            TargetPath = "/workspace/repo"
+        };
+        _db.ContainerGitRepositories.Add(repo);
+        await _db.SaveChangesAsync();
+
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await _service.CloneRepositoryAsync(container.Id, repo.Id);
+
+        var events = await _db.Events
+            .Where(e => e.ContainerId == container.Id)
+            .OrderBy(e => e.Timestamp)
+            .ToListAsync();
+
+        var startedIndex = events.FindIndex(e => e.EventType == ContainerEventType.GitCloneStarted);
+        var clonedIndex = events.FindIndex(e => e.EventType == ContainerEventType.GitCloned);
+        startedIndex.Should().BeLessThan(clonedIndex, "GitCloneStarted should appear before GitCloned");
+    }
+
+    [Fact]
     public async Task CloneRepository_SuccessfulClone_ShouldCreateGitClonedEvent()
     {
         var container = await SeedContainer();
