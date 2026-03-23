@@ -90,6 +90,14 @@ export class ContainerTerminalComponent implements OnInit, AfterViewChecked {
     this.api.getContainer(this.containerId).subscribe({
       next: (c) => { this.container = c; },
     });
+    // Resolve initial working directory
+    this.api.execCommand(this.containerId, 'pwd').subscribe({
+      next: (result) => {
+        if (result.exitCode === 0 && result.stdOut) {
+          this.cwd = result.stdOut.trim();
+        }
+      },
+    });
     setTimeout(() => this.focusInput(), 100);
   }
 
@@ -117,34 +125,51 @@ export class ContainerTerminalComponent implements OnInit, AfterViewChecked {
     this.running = true;
     this.shouldScroll = true;
 
-    // Track cd commands for prompt display
-    if (cmd.startsWith('cd ')) {
-      const target = cmd.substring(3).trim();
-      if (target === '~' || target === '') {
-        this.cwd = '~';
-      } else if (target === '..') {
-        const parts = this.cwd.split('/');
-        if (parts.length > 1) {
-          parts.pop();
-          this.cwd = parts.join('/') || '/';
-        }
-      } else if (target.startsWith('/')) {
-        this.cwd = target;
+    // Build the actual command to send — prepend cd to maintain working directory
+    const resolvedCwd = this.cwd === '~' ? '$HOME' : this.cwd;
+    let execCmd: string;
+
+    // For cd commands, we need to resolve the new path on the server
+    if (cmd === 'cd' || cmd.startsWith('cd ')) {
+      const target = cmd === 'cd' ? '' : cmd.substring(3).trim();
+      // Execute cd and then pwd to get the real resolved path
+      if (!target || target === '~') {
+        execCmd = 'cd $HOME && pwd';
       } else {
-        this.cwd = this.cwd === '~' ? `~/${target}` : `${this.cwd}/${target}`;
+        execCmd = `cd ${resolvedCwd} && cd ${target} && pwd`;
       }
+    } else {
+      execCmd = `cd ${resolvedCwd} && ${cmd}`;
     }
 
-    this.api.execCommand(this.containerId, cmd).subscribe({
+    const previousCwd = this.cwd;
+    const isCdCommand = cmd === 'cd' || cmd.startsWith('cd ');
+
+    this.api.execCommand(this.containerId, execCmd).subscribe({
       next: (result) => {
-        if (result.stdOut) {
-          this.output.push({ type: 'stdout', text: result.stdOut });
-        }
-        if (result.stdErr) {
-          this.output.push({ type: 'stderr', text: result.stdErr });
-        }
-        if (result.exitCode !== 0) {
-          this.output.push({ type: 'exit', text: String(result.exitCode) });
+        if (isCdCommand) {
+          if (result.exitCode === 0 && result.stdOut) {
+            // pwd output is the resolved path
+            this.cwd = result.stdOut.trim();
+          } else {
+            // cd failed — show error but don't change cwd
+            if (result.stdErr) {
+              this.output.push({ type: 'stderr', text: result.stdErr });
+            }
+            if (result.exitCode !== 0) {
+              this.output.push({ type: 'exit', text: String(result.exitCode) });
+            }
+          }
+        } else {
+          if (result.stdOut) {
+            this.output.push({ type: 'stdout', text: result.stdOut });
+          }
+          if (result.stdErr) {
+            this.output.push({ type: 'stderr', text: result.stdErr });
+          }
+          if (result.exitCode !== 0) {
+            this.output.push({ type: 'exit', text: String(result.exitCode) });
+          }
         }
         this.running = false;
         this.shouldScroll = true;
