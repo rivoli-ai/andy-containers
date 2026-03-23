@@ -34,6 +34,7 @@ public class CreateContainerRequest
     public GitRepositoryConfig? GitRepository { get; set; }
     public List<GitRepositoryConfig>? GitRepositories { get; set; }
     public bool ExcludeTemplateRepos { get; set; }
+    public bool SkipUrlValidation { get; set; }
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
     public TimeSpan? ExpiresAfter { get; set; }
 }

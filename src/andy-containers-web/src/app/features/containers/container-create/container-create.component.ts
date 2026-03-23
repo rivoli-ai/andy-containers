@@ -58,6 +58,13 @@ import { Template, Provider } from '../../../core/models';
           <input id="gitRepo" type="text" [(ngModel)]="gitRepoUrl" name="gitRepo"
             class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             placeholder="https://github.com/user/repo.git" />
+          <div *ngIf="gitRepoUrl" class="mt-2 flex items-center gap-2">
+            <input id="skipValidation" type="checkbox" [(ngModel)]="skipUrlValidation" name="skipValidation"
+              class="rounded border-surface-300 dark:border-surface-600 text-primary-600 focus:ring-primary-500" />
+            <label for="skipValidation" class="text-xs text-surface-500 dark:text-surface-400">
+              Skip URL validation <span class="text-surface-400">(for repos behind firewalls only accessible from the container)</span>
+            </label>
+          </div>
         </div>
 
         <!-- Actions -->
@@ -80,6 +87,7 @@ export class ContainerCreateComponent implements OnInit {
   selectedTemplateId = '';
   selectedProviderId = '';
   gitRepoUrl = '';
+  skipUrlValidation = false;
   templates: Template[] = [];
   providers: Provider[] = [];
   submitting = false;
@@ -110,6 +118,9 @@ export class ContainerCreateComponent implements OnInit {
     }
     if (this.gitRepoUrl) {
       request.gitRepository = { url: this.gitRepoUrl };
+      if (this.skipUrlValidation) {
+        request.skipUrlValidation = true;
+      }
     }
 
     this.api.createContainer(request).subscribe({

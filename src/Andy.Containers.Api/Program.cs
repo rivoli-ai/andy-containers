@@ -71,6 +71,7 @@ try
     builder.Services.AddDataProtection();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
     builder.Services.AddScoped<IGitCloneService, GitCloneService>();
+    builder.Services.AddScoped<IGitRepositoryProbeService, GitRepositoryProbeService>();
     builder.Services.AddScoped<IToolVersionDetector, ToolVersionDetector>();
     builder.Services.AddScoped<IImageManifestService, ImageManifestService>();
     builder.Services.AddScoped<IImageDiffService, ImageDiffService>();

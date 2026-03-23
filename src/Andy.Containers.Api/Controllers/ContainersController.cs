@@ -95,8 +95,15 @@ public class ContainersController : ControllerBase
             if (!isMember) return Forbid();
         }
 
-        var container = await _containerService.CreateContainerAsync(request, ct);
-        return CreatedAtAction(nameof(Get), new { id = container.Id }, container);
+        try
+        {
+            var container = await _containerService.CreateContainerAsync(request, ct);
+            return CreatedAtAction(nameof(Get), new { id = container.Id }, container);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
     }
 
     [HttpPost("{id:guid}/start")]

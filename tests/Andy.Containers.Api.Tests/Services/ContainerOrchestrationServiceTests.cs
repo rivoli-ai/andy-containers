@@ -19,6 +19,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
     private readonly Mock<IInfrastructureProviderFactory> _mockFactory;
     private readonly Mock<IInfrastructureProvider> _mockInfraProvider;
     private readonly ContainerProvisioningQueue _queue;
+    private readonly Mock<IGitRepositoryProbeService> _mockProbeService;
     private readonly ContainerOrchestrationService _service;
 
     public ContainerOrchestrationServiceTests()
@@ -28,12 +29,17 @@ public class ContainerOrchestrationServiceTests : IDisposable
         _mockFactory = new Mock<IInfrastructureProviderFactory>();
         _mockInfraProvider = new Mock<IInfrastructureProvider>();
         _queue = new ContainerProvisioningQueue();
+        _mockProbeService = new Mock<IGitRepositoryProbeService>();
         var logger = new Mock<ILogger<ContainerOrchestrationService>>();
 
         _mockFactory.Setup(f => f.GetProvider(It.IsAny<InfrastructureProvider>()))
             .Returns(_mockInfraProvider.Object);
 
-        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, logger.Object);
+        // Default: probe passes
+        _mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string>());
+
+        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, logger.Object);
     }
 
     public void Dispose()
@@ -462,5 +468,94 @@ public class ContainerOrchestrationServiceTests : IDisposable
         var reader = _queue.Reader;
         reader.TryRead(out var job).Should().BeTrue();
         job!.HasGitRepositories.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithGitRepos_CallsProbeService()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var request = new CreateContainerRequest
+        {
+            Name = "probe-test",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepositories = [new GitRepositoryConfig { Url = "https://github.com/owner/repo.git" }]
+        };
+
+        await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        _mockProbeService.Verify(
+            p => p.ProbeRepositoriesAsync(
+                It.Is<IReadOnlyList<GitRepositoryConfig>>(r => r.Count == 1),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateContainer_ProbeFailure_ThrowsAndDoesNotProvision()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockProbeService
+            .Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "Repository not found or not accessible: https://github.com/owner/bad-repo.git" });
+
+        var request = new CreateContainerRequest
+        {
+            Name = "probe-fail",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            GitRepositories = [new GitRepositoryConfig { Url = "https://github.com/owner/bad-repo.git" }]
+        };
+
+        var act = () => _service.CreateContainerAsync(request, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*not found or not accessible*bad-repo*");
+
+        // Should not have enqueued anything
+        _queue.Reader.TryRead(out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateContainer_SkipUrlValidation_BypassesProbe()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var request = new CreateContainerRequest
+        {
+            Name = "skip-probe",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            SkipUrlValidation = true,
+            GitRepositories = [new GitRepositoryConfig { Url = "https://internal.corp/repo.git" }]
+        };
+
+        await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        _mockProbeService.Verify(
+            p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Container should still be created
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.HasGitRepositories.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateContainer_NoGitRepos_DoesNotCallProbe()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var request = new CreateContainerRequest
+        {
+            Name = "no-repos",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        _mockProbeService.Verify(
+            p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }

@@ -16,6 +16,7 @@ public class ContainerOrchestrationService : IContainerService
     private readonly IInfrastructureRoutingService _routing;
     private readonly IInfrastructureProviderFactory _providerFactory;
     private readonly ContainerProvisioningQueue _queue;
+    private readonly IGitRepositoryProbeService _probeService;
     private readonly ILogger<ContainerOrchestrationService> _logger;
 
     public ContainerOrchestrationService(
@@ -23,12 +24,14 @@ public class ContainerOrchestrationService : IContainerService
         IInfrastructureRoutingService routing,
         IInfrastructureProviderFactory providerFactory,
         ContainerProvisioningQueue queue,
+        IGitRepositoryProbeService probeService,
         ILogger<ContainerOrchestrationService> logger)
     {
         _db = db;
         _routing = routing;
         _providerFactory = providerFactory;
         _queue = queue;
+        _probeService = probeService;
         _logger = logger;
     }
 
@@ -132,6 +135,15 @@ public class ContainerOrchestrationService : IContainerService
                     gitRepos.Add(tr);
                 }
             }
+        }
+
+        // Probe repository URLs for accessibility (unless skipped)
+        if (gitRepos.Count > 0 && !request.SkipUrlValidation)
+        {
+            var probeErrors = await _probeService.ProbeRepositoriesAsync(
+                gitRepos, request.OwnerId ?? "system", ct);
+            if (probeErrors.Count > 0)
+                throw new ArgumentException(string.Join("; ", probeErrors));
         }
 
         // Create ContainerGitRepository entities
