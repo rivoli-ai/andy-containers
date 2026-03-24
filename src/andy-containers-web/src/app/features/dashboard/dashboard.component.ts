@@ -82,6 +82,7 @@ import { StatusBadgeComponent } from '../../shared/components/status-badge/statu
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Status</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Owner</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Created</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Host</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Endpoints</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Actions</th>
               </tr>
@@ -97,6 +98,10 @@ import { StatusBadgeComponent } from '../../shared/components/status-badge/statu
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ c.ownerId }}</td>
                 <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ c.createdAt | date:'short' }}</td>
+                <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">
+                  <span *ngIf="c.hostIp" class="font-mono text-xs">{{ c.hostIp }}</span>
+                  <span *ngIf="!c.hostIp" class="text-surface-400">--</span>
+                </td>
                 <td class="px-4 py-3 whitespace-nowrap text-sm">
                   <div class="flex gap-2">
                     <a *ngIf="c.ideEndpoint" [href]="c.ideEndpoint" target="_blank"

@@ -17,6 +17,7 @@ public class Container
     public string? NetworkConfig { get; set; }
     public string? IdeEndpoint { get; set; }
     public string? VncEndpoint { get; set; }
+    public string? HostIp { get; set; }
     public string? GitRepository { get; set; }
     public string? EnvironmentVariables { get; set; }
     public string? CodeAssistant { get; set; }

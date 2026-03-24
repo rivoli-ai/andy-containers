@@ -50,6 +50,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Owner</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Created</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Last Activity</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Host</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Endpoints</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Actions</th>
             </tr>
@@ -68,6 +69,10 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
               <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">
                 <span *ngIf="c.lastActivityAt">{{ c.lastActivityAt | date:'short' }}</span>
                 <span *ngIf="!c.lastActivityAt" class="text-surface-400">--</span>
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">
+                <span *ngIf="c.hostIp" class="font-mono text-xs">{{ c.hostIp }}</span>
+                <span *ngIf="!c.hostIp" class="text-surface-400">--</span>
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-sm">
                 <a *ngIf="c.ideEndpoint" [href]="c.ideEndpoint" target="_blank" class="text-primary-600 dark:text-primary-400 hover:underline mr-2">IDE</a>
@@ -95,7 +100,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
               </td>
             </tr>
             <tr *ngIf="containers.length === 0">
-              <td colspan="7" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">No containers found</td>
+              <td colspan="8" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">No containers found</td>
             </tr>
           </tbody>
         </table>

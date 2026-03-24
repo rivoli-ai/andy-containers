@@ -13,6 +13,7 @@ export interface Container {
   gitRepository?: string;
   ideEndpoint?: string;
   vncEndpoint?: string;
+  hostIp?: string;
   networkConfig?: string;
   createdAt: string;
   startedAt?: string;

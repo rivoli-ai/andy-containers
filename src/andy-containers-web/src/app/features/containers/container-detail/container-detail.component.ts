@@ -165,11 +165,11 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
             </div>
 
             <!-- IP Address -->
-            <div *ngIf="connectionInfo?.ipAddress" class="connect-row">
+            <div *ngIf="connectionInfo?.ipAddress || container.hostIp" class="connect-row">
               <span class="connect-dot bg-green-500"></span>
               <span class="connect-label">IP</span>
-              <code class="flex-1 text-xs font-mono text-surface-700 dark:text-surface-300">{{ connectionInfo?.ipAddress }}</code>
-              <button (click)="copyWithFeedback(connectionInfo?.ipAddress, 'ip')" title="Copy"
+              <code class="flex-1 text-xs font-mono text-surface-700 dark:text-surface-300">{{ connectionInfo?.ipAddress || container.hostIp }}</code>
+              <button (click)="copyWithFeedback(connectionInfo?.ipAddress || container.hostIp, 'ip')" title="Copy"
                 class="copy-btn" [class.copied]="copiedField === 'ip'">
                 <svg *ngIf="copiedField !== 'ip'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                 <svg *ngIf="copiedField === 'ip'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>

@@ -14,13 +14,13 @@ import { ApiKeyCredential, ApiKeyChangeEntry, API_KEY_PROVIDERS } from '../../co
 
       <!-- API Keys Section -->
       <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800">
-        <div class="flex items-center justify-between p-5 border-b border-surface-200 dark:border-surface-700">
+        <div class="flex items-start justify-between p-5 border-b border-surface-200 dark:border-surface-700">
           <div>
             <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100">API Keys</h2>
             <p class="text-sm text-surface-500 dark:text-surface-400 mt-0.5">Manage API keys for AI code assistants. Keys are encrypted and never displayed.</p>
           </div>
           <button (click)="showAddForm = true" *ngIf="!showAddForm"
-            class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700">
+            class="ml-4 shrink-0 px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700">
             Add API Key
           </button>
         </div>

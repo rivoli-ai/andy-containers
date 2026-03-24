@@ -67,6 +67,9 @@ try
     // Provider health check background worker
     builder.Services.AddHostedService<ProviderHealthCheckWorker>();
 
+    // Container status sync worker — periodically checks running containers against provider
+    builder.Services.AddHostedService<ContainerStatusSyncWorker>();
+
     // Git credential + clone services
     builder.Services.AddDataProtection();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();

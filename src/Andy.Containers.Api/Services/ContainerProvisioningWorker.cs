@@ -115,6 +115,7 @@ public class ContainerProvisioningWorker : BackgroundService
             {
                 container.IdeEndpoint = result.ConnectionInfo.IdeEndpoint;
                 container.VncEndpoint = result.ConnectionInfo.VncEndpoint;
+                container.HostIp = result.ConnectionInfo.IpAddress;
                 container.NetworkConfig = System.Text.Json.JsonSerializer.Serialize(result.ConnectionInfo);
             }
 
