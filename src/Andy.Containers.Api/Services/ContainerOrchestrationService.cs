@@ -402,6 +402,20 @@ public class ContainerOrchestrationService : IContainerService
         return await infra.ExecAsync(container.ExternalId!, command, ct);
     }
 
+    public async Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct)
+    {
+        using var activity = ActivitySources.Provisioning.StartActivity("ExecCommand");
+        activity?.SetTag("containerId", containerId.ToString());
+        activity?.SetTag("timeout", timeout.TotalSeconds);
+
+        var container = await GetContainerAsync(containerId, ct);
+        if (container.Status != ContainerStatus.Running)
+            throw new InvalidOperationException($"Container is {container.Status}, cannot exec");
+
+        var infra = _providerFactory.GetProvider(container.Provider!);
+        return await infra.ExecAsync(container.ExternalId!, command, timeout, ct);
+    }
+
     public async Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct)
     {
         var container = await GetContainerAsync(containerId, ct);

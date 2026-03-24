@@ -15,6 +15,7 @@ public interface IContainerService
     Task StopContainerAsync(Guid containerId, CancellationToken ct = default);
     Task DestroyContainerAsync(Guid containerId, CancellationToken ct = default);
     Task<ExecResult> ExecAsync(Guid containerId, string command, CancellationToken ct = default);
+    Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct = default);
     Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct = default);
 }
 

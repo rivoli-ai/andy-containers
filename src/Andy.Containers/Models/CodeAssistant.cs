@@ -1,5 +1,8 @@
+using System.Text.Json.Serialization;
+
 namespace Andy.Containers.Models;
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum CodeAssistantType
 {
     ClaudeCode,

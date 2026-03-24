@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAssistantConfig, CODE_ASSISTANT_TOOLS } from '../../../core/models';
+import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAssistantConfig, CODE_ASSISTANT_TOOLS, ApiKeyCredential } from '../../../core/models';
 
 @Component({
   selector: 'app-container-create',
@@ -74,10 +74,14 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
             Template default: <span class="font-medium">{{ getToolLabel(templateCodeAssistant.tool) }}</span>
             <span class="text-surface-400 ml-1">(will be used unless overridden)</span>
           </div>
-          <div *ngIf="selectedCodeAssistant" class="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
-            <p class="text-xs text-amber-800 dark:text-amber-200">
-              <span class="font-medium">API key required:</span> Set the <code class="font-mono bg-amber-100 dark:bg-amber-800/40 px-1 rounded">{{ getApiKeyEnv(selectedCodeAssistant) }}</code> environment variable in the container.
-              The key is injected at runtime and never stored in the image.
+          <div *ngIf="selectedCodeAssistant && hasApiKeyForTool(selectedCodeAssistant)" class="mt-2 rounded-lg bg-green-50 dark:bg-green-900/20 p-3">
+            <p class="text-xs text-green-800 dark:text-green-200">
+              API key found for {{ getToolLabel(selectedCodeAssistant) }}. The <code class="font-mono bg-green-100 dark:bg-green-800/40 px-1 rounded">{{ getApiKeyEnv(selectedCodeAssistant) }}</code> variable will be injected at runtime.
+            </p>
+          </div>
+          <div *ngIf="selectedCodeAssistant && !hasApiKeyForTool(selectedCodeAssistant)" class="mt-2 rounded-lg bg-red-50 dark:bg-red-900/20 p-3">
+            <p class="text-xs text-red-800 dark:text-red-200">
+              <span class="font-medium">No API key configured.</span> Go to <a routerLink="/settings" class="underline font-medium">Settings</a> to add a {{ getToolProvider(selectedCodeAssistant) }} API key, or the tool won't be able to authenticate.
             </p>
           </div>
         </div>
@@ -166,6 +170,7 @@ export class ContainerCreateComponent implements OnInit {
   workspaces: Workspace[] = [];
   credentials: GitCredential[] = [];
   workspaceRepos: WorkspaceGitRepo[] = [];
+  apiKeys: ApiKeyCredential[] = [];
   submitting = false;
   error = '';
 
@@ -181,6 +186,9 @@ export class ContainerCreateComponent implements OnInit {
     });
     this.api.getGitCredentials().subscribe({
       next: (creds) => { this.credentials = creds; },
+    });
+    this.api.getApiKeys().subscribe({
+      next: (keys) => { this.apiKeys = keys; },
     });
     this.api.getWorkspaces({ take: '100' }).subscribe({
       next: (res) => {
@@ -227,6 +235,15 @@ export class ContainerCreateComponent implements OnInit {
 
   getApiKeyEnv(tool: string): string {
     return this.codeAssistantTools.find(t => t.value === tool)?.apiKeyEnv || 'API_KEY';
+  }
+
+  getToolProvider(tool: string): string {
+    return this.codeAssistantTools.find(t => t.value === tool)?.apiKeyProvider || 'Custom';
+  }
+
+  hasApiKeyForTool(tool: string): boolean {
+    const provider = this.getToolProvider(tool);
+    return this.apiKeys.some(k => k.provider === provider);
   }
 
   updateTemplateCodeAssistant(): void {

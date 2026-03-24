@@ -186,7 +186,7 @@ public class ContainerProvisioningWorker : BackgroundService
 
                     _logger.LogInformation("Installing code assistant {Tool} for container {ContainerId}",
                         job.CodeAssistant.Tool, job.ContainerId);
-                    var installResult = await containerService.ExecAsync(job.ContainerId, installScript, stoppingToken);
+                    var installResult = await containerService.ExecAsync(job.ContainerId, installScript, TimeSpan.FromMinutes(5), stoppingToken);
                     if (installResult.ExitCode != 0)
                         _logger.LogWarning("Code assistant install exited with {ExitCode} for container {ContainerId}: {StdErr}",
                             installResult.ExitCode, job.ContainerId, installResult.StdErr);

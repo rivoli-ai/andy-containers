@@ -47,13 +47,13 @@ export interface CodeAssistantConfig {
 }
 
 export const CODE_ASSISTANT_TOOLS = [
-  { value: 'ClaudeCode', label: 'Claude Code', apiKeyEnv: 'ANTHROPIC_API_KEY' },
-  { value: 'CodexCli', label: 'Codex CLI', apiKeyEnv: 'OPENAI_API_KEY' },
-  { value: 'Aider', label: 'Aider', apiKeyEnv: 'OPENAI_API_KEY' },
-  { value: 'Continue', label: 'Continue', apiKeyEnv: 'CONTINUE_API_KEY' },
-  { value: 'OpenCode', label: 'Open Code', apiKeyEnv: 'OPENAI_API_KEY' },
-  { value: 'QwenCoder', label: 'Qwen Coder', apiKeyEnv: 'DASHSCOPE_API_KEY' },
-  { value: 'GeminiCode', label: 'Gemini Code', apiKeyEnv: 'GOOGLE_API_KEY' },
+  { value: 'ClaudeCode', label: 'Claude Code', apiKeyEnv: 'ANTHROPIC_API_KEY', apiKeyProvider: 'Anthropic' },
+  { value: 'CodexCli', label: 'Codex CLI', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI' },
+  { value: 'Aider', label: 'Aider', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI' },
+  { value: 'Continue', label: 'Continue', apiKeyEnv: 'CONTINUE_API_KEY', apiKeyProvider: 'Custom' },
+  { value: 'OpenCode', label: 'Open Code', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI' },
+  { value: 'QwenCoder', label: 'Qwen Coder', apiKeyEnv: 'DASHSCOPE_API_KEY', apiKeyProvider: 'Dashscope' },
+  { value: 'GeminiCode', label: 'Gemini Code', apiKeyEnv: 'GOOGLE_API_KEY', apiKeyProvider: 'Google' },
 ] as const;
 
 export interface Provider {
