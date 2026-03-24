@@ -54,13 +54,15 @@ Development container management platform for the Andy ecosystem.
 # 1. Start PostgreSQL
 docker-compose up -d postgres
 
-# 2. Run the API server and Web UI
+# 2. Run the API server
 dotnet run --project src/Andy.Containers.Api --launch-profile "Andy.Containers.Api"
-dotnet run --project src/Andy.Containers.Web --launch-profile "Andy.Containers.Web"
+
+# 3. Run the Angular frontend
+cd src/andy-containers-web && npm install && npx ng serve --ssl --port 4200
 ```
 
 - API: **https://localhost:5200**
-- Web UI: **https://localhost:5280**
+- Web UI: **https://localhost:4200**
 
 The database schema is auto-created on first startup and seed data (providers, templates) is inserted automatically. Data persists across restarts.
 
@@ -72,8 +74,8 @@ src/
 ├── Andy.Containers.Api/          # REST, gRPC & MCP API server
 ├── Andy.Containers.Client/       # HTTP/gRPC client library
 ├── Andy.Containers.Infrastructure/ # EF Core, repositories, infrastructure providers
-├── Andy.Containers.Web/          # Admin UI (Blazor)
-└── Andy.Containers.Cli/          # Command-line interface
+├── Andy.Containers.Cli/          # Command-line interface
+└── andy-containers-web/          # Admin UI (Angular SPA)
 
 tests/
 ├── Andy.Containers.Tests/        # Core library tests
@@ -244,7 +246,7 @@ dotnet test --settings coverlet.runsettings --collect:"XPlat Code Coverage"
 - **Framework**: ASP.NET Core 8.0
 - **Database**: PostgreSQL 16 with EF Core
 - **APIs**: REST + gRPC + MCP
-- **UI**: Blazor Server
+- **UI**: Angular 18 (standalone components)
 - **CLI**: System.CommandLine + Spectre.Console
 - **Docker**: Docker.DotNet
 - **Azure**: Azure.ResourceManager SDK
@@ -254,7 +256,7 @@ dotnet test --settings coverlet.runsettings --collect:"XPlat Code Coverage"
 - **Observability**: OpenTelemetry (tracing + metrics), Serilog
 - **Config**: YAML (source of truth) + Database (runtime)
 - **Caching**: IMemoryCache
-- **Testing**: xUnit, FluentAssertions, Moq, bUnit (Blazor)
+- **Testing**: xUnit, FluentAssertions, Moq
 
 ## Documentation
 
