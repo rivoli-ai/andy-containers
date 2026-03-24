@@ -18,17 +18,17 @@ public static class DataSeeder
         "if command -v apt-get >/dev/null 2>&1; then " +
             "export DEBIAN_FRONTEND=noninteractive && " +
             "apt-get update -qq && " +
-            "apt-get install -y -qq git curl wget ca-certificates openssh-server >/dev/null 2>&1; " +
+            "apt-get install -y -qq git curl wget ca-certificates openssh-server tmux >/dev/null 2>&1; " +
         "elif command -v apk >/dev/null 2>&1; then " +
-            "apk add --quiet --no-cache git curl wget ca-certificates openssh; " +
+            "apk add --quiet --no-cache git curl wget ca-certificates openssh tmux; " +
         "elif command -v dnf >/dev/null 2>&1; then " +
-            "dnf install -y -q git curl wget ca-certificates openssh-server; " +
+            "dnf install -y -q git curl wget ca-certificates openssh-server tmux; " +
         "elif command -v yum >/dev/null 2>&1; then " +
-            "yum install -y -q git curl wget ca-certificates openssh-server; " +
+            "yum install -y -q git curl wget ca-certificates openssh-server tmux; " +
         "elif command -v zypper >/dev/null 2>&1; then " +
-            "zypper install -y -n git curl wget ca-certificates openssh; " +
+            "zypper install -y -n git curl wget ca-certificates openssh tmux; " +
         "elif command -v pacman >/dev/null 2>&1; then " +
-            "pacman -Sy --noconfirm git curl wget ca-certificates openssh; " +
+            "pacman -Sy --noconfirm git curl wget ca-certificates openssh tmux; " +
         "fi && " +
         // Configure and start SSH
         "mkdir -p /run/sshd && " +

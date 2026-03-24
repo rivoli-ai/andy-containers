@@ -51,6 +51,7 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
   connected = false;
   connecting = false;
   error = '';
+  private hasConnectedBefore = false;
 
   private terminal!: Terminal;
   private fitAddon!: FitAddon;
@@ -147,7 +148,10 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${location.host}/api/containers/${this.containerId}/terminal`;
 
-    this.terminal.writeln('\x1b[33mConnecting to container...\x1b[0m');
+    const msg = this.hasConnectedBefore
+      ? 'Reconnecting to session...'
+      : 'Connecting to container...';
+    this.terminal.writeln(`\x1b[33m${msg}\x1b[0m`);
 
     this.ws = new WebSocket(wsUrl);
     this.ws.binaryType = 'arraybuffer';
@@ -155,6 +159,7 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.ws.onopen = () => {
       this.connecting = false;
       this.connected = true;
+      this.hasConnectedBefore = true;
       this.sendResize();
     };
 

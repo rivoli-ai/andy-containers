@@ -83,15 +83,17 @@ public class TerminalController : ControllerBase
 
         // Build the exec arguments based on provider type
         // Use -w /root to start in the home directory
-        // Use a wrapper that restarts bash if a child process crashes (e.g. SIGSEGV from Claude Code /exit)
-        const string shellWrapper = "while true; do bash -l; rc=$?; [ $rc -eq 0 ] && break; " +
-            "echo -e \"\\033[33mShell exited with code $rc, restarting...\\033[0m\"; done";
+        // Use tmux for session persistence — reconnects to existing session if one exists
+        // Falls back to bash if tmux is not available
+        const string tmuxCmd = "tmux new-session -A -s web";
+        const string fallbackCmd = "bash -l";
+        var shellCmd = $"command -v tmux >/dev/null 2>&1 && {tmuxCmd} || {fallbackCmd}";
 
         var execArgs = providerType switch
         {
-            ProviderType.AppleContainer => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellWrapper },
-            ProviderType.Docker => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellWrapper },
-            _ => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellWrapper }
+            ProviderType.AppleContainer => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellCmd },
+            ProviderType.Docker => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellCmd },
+            _ => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellCmd }
         };
         var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
