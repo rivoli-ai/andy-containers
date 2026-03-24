@@ -8,10 +8,6 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
-// Must match the COLUMNS/LINES in TerminalController.cs
-const PTY_COLS = 120;
-const PTY_ROWS = 40;
-
 @Component({
   selector: 'app-container-terminal',
   standalone: true,
@@ -66,10 +62,8 @@ const PTY_ROWS = 40;
         </div>
       </div>
 
-      <!-- Terminal area — centered, sized to match PTY -->
-      <div class="terminal-area">
-        <div #terminalContainer class="terminal-box"></div>
-      </div>
+      <!-- Terminal fills remaining space -->
+      <div #terminalContainer class="terminal-container"></div>
     </div>
   `,
   styles: [`
@@ -77,7 +71,6 @@ const PTY_ROWS = 40;
       display: block;
       height: calc(100vh - 4rem);
       overflow: hidden;
-      background: #0d1117;
     }
     .terminal-page {
       display: flex;
@@ -138,28 +131,14 @@ const PTY_ROWS = 40;
       color: #58a6ff;
       font-size: 12px;
     }
-    .terminal-area {
-      flex: 1;
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-      padding: 8px;
-      overflow: hidden;
+    .terminal-container {
+      flex: 1 1 0;
       min-height: 0;
+      overflow: hidden;
     }
-    .terminal-box {
-      /* xterm renders its own size; we just contain it */
-      flex-shrink: 0;
-    }
-    /* Make xterm not stretch beyond its actual content */
-    ::ng-deep .terminal-box .xterm {
-      height: auto !important;
-    }
-    ::ng-deep .terminal-box .xterm-screen {
-      /* prevent xterm from adding extra height */
-    }
-    ::ng-deep .terminal-box .xterm-viewport {
-      overflow-y: hidden !important;
+    ::ng-deep .xterm {
+      height: 100% !important;
+      padding: 4px;
     }
   `],
 })
@@ -222,16 +201,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   toggleFullscreen(): void {
     this.isFullscreen = !this.isFullscreen;
-    // In fullscreen, resize terminal to fill available space
-    setTimeout(() => this.resizeToFit(), 50);
-  }
-
-  private resizeToFit(): void {
-    // Use FitAddon to calculate how many cols/rows fit in the available space
-    const dims = this.fitAddon.proposeDimensions();
-    if (dims) {
-      this.terminal.resize(dims.cols, dims.rows);
-    }
   }
 
   private initTerminal(): void {
@@ -242,8 +211,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       fontSize: 16,
       lineHeight: 1.2,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
-      cols: PTY_COLS,
-      rows: PTY_ROWS,
       theme: {
         background: '#0d1117',
         foreground: '#e6edf3',
@@ -274,13 +241,8 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.terminal.loadAddon(new WebLinksAddon());
     this.terminal.open(this.terminalContainer.nativeElement);
 
-    // Watch for container resize (e.g. fullscreen toggle)
-    this.resizeObserver = new ResizeObserver(() => {
-      if (this.isFullscreen) {
-        this.resizeToFit();
-      }
-    });
-    this.resizeObserver.observe(this.terminalContainer.nativeElement);
+    // Fit xterm to fill the container div — this determines cols/rows
+    this.fitAddon.fit();
 
     // Send keystrokes to WebSocket
     this.terminal.onData((data) => {
@@ -295,6 +257,9 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.connecting = true;
     this.error = '';
 
+    // Fit first so we know the exact cols/rows
+    this.fitAddon.fit();
+
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${location.host}/api/containers/${this.containerId}/terminal`;
 
@@ -307,6 +272,11 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
+      // Send terminal dimensions as the first message — server waits for this
+      // before creating the PTY so the sizes match exactly
+      const size = { cols: this.terminal.cols, rows: this.terminal.rows };
+      this.ws!.send(JSON.stringify(size));
+
       this.connecting = false;
       this.connected = true;
       this.hasConnectedBefore = true;

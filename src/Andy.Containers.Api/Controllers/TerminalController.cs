@@ -76,15 +76,47 @@ public class TerminalController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Wait for the client to send its terminal size as the first message.
+    /// Format: {"cols":120,"rows":40}
+    /// Falls back to 120x40 if not received within 5 seconds.
+    /// </summary>
+    private async Task<(int cols, int rows)> WaitForTerminalSize(WebSocket ws, CancellationToken ct)
+    {
+        const int defaultCols = 120, defaultRows = 40;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            var buffer = new byte[256];
+            var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
+            if (result.MessageType == WebSocketMessageType.Text || result.MessageType == WebSocketMessageType.Binary)
+            {
+                var text = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
+                // Parse JSON: {"cols":120,"rows":40}
+                var doc = System.Text.Json.JsonDocument.Parse(text);
+                var cols = doc.RootElement.GetProperty("cols").GetInt32();
+                var rows = doc.RootElement.GetProperty("rows").GetInt32();
+                if (cols > 10 && cols < 500 && rows > 5 && rows < 200)
+                    return (cols, rows);
+            }
+        }
+        catch { /* timeout or parse error — use defaults */ }
+
+        return (defaultCols, defaultRows);
+    }
+
     private async Task RunExecSession(WebSocket ws, Container container, CancellationToken ct)
     {
         var externalId = container.ExternalId!;
         var providerType = container.Provider?.Type ?? ProviderType.Docker;
 
+        // Wait for client to send terminal dimensions before creating PTY
+        var (cols, rows) = await WaitForTerminalSize(ws, ct);
+        _logger.LogInformation("Terminal size: {Cols}x{Rows} for container {Name}", cols, rows, container.Name);
+
         // Build the exec arguments based on provider type
-        // Use -w /root to start in the home directory
-        // Use tmux for session persistence — reconnects to existing session if one exists
-        // Falls back to bash if tmux is not available
         const string tmuxCmd = "tmux new-session -A -s web";
         const string fallbackCmd = "bash -l";
         var shellCmd = $"command -v tmux >/dev/null 2>&1 && {tmuxCmd} || {fallbackCmd}";
@@ -97,8 +129,7 @@ public class TerminalController : ControllerBase
         };
         var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
-        // Use 'script' to allocate a PTY for the subprocess
-        // script -q /dev/null wraps the command in a pseudo-terminal
+        // Use 'script' to allocate a PTY with the client's actual terminal size
         var psi = new ProcessStartInfo
         {
             FileName = "/usr/bin/script",
@@ -111,12 +142,11 @@ public class TerminalController : ControllerBase
             Environment =
             {
                 ["TERM"] = "xterm-256color",
-                ["COLUMNS"] = "120",
-                ["LINES"] = "40"
+                ["COLUMNS"] = cols.ToString(),
+                ["LINES"] = rows.ToString()
             }
         };
 
-        // Add exec arguments individually to preserve quoting
         foreach (var arg in execArgs)
             psi.ArgumentList.Add(arg);
 
@@ -140,8 +170,8 @@ public class TerminalController : ControllerBase
             return;
         }
 
-        _logger.LogInformation("Terminal process started (PID {Pid}) for container {Name} via {Command}",
-            process.Id, container.Name, execCommand);
+        _logger.LogInformation("Terminal process started (PID {Pid}) for container {Name} via {Command} ({Cols}x{Rows})",
+            process.Id, container.Name, execCommand, cols, rows);
 
         // Relay: Process stdout -> WebSocket
         var processToWs = Task.Run(async () =>
@@ -163,7 +193,7 @@ public class TerminalController : ControllerBase
                     }
                     else
                     {
-                        break; // EOF
+                        break;
                     }
                 }
                 catch (OperationCanceledException) { break; }
@@ -195,7 +225,7 @@ public class TerminalController : ControllerBase
                     }
                     else
                     {
-                        break; // EOF
+                        break;
                     }
                 }
                 catch (OperationCanceledException) { break; }
@@ -220,9 +250,7 @@ public class TerminalController : ControllerBase
                     {
                         var data = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
 
-                        // Ignore terminal resize messages — PTY resize requires ioctl
-                        // which isn't available from managed code. The initial COLUMNS/LINES
-                        // env vars set the PTY size at creation time.
+                        // Ignore resize messages — PTY size is fixed at creation
                         if (data.StartsWith("\x1b[R") && data.Contains(';'))
                             continue;
 
