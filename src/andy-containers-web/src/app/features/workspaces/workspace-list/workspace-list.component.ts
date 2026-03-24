@@ -1,6 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
 import { Workspace } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
@@ -19,10 +19,10 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
             class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-700">
             Refresh
           </button>
-          <button
+          <a routerLink="/workspaces/create"
             class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700">
             New Workspace
-          </button>
+          </a>
         </div>
       </div>
 
@@ -44,23 +44,26 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
             <tr>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Name</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Description</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Owner</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Git Repository</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Status</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Created</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-surface-200 dark:divide-surface-700">
-            <tr *ngFor="let w of workspaces" class="hover:bg-surface-50 dark:hover:bg-surface-700/50">
+            <tr *ngFor="let w of workspaces" (click)="openWorkspace(w)" class="hover:bg-surface-50 dark:hover:bg-surface-700/50 cursor-pointer">
               <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-surface-900 dark:text-surface-100">{{ w.name }}</td>
               <td class="px-4 py-3 text-sm text-surface-600 dark:text-surface-300 max-w-xs truncate">{{ w.description || '--' }}</td>
-              <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ w.ownerId }}</td>
+              <td class="px-4 py-3 text-sm text-surface-600 dark:text-surface-300 max-w-xs truncate font-mono">{{ w.gitRepositoryUrl || '--' }}</td>
               <td class="px-4 py-3 whitespace-nowrap">
                 <app-status-badge [status]="w.status"></app-status-badge>
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ w.createdAt | date:'short' }}</td>
             </tr>
             <tr *ngIf="workspaces.length === 0">
-              <td colspan="5" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">No workspaces found</td>
+              <td colspan="5" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">
+                No workspaces found.
+                <a routerLink="/workspaces/create" class="text-primary-600 hover:text-primary-700 ml-1">Create one</a>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -73,7 +76,7 @@ export class WorkspaceListComponent implements OnInit {
   error = '';
   workspaces: Workspace[] = [];
 
-  constructor(private api: ContainersApiService) {}
+  constructor(private api: ContainersApiService, private router: Router) {}
 
   ngOnInit(): void {
     this.loadWorkspaces();
@@ -92,5 +95,9 @@ export class WorkspaceListComponent implements OnInit {
         this.loading = false;
       },
     });
+  }
+
+  openWorkspace(w: Workspace): void {
+    this.router.navigate(['/workspaces', w.id]);
   }
 }

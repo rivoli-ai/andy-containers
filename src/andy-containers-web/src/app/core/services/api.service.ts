@@ -143,4 +143,20 @@ export class ContainersApiService {
     }
     return this.http.get<PaginatedResult<Workspace>>(`${this.baseUrl}/workspaces`, { params: httpParams });
   }
+
+  getWorkspace(id: string): Observable<Workspace> {
+    return this.http.get<Workspace>(`${this.baseUrl}/workspaces/${id}`);
+  }
+
+  createWorkspace(data: { name: string; description?: string; organizationId?: string; teamId?: string; gitRepositoryUrl?: string; gitBranch?: string }): Observable<Workspace> {
+    return this.http.post<Workspace>(`${this.baseUrl}/workspaces`, data);
+  }
+
+  updateWorkspace(id: string, data: { name?: string; description?: string; gitBranch?: string }): Observable<Workspace> {
+    return this.http.put<Workspace>(`${this.baseUrl}/workspaces/${id}`, data);
+  }
+
+  deleteWorkspace(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/workspaces/${id}`);
+  }
 }

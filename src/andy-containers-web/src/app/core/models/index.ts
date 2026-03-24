@@ -55,8 +55,17 @@ export interface Workspace {
   name: string;
   description?: string;
   ownerId: string;
+  organizationId?: string;
+  teamId?: string;
+  defaultContainerId?: string;
+  defaultContainer?: Container;
+  gitRepositoryUrl?: string;
+  gitBranch?: string;
   status: string;
   createdAt: string;
+  updatedAt?: string;
+  lastAccessedAt?: string;
+  containers?: Container[];
 }
 
 export interface ContainerEvent {
