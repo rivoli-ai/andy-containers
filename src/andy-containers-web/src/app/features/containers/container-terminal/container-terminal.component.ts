@@ -143,10 +143,9 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.connecting = true;
     this.error = '';
 
-    // Build WebSocket URL from current location
+    // Build WebSocket URL — use same host (works through Angular proxy or direct)
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // API is on port 5200, proxy through Angular dev server or direct
-    const wsUrl = `${protocol}//localhost:5200/api/containers/${this.containerId}/terminal`;
+    const wsUrl = `${protocol}//${location.host}/api/containers/${this.containerId}/terminal`;
 
     this.terminal.writeln('\x1b[33mConnecting to container...\x1b[0m');
 

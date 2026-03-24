@@ -84,7 +84,7 @@ public class TerminalController : ControllerBase
         // Build the exec command based on provider type
         var (command, args) = providerType switch
         {
-            ProviderType.AppleContainer => ("container", $"exec -it {externalId} -- bash -l"),
+            ProviderType.AppleContainer => ("container", $"exec -it {externalId} bash -l"),
             ProviderType.Docker => ("docker", $"exec -it {externalId} bash -l"),
             _ => ("docker", $"exec -it {externalId} bash -l")
         };
