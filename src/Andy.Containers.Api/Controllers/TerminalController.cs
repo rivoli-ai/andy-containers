@@ -81,20 +81,26 @@ public class TerminalController : ControllerBase
         var externalId = container.ExternalId!;
         var providerType = container.Provider?.Type ?? ProviderType.Docker;
 
-        // Build the exec command based on provider type
-        var (command, args) = providerType switch
+        // Build the exec arguments based on provider type
+        // Use -w /root to start in the home directory
+        // Use a wrapper that restarts bash if a child process crashes (e.g. SIGSEGV from Claude Code /exit)
+        const string shellWrapper = "while true; do bash -l; rc=$?; [ $rc -eq 0 ] && break; " +
+            "echo -e \"\\033[33mShell exited with code $rc, restarting...\\033[0m\"; done";
+
+        var execArgs = providerType switch
         {
-            ProviderType.AppleContainer => ("container", $"exec -it {externalId} bash -l"),
-            ProviderType.Docker => ("docker", $"exec -it {externalId} bash -l"),
-            _ => ("docker", $"exec -it {externalId} bash -l")
+            ProviderType.AppleContainer => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellWrapper },
+            ProviderType.Docker => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellWrapper },
+            _ => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellWrapper }
         };
+        var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
         // Use 'script' to allocate a PTY for the subprocess
         // script -q /dev/null wraps the command in a pseudo-terminal
         var psi = new ProcessStartInfo
         {
             FileName = "/usr/bin/script",
-            ArgumentList = { "-q", "/dev/null", command },
+            ArgumentList = { "-q", "/dev/null", execCommand },
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -108,9 +114,8 @@ public class TerminalController : ControllerBase
             }
         };
 
-        // script command takes the actual command after the filename arg
-        // On macOS: script -q /dev/null command arg1 arg2...
-        foreach (var arg in args.Split(' '))
+        // Add exec arguments individually to preserve quoting
+        foreach (var arg in execArgs)
             psi.ArgumentList.Add(arg);
 
         var process = new Process { StartInfo = psi };
@@ -134,7 +139,7 @@ public class TerminalController : ControllerBase
         }
 
         _logger.LogInformation("Terminal process started (PID {Pid}) for container {Name} via {Command}",
-            process.Id, container.Name, command);
+            process.Id, container.Name, execCommand);
 
         // Relay: Process stdout -> WebSocket
         var processToWs = Task.Run(async () =>
