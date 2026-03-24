@@ -8,12 +8,16 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
+// Must match the COLUMNS/LINES in TerminalController.cs
+const PTY_COLS = 120;
+const PTY_ROWS = 40;
+
 @Component({
   selector: 'app-container-terminal',
   standalone: true,
   imports: [CommonModule, RouterLink, StatusBadgeComponent],
   template: `
-    <div class="terminal-wrapper" [class.fullscreen]="isFullscreen">
+    <div class="terminal-page" [class.fullscreen]="isFullscreen">
       <!-- Header bar -->
       <div class="terminal-header">
         <div class="flex items-center gap-3">
@@ -28,8 +32,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
         </div>
         <div class="flex items-center gap-2">
           <button (click)="showCheatsheet = !showCheatsheet"
-                  class="header-btn"
-                  [class.active]="showCheatsheet">
+                  class="header-btn" [class.active]="showCheatsheet">
             tmux help
           </button>
           <button *ngIf="!connected && !connecting" (click)="connect()" class="header-btn">
@@ -63,8 +66,10 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
         </div>
       </div>
 
-      <!-- Terminal -->
-      <div #terminalContainer class="terminal-container"></div>
+      <!-- Terminal area — centered, sized to match PTY -->
+      <div class="terminal-area">
+        <div #terminalContainer class="terminal-box"></div>
+      </div>
     </div>
   `,
   styles: [`
@@ -72,15 +77,16 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
       display: block;
       height: calc(100vh - 4rem);
       overflow: hidden;
+      background: #0d1117;
     }
-    .terminal-wrapper {
+    .terminal-page {
       display: flex;
       flex-direction: column;
       height: 100%;
-      background-color: #1a1a2e;
+      background: #0d1117;
       overflow: hidden;
     }
-    .terminal-wrapper.fullscreen {
+    .terminal-page.fullscreen {
       position: fixed;
       inset: 0;
       z-index: 9999;
@@ -91,8 +97,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
       align-items: center;
       justify-content: space-between;
       padding: 6px 16px;
-      border-bottom: 1px solid #374151;
-      background: #16213e;
+      border-bottom: 1px solid #21262d;
+      background: #161b22;
       flex-shrink: 0;
     }
     .badge {
@@ -105,44 +111,55 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
     }
     .header-btn {
       font-size: 12px;
-      color: #9ca3af;
+      color: #8b949e;
       padding: 4px 8px;
       border-radius: 4px;
-      border: 1px solid #4b5563;
+      border: 1px solid #30363d;
       background: transparent;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
     }
-    .header-btn:hover { color: #e5e7eb; border-color: #6b7280; }
-    .header-btn.active { color: #22d3ee; border-color: #0891b2; background: rgba(6,182,212,0.1); }
+    .header-btn:hover { color: #e6edf3; border-color: #484f58; }
+    .header-btn.active { color: #58a6ff; border-color: #1f6feb; background: rgba(31,111,235,0.1); }
     .cheatsheet {
       padding: 8px 16px;
-      background: #0d1b2a;
-      border-bottom: 1px solid #374151;
+      background: #0d1117;
+      border-bottom: 1px solid #21262d;
       font-size: 13px;
-      color: #9ca3af;
+      color: #8b949e;
       flex-shrink: 0;
     }
     .cheatsheet kbd {
       font-family: inherit;
       padding: 1px 5px;
       border-radius: 3px;
-      background: rgba(255,255,255,0.1);
-      color: #22d3ee;
+      background: rgba(110,118,129,0.2);
+      color: #58a6ff;
       font-size: 12px;
     }
-    .terminal-container {
+    .terminal-area {
       flex: 1;
-      min-height: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 8px;
       overflow: hidden;
+      min-height: 0;
     }
-    ::ng-deep .terminal-container .xterm {
-      height: 100%;
-      padding: 4px;
+    .terminal-box {
+      /* xterm renders its own size; we just contain it */
+      flex-shrink: 0;
     }
-    ::ng-deep .terminal-container .xterm-viewport {
-      overflow-y: auto !important;
+    /* Make xterm not stretch beyond its actual content */
+    ::ng-deep .terminal-box .xterm {
+      height: auto !important;
+    }
+    ::ng-deep .terminal-box .xterm-screen {
+      /* prevent xterm from adding extra height */
+    }
+    ::ng-deep .terminal-box .xterm-viewport {
+      overflow-y: hidden !important;
     }
   `],
 })
@@ -205,7 +222,16 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   toggleFullscreen(): void {
     this.isFullscreen = !this.isFullscreen;
-    setTimeout(() => this.fitAddon.fit(), 50);
+    // In fullscreen, resize terminal to fill available space
+    setTimeout(() => this.resizeToFit(), 50);
+  }
+
+  private resizeToFit(): void {
+    // Use FitAddon to calculate how many cols/rows fit in the available space
+    const dims = this.fitAddon.proposeDimensions();
+    if (dims) {
+      this.terminal.resize(dims.cols, dims.rows);
+    }
   }
 
   private initTerminal(): void {
@@ -215,28 +241,29 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       cursorBlink: true,
       fontSize: 16,
       lineHeight: 1.2,
-      letterSpacing: 0,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
+      cols: PTY_COLS,
+      rows: PTY_ROWS,
       theme: {
-        background: '#1a1a2e',
-        foreground: '#e0e0e0',
-        cursor: '#e0e0e0',
-        selectionBackground: '#3a3a5e',
-        black: '#1a1a2e',
-        red: '#ff6b6b',
-        green: '#51cf66',
-        yellow: '#ffd43b',
-        blue: '#5c7cfa',
-        magenta: '#cc5de8',
-        cyan: '#22b8cf',
-        white: '#e0e0e0',
-        brightBlack: '#4a4a6e',
-        brightRed: '#ff8787',
-        brightGreen: '#69db7c',
-        brightYellow: '#ffe066',
-        brightBlue: '#748ffc',
-        brightMagenta: '#da77f2',
-        brightCyan: '#3bc9db',
+        background: '#0d1117',
+        foreground: '#e6edf3',
+        cursor: '#e6edf3',
+        selectionBackground: '#264f78',
+        black: '#0d1117',
+        red: '#ff7b72',
+        green: '#3fb950',
+        yellow: '#d29922',
+        blue: '#58a6ff',
+        magenta: '#bc8cff',
+        cyan: '#39d353',
+        white: '#e6edf3',
+        brightBlack: '#484f58',
+        brightRed: '#ffa198',
+        brightGreen: '#56d364',
+        brightYellow: '#e3b341',
+        brightBlue: '#79c0ff',
+        brightMagenta: '#d2a8ff',
+        brightCyan: '#56d364',
         brightWhite: '#ffffff',
       },
       scrollback: 10000,
@@ -247,12 +274,11 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.terminal.loadAddon(new WebLinksAddon());
     this.terminal.open(this.terminalContainer.nativeElement);
 
-    // Fit terminal to container size
-    setTimeout(() => this.fitAddon.fit(), 0);
-
-    // Watch for resize
+    // Watch for container resize (e.g. fullscreen toggle)
     this.resizeObserver = new ResizeObserver(() => {
-      this.fitAddon.fit();
+      if (this.isFullscreen) {
+        this.resizeToFit();
+      }
     });
     this.resizeObserver.observe(this.terminalContainer.nativeElement);
 

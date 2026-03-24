@@ -111,8 +111,8 @@ public class TerminalController : ControllerBase
             Environment =
             {
                 ["TERM"] = "xterm-256color",
-                ["COLUMNS"] = "100",
-                ["LINES"] = "35"
+                ["COLUMNS"] = "120",
+                ["LINES"] = "40"
             }
         };
 
