@@ -117,9 +117,10 @@ public class TerminalController : ControllerBase
         _logger.LogInformation("Terminal size: {Cols}x{Rows} for container {Name}", cols, rows, container.Name);
 
         // Build the exec arguments based on provider type
-        const string tmuxCmd = "tmux new-session -A -s web";
+        // unset TMUX prevents nesting when reattaching to an existing session
+        const string tmuxCmd = "unset TMUX; tmux new-session -A -s web";
         const string fallbackCmd = "bash -l";
-        var shellCmd = $"command -v tmux >/dev/null 2>&1 && {tmuxCmd} || {fallbackCmd}";
+        var shellCmd = $"command -v tmux >/dev/null 2>&1 && {{ {tmuxCmd}; }} || {fallbackCmd}";
 
         var execArgs = providerType switch
         {

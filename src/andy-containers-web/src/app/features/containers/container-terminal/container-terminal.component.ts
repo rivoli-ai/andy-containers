@@ -52,9 +52,9 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
     </div>
   `,
   styles: [`
-    :host { display: block; overflow: hidden; }
-    .terminal-page { background: #0d1117; position: relative; overflow: hidden; }
-    .terminal-page.fullscreen { position: fixed; inset: 0; z-index: 9999; }
+    :host { display: block; overflow: hidden; background: #f6f8fa; }
+    .terminal-page { position: relative; overflow: hidden; }
+    .terminal-page.fullscreen { position: fixed; inset: 0; z-index: 9999; background: #161b22; }
     .terminal-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 6px 16px; border-bottom: 1px solid #21262d; background: #161b22;
