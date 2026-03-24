@@ -11,6 +11,9 @@ public static class DataSeeder
     // 1. Installs essential tools (git, curl, wget, ca-certificates)
     // 2. Installs and starts SSH server for remote access
     private const string PostCreateScript =
+        // Ensure localhost resolves (minimal container images often have empty /etc/hosts)
+        "grep -q localhost /etc/hosts 2>/dev/null || " +
+            "{ echo '127.0.0.1 localhost' >> /etc/hosts && echo '::1 localhost' >> /etc/hosts; }; " +
         // Install base packages
         "if command -v apt-get >/dev/null 2>&1; then " +
             "export DEBIAN_FRONTEND=noninteractive && " +
