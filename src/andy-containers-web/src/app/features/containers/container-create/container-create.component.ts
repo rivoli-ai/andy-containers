@@ -1,9 +1,9 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Template, Provider, GitCredential } from '../../../core/models';
+import { Template, Provider, GitCredential, Workspace } from '../../../core/models';
 
 @Component({
   selector: 'app-container-create',
@@ -49,6 +49,16 @@ import { Template, Provider, GitCredential } from '../../../core/models';
             class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
             <option value="">Auto-select</option>
             <option *ngFor="let p of providers" [value]="p.id">{{ p.name }} ({{ p.type }})</option>
+          </select>
+        </div>
+
+        <!-- Workspace (optional) -->
+        <div>
+          <label for="workspace" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Workspace <span class="text-surface-400">(optional)</span></label>
+          <select id="workspace" [(ngModel)]="selectedWorkspaceId" name="workspace"
+            class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            <option value="">None</option>
+            <option *ngFor="let w of workspaces" [value]="w.id">{{ w.name }}</option>
           </select>
         </div>
 
@@ -139,11 +149,13 @@ export class ContainerCreateComponent implements OnInit {
   name = '';
   selectedTemplateId = '';
   selectedProviderId = '';
+  selectedWorkspaceId = '';
   gitRepoUrl = '';
   selectedCredentialLabel = '';
   skipUrlValidation = false;
   templates: Template[] = [];
   providers: Provider[] = [];
+  workspaces: Workspace[] = [];
   credentials: GitCredential[] = [];
   submitting = false;
   error = '';
@@ -155,9 +167,10 @@ export class ContainerCreateComponent implements OnInit {
   savingCredential = false;
   credentialError = '';
 
-  constructor(private api: ContainersApiService, private router: Router) {}
+  constructor(private api: ContainersApiService, private router: Router, private route: ActivatedRoute) {}
 
   ngOnInit(): void {
+    this.selectedWorkspaceId = this.route.snapshot.queryParamMap.get('workspaceId') || '';
     this.api.getTemplates({ take: '100' }).subscribe({
       next: (res) => { this.templates = res.items; },
     });
@@ -166,6 +179,9 @@ export class ContainerCreateComponent implements OnInit {
     });
     this.api.getGitCredentials().subscribe({
       next: (creds) => { this.credentials = creds; },
+    });
+    this.api.getWorkspaces({ take: '100' }).subscribe({
+      next: (res) => { this.workspaces = res.items; },
     });
   }
 
@@ -214,6 +230,9 @@ export class ContainerCreateComponent implements OnInit {
     };
     if (this.selectedProviderId) {
       request.providerId = this.selectedProviderId;
+    }
+    if (this.selectedWorkspaceId) {
+      request.workspaceId = this.selectedWorkspaceId;
     }
     if (this.gitRepoUrl) {
       request.gitRepository = {

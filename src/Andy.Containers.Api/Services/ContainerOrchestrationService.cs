@@ -98,6 +98,15 @@ public class ContainerOrchestrationService : IContainerService
         }
 
         _db.Containers.Add(container);
+
+        // Link to workspace if specified
+        if (request.WorkspaceId.HasValue)
+        {
+            var workspace = await _db.Workspaces.Include(w => w.Containers).FirstOrDefaultAsync(w => w.Id == request.WorkspaceId, ct)
+                ?? throw new ArgumentException($"Workspace not found: {request.WorkspaceId}");
+            workspace.Containers.Add(container);
+        }
+
         _db.Events.Add(new ContainerEvent
         {
             ContainerId = container.Id,

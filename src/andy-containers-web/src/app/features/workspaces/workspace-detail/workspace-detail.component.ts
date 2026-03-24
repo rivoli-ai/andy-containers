@@ -111,7 +111,13 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
 
         <!-- Containers Card -->
         <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-6">
-          <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Containers</h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100">Containers</h2>
+            <a [routerLink]="['/containers/create']" [queryParams]="{ workspaceId: workspace.id }"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700">
+              Create Container
+            </a>
+          </div>
           <div *ngIf="workspace.containers && workspace.containers.length > 0">
             <div *ngFor="let c of workspace.containers"
               class="flex items-center justify-between py-2 border-b border-surface-100 dark:border-surface-700 last:border-0">
@@ -120,7 +126,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
             </div>
           </div>
           <p *ngIf="!workspace.containers || workspace.containers.length === 0"
-            class="text-sm text-surface-400 dark:text-surface-500">No containers in this workspace</p>
+            class="text-sm text-surface-400 dark:text-surface-500">No containers yet</p>
         </div>
       </ng-container>
     </div>
