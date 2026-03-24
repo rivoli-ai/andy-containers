@@ -241,13 +241,13 @@ public class TerminalController : ControllerBase
             }
         }, ct);
 
-        await Task.WhenAny(processToWs, wsToProcess);
+        await Task.WhenAny(processToWs, wsToProcess, stderrToWs);
 
         // Cleanup
         if (!process.HasExited)
         {
             try { process.Kill(entireProcessTree: true); }
-            catch { /* ignore */ }
+            catch (Exception ex) { _logger.LogDebug(ex, "Failed to kill terminal process"); }
         }
 
         if (ws.State == WebSocketState.Open)
@@ -257,6 +257,14 @@ public class TerminalController : ControllerBase
                 var exitMsg = $"\r\n\x1b[33mSession ended (exit code: {(process.HasExited ? process.ExitCode : -1)})\x1b[0m\r\n";
                 await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(exitMsg), WebSocketMessageType.Binary, true, CancellationToken.None);
                 await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+            }
+            catch { /* ignore close errors */ }
+        }
+        else if (ws.State == WebSocketState.CloseReceived)
+        {
+            try
+            {
+                await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
             }
             catch { /* ignore close errors */ }
         }

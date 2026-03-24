@@ -77,7 +77,13 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   ngOnDestroy(): void {
     this.resizeObserver?.disconnect();
-    this.ws?.close();
+    if (this.ws) {
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+      this.ws = null;
+    }
     this.terminal?.dispose();
   }
 
