@@ -18,6 +18,7 @@ public class ContainersDbContext : DbContext
     public DbSet<ResolvedDependency> ResolvedDependencies => Set<ResolvedDependency>();
     public DbSet<ContainerGitRepository> ContainerGitRepositories => Set<ContainerGitRepository>();
     public DbSet<GitCredential> GitCredentials => Set<GitCredential>();
+    public DbSet<ApiKeyCredential> ApiKeyCredentials => Set<ApiKeyCredential>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -32,6 +33,7 @@ public class ContainersDbContext : DbContext
             e.Property(c => c.NetworkConfig).HasColumnType("jsonb");
             e.Property(c => c.GitRepository).HasColumnType("jsonb");
             e.Property(c => c.EnvironmentVariables).HasColumnType("jsonb");
+            e.Property(c => c.CodeAssistant).HasColumnType("jsonb");
             e.Property(c => c.Metadata).HasColumnType("jsonb");
             e.HasOne(c => c.Template).WithMany().HasForeignKey(c => c.TemplateId);
             e.HasOne(c => c.Provider).WithMany().HasForeignKey(c => c.ProviderId);
@@ -52,6 +54,7 @@ public class ContainersDbContext : DbContext
             e.Property(t => t.Ports).HasColumnType("jsonb");
             e.Property(t => t.Scripts).HasColumnType("jsonb");
             e.Property(t => t.GitRepositories).HasColumnType("jsonb");
+            e.Property(t => t.CodeAssistant).HasColumnType("jsonb");
             e.Property(t => t.Metadata).HasColumnType("jsonb");
             e.HasOne(t => t.ParentTemplate).WithMany().HasForeignKey(t => t.ParentTemplateId);
         });
@@ -95,6 +98,7 @@ public class ContainersDbContext : DbContext
             e.HasKey(w => w.Id);
             e.HasIndex(w => w.OwnerId);
             e.HasIndex(w => w.OrganizationId);
+            e.Property(w => w.GitRepositories).HasColumnType("jsonb");
             e.Property(w => w.Configuration).HasColumnType("jsonb");
             e.Property(w => w.Metadata).HasColumnType("jsonb");
             e.HasOne(w => w.DefaultContainer).WithMany().HasForeignKey(w => w.DefaultContainerId);
@@ -135,6 +139,7 @@ public class ContainersDbContext : DbContext
             e.HasKey(r => r.Id);
             e.HasIndex(r => r.ContainerId);
             e.HasIndex(r => r.CloneStatus);
+            e.Property(r => r.CloneMetadata).HasColumnType("jsonb");
         });
 
         // GitCredential
@@ -143,6 +148,15 @@ public class ContainersDbContext : DbContext
             e.HasKey(c => c.Id);
             e.HasIndex(c => c.OwnerId);
             e.HasIndex(c => new { c.OwnerId, c.Label }).IsUnique();
+        });
+
+        // ApiKeyCredential
+        modelBuilder.Entity<ApiKeyCredential>(e =>
+        {
+            e.HasKey(k => k.Id);
+            e.HasIndex(k => k.OwnerId);
+            e.HasIndex(k => new { k.OwnerId, k.Provider, k.Label }).IsUnique();
+            e.Property(k => k.ChangeHistory).HasColumnType("jsonb");
         });
     }
 }

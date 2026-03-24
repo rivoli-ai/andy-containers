@@ -36,6 +36,8 @@ public class CreateContainerRequest
     public bool ExcludeTemplateRepos { get; set; }
     public bool SkipUrlValidation { get; set; }
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
+    public Models.CodeAssistantConfig? CodeAssistant { get; set; }
+    public bool ExcludeTemplateCodeAssistant { get; set; }
     public TimeSpan? ExpiresAfter { get; set; }
     public CreationSource Source { get; set; } = CreationSource.Unknown;
     public string? ClientInfo { get; set; }

@@ -13,18 +13,20 @@ namespace Andy.Containers.Api.Tests.Mcp;
 public class ContainersMcpToolsTests : IDisposable
 {
     private readonly ContainersDbContext _db;
+    private readonly Mock<IContainerService> _mockContainerService;
     private readonly ContainersMcpTools _tools;
 
     public ContainersMcpToolsTests()
     {
         _db = InMemoryDbHelper.CreateContext();
+        _mockContainerService = new Mock<IContainerService>();
         var mockCurrentUser = new Mock<ICurrentUserService>();
         mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
         mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
         var mockOrgMembership = new Mock<IOrganizationMembershipService>();
         mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        _tools = new ContainersMcpTools(_db, new Mock<IGitCloneService>().Object, new Mock<IGitCredentialService>().Object, new Mock<IGitRepositoryProbeService>().Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object);
+        _tools = new ContainersMcpTools(_db, _mockContainerService.Object, new Mock<IGitCloneService>().Object, new Mock<IGitCredentialService>().Object, new Mock<IGitRepositoryProbeService>().Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object, new Mock<IApiKeyService>().Object);
     }
 
     public void Dispose()
@@ -32,31 +34,12 @@ public class ContainersMcpToolsTests : IDisposable
         _db.Dispose();
     }
 
-    private async Task<(ContainerTemplate template, InfrastructureProvider provider)> SeedTemplateAndProvider()
-    {
-        var template = new ContainerTemplate
-        {
-            Code = "full-stack",
-            Name = "Full Stack",
-            Version = "1.0.0",
-            BaseImage = "ubuntu:24.04",
-            IsPublished = true
-        };
-        var provider = new InfrastructureProvider
-        {
-            Code = "docker-local",
-            Name = "Local Docker",
-            Type = ProviderType.Docker
-        };
-        _db.Templates.Add(template);
-        _db.Providers.Add(provider);
-        await _db.SaveChangesAsync();
-        return (template, provider);
-    }
-
     [Fact]
     public async Task ListContainers_NoContainers_ShouldReturnEmpty()
     {
+        _mockContainerService.Setup(s => s.ListContainersAsync(It.IsAny<ContainerFilter>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Container>());
+
         var result = await _tools.ListContainers();
 
         result.Should().BeEmpty();
@@ -65,12 +48,15 @@ public class ContainersMcpToolsTests : IDisposable
     [Fact]
     public async Task ListContainers_WithContainers_ShouldReturnAll()
     {
-        var (template, provider) = await SeedTemplateAndProvider();
-        _db.Containers.AddRange(
-            new Container { Name = "c1", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id, Status = ContainerStatus.Running },
-            new Container { Name = "c2", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id, Status = ContainerStatus.Stopped }
-        );
-        await _db.SaveChangesAsync();
+        var template = new ContainerTemplate { Code = "full-stack", Name = "Full Stack", Version = "1.0.0", BaseImage = "ubuntu:24.04" };
+        var provider = new InfrastructureProvider { Code = "docker-local", Name = "Local Docker", Type = ProviderType.Docker };
+        var containers = new List<Container>
+        {
+            new() { Name = "c1", OwnerId = "user1", Template = template, Provider = provider, Status = ContainerStatus.Running },
+            new() { Name = "c2", OwnerId = "user1", Template = template, Provider = provider, Status = ContainerStatus.Stopped }
+        };
+        _mockContainerService.Setup(s => s.ListContainersAsync(It.IsAny<ContainerFilter>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(containers);
 
         var result = await _tools.ListContainers();
 
@@ -80,12 +66,14 @@ public class ContainersMcpToolsTests : IDisposable
     [Fact]
     public async Task ListContainers_WithStatusFilter_ShouldFilterCorrectly()
     {
-        var (template, provider) = await SeedTemplateAndProvider();
-        _db.Containers.AddRange(
-            new Container { Name = "running1", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id, Status = ContainerStatus.Running },
-            new Container { Name = "stopped1", OwnerId = "user1", TemplateId = template.Id, ProviderId = provider.Id, Status = ContainerStatus.Stopped }
-        );
-        await _db.SaveChangesAsync();
+        var template = new ContainerTemplate { Code = "full-stack", Name = "Full Stack", Version = "1.0.0", BaseImage = "ubuntu:24.04" };
+        var provider = new InfrastructureProvider { Code = "docker-local", Name = "Local Docker", Type = ProviderType.Docker };
+        _mockContainerService.Setup(s => s.ListContainersAsync(
+                It.Is<ContainerFilter>(f => f.Status == ContainerStatus.Running), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Container>
+            {
+                new() { Name = "running1", OwnerId = "user1", Template = template, Provider = provider, Status = ContainerStatus.Running }
+            });
 
         var result = await _tools.ListContainers(status: "Running");
 
@@ -97,18 +85,19 @@ public class ContainersMcpToolsTests : IDisposable
     [Fact]
     public async Task GetContainer_ExistingId_ShouldReturnDetail()
     {
-        var (template, provider) = await SeedTemplateAndProvider();
+        var template = new ContainerTemplate { Code = "full-stack", Name = "Full Stack", Version = "1.0.0", BaseImage = "ubuntu:24.04" };
+        var provider = new InfrastructureProvider { Code = "docker-local", Name = "Local Docker", Type = ProviderType.Docker };
         var container = new Container
         {
             Name = "detail-test",
             OwnerId = "user1",
-            TemplateId = template.Id,
-            ProviderId = provider.Id,
+            Template = template,
+            Provider = provider,
             Status = ContainerStatus.Running,
             IdeEndpoint = "https://ide.test.com"
         };
-        _db.Containers.Add(container);
-        await _db.SaveChangesAsync();
+        _mockContainerService.Setup(s => s.GetContainerAsync(container.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
 
         var result = await _tools.GetContainer(container.Id.ToString());
 
@@ -124,6 +113,17 @@ public class ContainersMcpToolsTests : IDisposable
     public async Task GetContainer_InvalidGuid_ShouldReturnNull()
     {
         var result = await _tools.GetContainer("not-a-guid");
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetContainer_NonExistent_ShouldReturnNull()
+    {
+        _mockContainerService.Setup(s => s.GetContainerAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new KeyNotFoundException());
+
+        var result = await _tools.GetContainer(Guid.NewGuid().ToString());
 
         result.Should().BeNull();
     }

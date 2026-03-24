@@ -72,6 +72,10 @@ try
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
     builder.Services.AddScoped<IGitCloneService, GitCloneService>();
     builder.Services.AddScoped<IGitRepositoryProbeService, GitRepositoryProbeService>();
+    builder.Services.AddSingleton<ICodeAssistantInstallService, CodeAssistantInstallService>();
+    builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
+    builder.Services.AddScoped<IApiKeyValidationService, ApiKeyValidationService>();
+    builder.Services.AddHttpClient("ApiKeyValidation");
     builder.Services.AddScoped<IToolVersionDetector, ToolVersionDetector>();
     builder.Services.AddScoped<IImageManifestService, ImageManifestService>();
     builder.Services.AddScoped<IImageDiffService, ImageDiffService>();

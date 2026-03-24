@@ -98,6 +98,7 @@ public class GitCloneService : IGitCloneService
             repo.CloneStatus = GitCloneStatus.Cloned;
             repo.CloneError = null;
             repo.CloneCompletedAt = DateTime.UtcNow;
+            repo.CloneMetadata = await CollectCloneMetadataAsync(containerId, repo.TargetPath, ct);
             await _db.SaveChangesAsync(ct);
 
             _db.Events.Add(new ContainerEvent
@@ -216,6 +217,10 @@ public class GitCloneService : IGitCloneService
             repo.CloneStatus = GitCloneStatus.Cloned;
             repo.CloneError = null;
             repo.CloneCompletedAt = DateTime.UtcNow;
+
+            // Collect clone metadata
+            repo.CloneMetadata = await CollectCloneMetadataAsync(containerId, repo.TargetPath, ct);
+
             await _db.SaveChangesAsync(ct);
 
             _db.Events.Add(new ContainerEvent
@@ -252,6 +257,64 @@ public class GitCloneService : IGitCloneService
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
 
             throw;
+        }
+    }
+
+    private async Task<string?> CollectCloneMetadataAsync(Guid containerId, string targetPath, CancellationToken ct)
+    {
+        try
+        {
+            var script = $"""
+                cd '{targetPath}' && echo "---FILES---" && git ls-files | wc -l && echo "---SIZE---" && du -sb . 2>/dev/null | cut -f1 && echo "---LOG---" && git log -1 --format='%h||%s||%an||%aI' && echo "---BRANCH---" && git rev-parse --abbrev-ref HEAD
+                """;
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+
+            var result = await _containerService.ExecAsync(containerId, script, cts.Token);
+            if (result.ExitCode != 0) return null;
+
+            var output = result.StdOut ?? "";
+            var metadata = new GitCloneMetadata();
+
+            var filesIdx = output.IndexOf("---FILES---");
+            var sizeIdx = output.IndexOf("---SIZE---");
+            var logIdx = output.IndexOf("---LOG---");
+            var branchIdx = output.IndexOf("---BRANCH---");
+
+            if (filesIdx >= 0 && sizeIdx > filesIdx)
+            {
+                var filesStr = output[(filesIdx + 11)..sizeIdx].Trim();
+                if (int.TryParse(filesStr, out var count)) metadata.FileCount = count;
+            }
+
+            if (sizeIdx >= 0 && logIdx > sizeIdx)
+            {
+                var sizeStr = output[(sizeIdx + 10)..logIdx].Trim();
+                if (long.TryParse(sizeStr, out var bytes)) metadata.DiskUsageBytes = bytes;
+            }
+
+            if (logIdx >= 0 && branchIdx > logIdx)
+            {
+                var logStr = output[(logIdx + 9)..branchIdx].Trim();
+                var parts = logStr.Split("||", 4);
+                if (parts.Length >= 1) metadata.LastCommitHash = parts[0];
+                if (parts.Length >= 2) metadata.LastCommitMessage = parts[1];
+                if (parts.Length >= 3) metadata.LastCommitAuthor = parts[2];
+                if (parts.Length >= 4 && DateTime.TryParse(parts[3], out var date)) metadata.LastCommitDate = date.ToUniversalTime();
+            }
+
+            if (branchIdx >= 0)
+            {
+                metadata.CheckedOutBranch = output[(branchIdx + 12)..].Trim();
+            }
+
+            return System.Text.Json.JsonSerializer.Serialize(metadata);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to collect clone metadata for {TargetPath}", targetPath);
+            return null;
         }
     }
 }

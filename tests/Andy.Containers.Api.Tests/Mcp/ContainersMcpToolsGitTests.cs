@@ -31,7 +31,7 @@ public class ContainersMcpToolsGitTests : IDisposable
         var mockProbeService = new Mock<IGitRepositoryProbeService>();
         mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string>());
-        _tools = new ContainersMcpTools(_db, _mockGitCloneService.Object, _mockCredentialService.Object, mockProbeService.Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object);
+        _tools = new ContainersMcpTools(_db, new Mock<IContainerService>().Object, _mockGitCloneService.Object, _mockCredentialService.Object, mockProbeService.Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object, new Mock<IApiKeyService>().Object);
     }
 
     public void Dispose()

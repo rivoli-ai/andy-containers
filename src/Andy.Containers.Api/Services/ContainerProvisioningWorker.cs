@@ -152,6 +152,56 @@ public class ContainerProvisioningWorker : BackgroundService
                 }
             }
 
+            // Inject environment variables (including API keys) into the container
+            if (job.EnvironmentVariables is { Count: > 0 })
+            {
+                try
+                {
+                    var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
+                    // Set env vars via export commands — values are not logged
+                    var exportCommands = string.Join(" && ",
+                        job.EnvironmentVariables.Select(kv => $"export {kv.Key}='{kv.Value.Replace("'", "'\\''")}'"));
+                    // Write to /etc/environment for persistence across sessions
+                    var persistCmd = string.Join(" && ",
+                        job.EnvironmentVariables.Select(kv => $"echo '{kv.Key}={kv.Value.Replace("'", "'\\''")}'>> /etc/environment"));
+                    await containerService.ExecAsync(job.ContainerId, $"{exportCommands} && {persistCmd}", stoppingToken);
+                    _logger.LogInformation("Injected {Count} environment variable(s) into container {ContainerId}",
+                        job.EnvironmentVariables.Count, job.ContainerId);
+                }
+                catch (Exception envEx)
+                {
+                    _logger.LogWarning(envEx, "Failed to inject environment variables into container {ContainerId}",
+                        job.ContainerId);
+                }
+            }
+
+            // Install code assistant after post-create scripts
+            if (job.CodeAssistant is not null)
+            {
+                try
+                {
+                    var installService = scope.ServiceProvider.GetRequiredService<ICodeAssistantInstallService>();
+                    var installScript = installService.GenerateInstallScript(job.CodeAssistant);
+                    var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
+
+                    _logger.LogInformation("Installing code assistant {Tool} for container {ContainerId}",
+                        job.CodeAssistant.Tool, job.ContainerId);
+                    var installResult = await containerService.ExecAsync(job.ContainerId, installScript, stoppingToken);
+                    if (installResult.ExitCode != 0)
+                        _logger.LogWarning("Code assistant install exited with {ExitCode} for container {ContainerId}: {StdErr}",
+                            installResult.ExitCode, job.ContainerId, installResult.StdErr);
+                    else
+                        _logger.LogInformation("Code assistant {Tool} installed for container {ContainerId}",
+                            job.CodeAssistant.Tool, job.ContainerId);
+                }
+                catch (Exception assistantEx)
+                {
+                    // Failed install does NOT fail the container
+                    _logger.LogWarning(assistantEx, "Code assistant install failed for container {ContainerId}, container remains Running",
+                        job.ContainerId);
+                }
+            }
+
             // Clone git repositories after container is running
             if (job.HasGitRepositories)
             {

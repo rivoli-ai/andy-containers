@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -73,6 +75,13 @@ public class WorkspacesController : ControllerBase
             if (!isMember) return Forbid();
         }
 
+        // Validate uniqueness of git repo URLs
+        var repos = dto.GitRepositories ?? [];
+        var duplicateUrl = repos.GroupBy(r => r.Url, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateUrl is not null)
+            return BadRequest(new { error = $"Duplicate repository URL: {duplicateUrl.Key}" });
+
         var workspace = new Workspace
         {
             Name = dto.Name,
@@ -81,7 +90,8 @@ public class WorkspacesController : ControllerBase
             OrganizationId = dto.OrganizationId,
             TeamId = dto.TeamId,
             GitRepositoryUrl = dto.GitRepositoryUrl,
-            GitBranch = dto.GitBranch
+            GitBranch = dto.GitBranch,
+            GitRepositories = repos.Count > 0 ? JsonSerializer.Serialize(repos) : null
         };
         _db.Workspaces.Add(workspace);
         await _db.SaveChangesAsync(ct);
@@ -98,6 +108,17 @@ public class WorkspacesController : ControllerBase
         if (dto.Name is not null) ws.Name = dto.Name;
         if (dto.Description is not null) ws.Description = dto.Description;
         if (dto.GitBranch is not null) ws.GitBranch = dto.GitBranch;
+
+        if (dto.GitRepositories is not null)
+        {
+            var duplicateUrl = dto.GitRepositories.GroupBy(r => r.Url, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(g => g.Count() > 1);
+            if (duplicateUrl is not null)
+                return BadRequest(new { error = $"Duplicate repository URL: {duplicateUrl.Key}" });
+
+            ws.GitRepositories = dto.GitRepositories.Count > 0 ? JsonSerializer.Serialize(dto.GitRepositories) : null;
+        }
+
         ws.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return Ok(ws);
@@ -122,5 +143,6 @@ public class WorkspacesController : ControllerBase
     }
 }
 
-public record CreateWorkspaceDto(string Name, string? Description, Guid? OrganizationId, Guid? TeamId, string? GitRepositoryUrl, string? GitBranch);
-public record UpdateWorkspaceDto(string? Name, string? Description, string? GitBranch);
+public record WorkspaceGitRepoDto(string Url, string? Branch = null, string? CredentialRef = null, string? TargetPath = null);
+public record CreateWorkspaceDto(string Name, string? Description, Guid? OrganizationId, Guid? TeamId, string? GitRepositoryUrl, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null);
+public record UpdateWorkspaceDto(string? Name, string? Description, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null);

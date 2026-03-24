@@ -16,7 +16,19 @@ public class ContainerGitRepository
     public string? CloneError { get; set; }
     public DateTime? CloneStartedAt { get; set; }
     public DateTime? CloneCompletedAt { get; set; }
+    public string? CloneMetadata { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class GitCloneMetadata
+{
+    public int? FileCount { get; set; }
+    public long? DiskUsageBytes { get; set; }
+    public string? LastCommitHash { get; set; }
+    public string? LastCommitMessage { get; set; }
+    public string? LastCommitAuthor { get; set; }
+    public DateTime? LastCommitDate { get; set; }
+    public string? CheckedOutBranch { get; set; }
 }
 
 public enum GitCloneStatus

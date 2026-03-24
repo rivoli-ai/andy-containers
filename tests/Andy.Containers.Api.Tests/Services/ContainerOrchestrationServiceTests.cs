@@ -39,7 +39,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
         _mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string>());
 
-        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, logger.Object);
+        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, new Mock<IApiKeyService>().Object, logger.Object);
     }
 
     public void Dispose()

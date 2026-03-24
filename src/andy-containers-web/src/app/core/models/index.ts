@@ -21,6 +21,7 @@ export interface Container {
   lastActivityAt?: string;
   creationSource?: string;
   clientInfo?: string;
+  codeAssistant?: string;
 }
 
 export interface Template {
@@ -36,7 +37,24 @@ export interface Template {
   tags: string[];
   isPublished: boolean;
   scripts?: string;
+  codeAssistant?: string;
 }
+
+export interface CodeAssistantConfig {
+  tool: string;
+  autoStart: boolean;
+  apiKeyEnvVar?: string;
+}
+
+export const CODE_ASSISTANT_TOOLS = [
+  { value: 'ClaudeCode', label: 'Claude Code', apiKeyEnv: 'ANTHROPIC_API_KEY' },
+  { value: 'CodexCli', label: 'Codex CLI', apiKeyEnv: 'OPENAI_API_KEY' },
+  { value: 'Aider', label: 'Aider', apiKeyEnv: 'OPENAI_API_KEY' },
+  { value: 'Continue', label: 'Continue', apiKeyEnv: 'CONTINUE_API_KEY' },
+  { value: 'OpenCode', label: 'Open Code', apiKeyEnv: 'OPENAI_API_KEY' },
+  { value: 'QwenCoder', label: 'Qwen Coder', apiKeyEnv: 'DASHSCOPE_API_KEY' },
+  { value: 'GeminiCode', label: 'Gemini Code', apiKeyEnv: 'GOOGLE_API_KEY' },
+] as const;
 
 export interface Provider {
   id: string;
@@ -61,6 +79,7 @@ export interface Workspace {
   defaultContainer?: Container;
   gitRepositoryUrl?: string;
   gitBranch?: string;
+  gitRepositories?: string;
   status: string;
   createdAt: string;
   updatedAt?: string;
@@ -144,4 +163,50 @@ export interface ContainerGitRepository {
   cloneError?: string;
   cloneStartedAt?: string;
   cloneCompletedAt?: string;
+  cloneMetadata?: string;
+}
+
+export interface GitCloneMetadata {
+  fileCount?: number;
+  diskUsageBytes?: number;
+  lastCommitHash?: string;
+  lastCommitMessage?: string;
+  lastCommitAuthor?: string;
+  lastCommitDate?: string;
+  checkedOutBranch?: string;
+}
+
+export interface ApiKeyCredential {
+  id: string;
+  label: string;
+  provider: string;
+  envVarName: string;
+  maskedValue: string;
+  isValid: boolean;
+  lastValidatedAt?: string;
+  lastUsedAt?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ApiKeyChangeEntry {
+  action: string;
+  timestamp: string;
+  ipAddress?: string;
+  details?: string;
+}
+
+export const API_KEY_PROVIDERS = [
+  { value: 'Anthropic', label: 'Anthropic', defaultEnvVar: 'ANTHROPIC_API_KEY' },
+  { value: 'OpenAI', label: 'OpenAI', defaultEnvVar: 'OPENAI_API_KEY' },
+  { value: 'Google', label: 'Google', defaultEnvVar: 'GOOGLE_API_KEY' },
+  { value: 'Dashscope', label: 'Dashscope', defaultEnvVar: 'DASHSCOPE_API_KEY' },
+  { value: 'Custom', label: 'Custom', defaultEnvVar: 'API_KEY' },
+] as const;
+
+export interface WorkspaceGitRepo {
+  url: string;
+  branch?: string;
+  credentialRef?: string;
+  targetPath?: string;
 }

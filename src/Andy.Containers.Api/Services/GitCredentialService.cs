@@ -1,3 +1,4 @@
+using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.AspNetCore.DataProtection;
@@ -20,6 +21,9 @@ public class GitCredentialService : IGitCredentialService
 
     public async Task<GitCredential> CreateAsync(string ownerId, string label, string token, string? gitHost, GitCredentialType type, CancellationToken ct)
     {
+        using var activity = ActivitySources.Git.StartActivity("GitCredential.Create");
+        activity?.SetTag("gitCredential.host", gitHost ?? "unknown");
+
         var credential = new GitCredential
         {
             OwnerId = ownerId,
@@ -55,6 +59,10 @@ public class GitCredentialService : IGitCredentialService
 
     public async Task<string?> ResolveTokenAsync(string ownerId, string? credentialRef, string? gitHost, CancellationToken ct)
     {
+        using var activity = ActivitySources.Git.StartActivity("GitCredential.Resolve");
+        activity?.SetTag("gitCredential.host", gitHost ?? "unknown");
+        activity?.SetTag("gitCredential.hasRef", (!string.IsNullOrEmpty(credentialRef)).ToString());
+
         GitCredential? credential = null;
 
         // Try label match first

@@ -104,7 +104,8 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.Both, GpuPreferred = true,
                 IsPublished = true, Tags = ["agent", "devpilot", "ui", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
-                Scripts = ScriptsJson
+                Scripts = ScriptsJson,
+                CodeAssistant = """{"Tool":"ClaudeCode","AutoStart":false,"ApiKeyEnvVar":"ANTHROPIC_API_KEY"}"""
             },
             new ContainerTemplate
             {

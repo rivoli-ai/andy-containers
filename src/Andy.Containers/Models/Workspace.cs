@@ -13,6 +13,7 @@ public class Workspace
     public Container? DefaultContainer { get; set; }
     public string? GitRepositoryUrl { get; set; }
     public string? GitBranch { get; set; }
+    public string? GitRepositories { get; set; }
     public string? Configuration { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

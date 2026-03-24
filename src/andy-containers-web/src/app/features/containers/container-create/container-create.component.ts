@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Template, Provider, GitCredential, Workspace } from '../../../core/models';
+import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAssistantConfig, CODE_ASSISTANT_TOOLS } from '../../../core/models';
 
 @Component({
   selector: 'app-container-create',
@@ -35,7 +35,7 @@ import { Template, Provider, GitCredential, Workspace } from '../../../core/mode
         <!-- Template -->
         <div>
           <label for="template" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Template *</label>
-          <select id="template" [(ngModel)]="selectedTemplateId" name="template" required
+          <select id="template" [(ngModel)]="selectedTemplateId" name="template" required (ngModelChange)="updateTemplateCodeAssistant()"
             class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
             <option value="">Select a template...</option>
             <option *ngFor="let t of templates" [value]="t.id">{{ t.name }} ({{ t.code }})</option>
@@ -55,79 +55,84 @@ import { Template, Provider, GitCredential, Workspace } from '../../../core/mode
         <!-- Workspace (optional) -->
         <div>
           <label for="workspace" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Workspace <span class="text-surface-400">(optional)</span></label>
-          <select id="workspace" [(ngModel)]="selectedWorkspaceId" name="workspace"
+          <select id="workspace" [(ngModel)]="selectedWorkspaceId" name="workspace" (ngModelChange)="updateWorkspaceRepos()"
             class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
             <option value="">None</option>
             <option *ngFor="let w of workspaces" [value]="w.id">{{ w.name }}</option>
           </select>
         </div>
 
-        <!-- Git Repository URL (optional) -->
+        <!-- Code Assistant -->
         <div>
-          <label for="gitRepo" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Git Repository URL <span class="text-surface-400">(optional)</span></label>
-          <input id="gitRepo" type="text" [(ngModel)]="gitRepoUrl" name="gitRepo"
-            class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-            placeholder="https://github.com/user/repo.git" />
+          <label for="codeAssistant" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Code Assistant <span class="text-surface-400">(optional)</span></label>
+          <select id="codeAssistant" [(ngModel)]="selectedCodeAssistant" name="codeAssistant" (ngModelChange)="onCodeAssistantChange()"
+            class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            <option value="">None</option>
+            <option *ngFor="let tool of codeAssistantTools" [value]="tool.value">{{ tool.label }}</option>
+          </select>
+          <div *ngIf="templateCodeAssistant && !selectedCodeAssistant" class="mt-1 text-xs text-surface-500 dark:text-surface-400">
+            Template default: <span class="font-medium">{{ getToolLabel(templateCodeAssistant.tool) }}</span>
+            <span class="text-surface-400 ml-1">(will be used unless overridden)</span>
+          </div>
+          <div *ngIf="selectedCodeAssistant" class="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
+            <p class="text-xs text-amber-800 dark:text-amber-200">
+              <span class="font-medium">API key required:</span> Set the <code class="font-mono bg-amber-100 dark:bg-amber-800/40 px-1 rounded">{{ getApiKeyEnv(selectedCodeAssistant) }}</code> environment variable in the container.
+              The key is injected at runtime and never stored in the image.
+            </p>
+          </div>
+        </div>
+        <div *ngIf="selectedCodeAssistant" class="flex items-center gap-2">
+          <input id="excludeTemplateAssistant" type="checkbox" [(ngModel)]="excludeTemplateCodeAssistant" name="excludeTemplateAssistant"
+            class="rounded border-surface-300 dark:border-surface-600 text-primary-600 focus:ring-primary-500" />
+          <label for="excludeTemplateAssistant" class="text-xs text-surface-500 dark:text-surface-400">
+            Override template default <span class="text-surface-400">(use my selection instead)</span>
+          </label>
         </div>
 
-        <!-- Credential selector (shown when git URL is entered) -->
-        <div *ngIf="gitRepoUrl" class="space-y-3">
-          <div>
-            <label for="credential" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">
-              Git Credential <span class="text-surface-400">(for private repos)</span>
-            </label>
-            <select id="credential" [(ngModel)]="selectedCredentialLabel" name="credential"
-              class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-              <option value="">None (public repo)</option>
-              <option *ngFor="let c of credentials" [value]="c.label">{{ c.label }}{{ c.gitHost ? ' (' + c.gitHost + ')' : '' }}</option>
-              <option value="__new__">+ Add new credential...</option>
-            </select>
+        <!-- Git Repositories -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300">Git Repositories <span class="text-surface-400">(optional)</span></label>
+            <button type="button" (click)="addRepo()"
+              class="text-xs font-medium text-primary-600 hover:text-primary-700">+ Add repository</button>
           </div>
 
-          <!-- Inline credential creation -->
-          <div *ngIf="selectedCredentialLabel === '__new__'"
-            class="rounded-lg border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-primary-900/20 p-4 space-y-3">
-            <p class="text-sm font-medium text-primary-800 dark:text-primary-200">Store a new git credential</p>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block text-xs text-surface-600 dark:text-surface-400 mb-1">Label *</label>
-                <input type="text" [(ngModel)]="newCredLabel" name="newCredLabel"
-                  class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100"
-                  placeholder="e.g. github-work" />
-              </div>
-              <div>
-                <label class="block text-xs text-surface-600 dark:text-surface-400 mb-1">Git Host</label>
-                <input type="text" [(ngModel)]="newCredHost" name="newCredHost"
-                  class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100"
-                  [placeholder]="detectedHost || 'e.g. github.com'" />
-              </div>
-            </div>
-            <div>
-              <label class="block text-xs text-surface-600 dark:text-surface-400 mb-1">Personal Access Token *</label>
-              <input type="password" [(ngModel)]="newCredToken" name="newCredToken"
-                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100 font-mono"
-                placeholder="ghp_..." />
-            </div>
-            <div class="flex items-center gap-2">
-              <button type="button" (click)="saveNewCredential()" [disabled]="savingCredential || !newCredLabel || !newCredToken"
-                class="px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50">
-                {{ savingCredential ? 'Saving...' : 'Save Credential' }}
-              </button>
-              <button type="button" (click)="selectedCredentialLabel = ''"
-                class="px-3 py-1.5 text-xs font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-600 dark:text-surface-400">
-                Cancel
-              </button>
-              <span *ngIf="credentialError" class="text-xs text-red-600 dark:text-red-400">{{ credentialError }}</span>
+          <!-- Workspace inherited repos -->
+          <div *ngIf="selectedWorkspaceId && workspaceRepos.length > 0" class="mb-3 rounded-lg bg-surface-50 dark:bg-surface-900 p-3">
+            <p class="text-xs font-medium text-surface-500 dark:text-surface-400 mb-2">Inherited from workspace (will be merged):</p>
+            <div *ngFor="let wr of workspaceRepos" class="flex items-center gap-2 text-xs text-surface-600 dark:text-surface-300 mb-1">
+              <span class="font-mono truncate">{{ wr.url }}</span>
+              <span *ngIf="wr.branch" class="px-1.5 py-0.5 rounded bg-surface-200 dark:bg-surface-700">{{ wr.branch }}</span>
             </div>
           </div>
 
-          <div class="flex items-center gap-2">
-            <input id="skipValidation" type="checkbox" [(ngModel)]="skipUrlValidation" name="skipValidation"
-              class="rounded border-surface-300 dark:border-surface-600 text-primary-600 focus:ring-primary-500" />
-            <label for="skipValidation" class="text-xs text-surface-500 dark:text-surface-400">
-              Skip URL validation <span class="text-surface-400">(for repos behind firewalls only accessible from the container)</span>
-            </label>
+          <div *ngFor="let repo of repos; let i = index" class="mb-2 rounded-lg border border-surface-200 dark:border-surface-700 p-3 space-y-2">
+            <div class="flex gap-2">
+              <input type="text" [(ngModel)]="repo.url" [name]="'repoUrl' + i" placeholder="https://github.com/user/repo.git"
+                class="flex-1 rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100 font-mono" />
+              <button type="button" (click)="removeRepo(i)" class="px-2 text-red-500 hover:text-red-700 text-sm">x</button>
+            </div>
+            <div class="flex gap-2">
+              <input type="text" [(ngModel)]="repo.branch" [name]="'repoBranch' + i" placeholder="branch (default)"
+                class="w-32 rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100" />
+              <input type="text" [(ngModel)]="repo.targetPath" [name]="'repoPath' + i" placeholder="/workspace/repo"
+                class="w-40 rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100 font-mono" />
+              <select [(ngModel)]="repo.credentialRef" [name]="'repoCred' + i"
+                class="flex-1 rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100">
+                <option value="">No credential</option>
+                <option *ngFor="let c of credentials" [value]="c.label">{{ c.label }}</option>
+              </select>
+            </div>
           </div>
+          <p *ngIf="repos.length === 0 && workspaceRepos.length === 0" class="text-xs text-surface-400">No repositories added.</p>
+        </div>
+
+        <div *ngIf="repos.length > 0" class="flex items-center gap-2">
+          <input id="skipValidation" type="checkbox" [(ngModel)]="skipUrlValidation" name="skipValidation"
+            class="rounded border-surface-300 dark:border-surface-600 text-primary-600 focus:ring-primary-500" />
+          <label for="skipValidation" class="text-xs text-surface-500 dark:text-surface-400">
+            Skip URL validation <span class="text-surface-400">(for repos behind firewalls)</span>
+          </label>
         </div>
 
         <!-- Actions -->
@@ -136,7 +141,7 @@ import { Template, Provider, GitCredential, Workspace } from '../../../core/mode
             class="px-4 py-2 text-sm font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-700">
             Cancel
           </a>
-          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId || selectedCredentialLabel === '__new__'"
+          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId"
             class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {{ submitting ? 'Creating...' : 'Create Container' }}
           </button>
@@ -150,22 +155,19 @@ export class ContainerCreateComponent implements OnInit {
   selectedTemplateId = '';
   selectedProviderId = '';
   selectedWorkspaceId = '';
-  gitRepoUrl = '';
-  selectedCredentialLabel = '';
+  repos: { url: string; branch: string; targetPath: string; credentialRef: string }[] = [];
+  selectedCodeAssistant = '';
+  excludeTemplateCodeAssistant = false;
+  templateCodeAssistant: CodeAssistantConfig | null = null;
+  codeAssistantTools = CODE_ASSISTANT_TOOLS;
   skipUrlValidation = false;
   templates: Template[] = [];
   providers: Provider[] = [];
   workspaces: Workspace[] = [];
   credentials: GitCredential[] = [];
+  workspaceRepos: WorkspaceGitRepo[] = [];
   submitting = false;
   error = '';
-
-  // Inline credential creation
-  newCredLabel = '';
-  newCredHost = '';
-  newCredToken = '';
-  savingCredential = false;
-  credentialError = '';
 
   constructor(private api: ContainersApiService, private router: Router, private route: ActivatedRoute) {}
 
@@ -181,47 +183,91 @@ export class ContainerCreateComponent implements OnInit {
       next: (creds) => { this.credentials = creds; },
     });
     this.api.getWorkspaces({ take: '100' }).subscribe({
-      next: (res) => { this.workspaces = res.items; },
+      next: (res) => {
+        this.workspaces = res.items;
+        this.updateWorkspaceRepos();
+      },
     });
   }
 
-  get detectedHost(): string {
-    try {
-      return new URL(this.gitRepoUrl).hostname;
-    } catch {
-      return '';
+  addRepo(): void {
+    this.repos.push({ url: '', branch: '', targetPath: '', credentialRef: '' });
+  }
+
+  removeRepo(i: number): void {
+    this.repos.splice(i, 1);
+  }
+
+  updateWorkspaceRepos(): void {
+    if (!this.selectedWorkspaceId) {
+      this.workspaceRepos = [];
+      return;
+    }
+    const ws = this.workspaces.find(w => w.id === this.selectedWorkspaceId);
+    if (ws?.gitRepositories) {
+      try {
+        this.workspaceRepos = JSON.parse(ws.gitRepositories);
+      } catch {
+        this.workspaceRepos = [];
+      }
+    } else {
+      this.workspaceRepos = [];
     }
   }
 
-  saveNewCredential(): void {
-    if (!this.newCredLabel || !this.newCredToken) return;
-    this.savingCredential = true;
-    this.credentialError = '';
+  onCodeAssistantChange(): void {
+    if (this.selectedCodeAssistant) {
+      this.excludeTemplateCodeAssistant = true;
+    }
+  }
 
-    this.api.createGitCredential({
-      label: this.newCredLabel,
-      token: this.newCredToken,
-      gitHost: this.newCredHost || this.detectedHost || undefined,
-    }).subscribe({
-      next: (cred) => {
-        this.credentials = [...this.credentials, cred];
-        this.selectedCredentialLabel = cred.label;
-        this.newCredLabel = '';
-        this.newCredHost = '';
-        this.newCredToken = '';
-        this.savingCredential = false;
-      },
-      error: (err) => {
-        this.credentialError = err?.error?.error || 'Failed to save credential';
-        this.savingCredential = false;
-      },
-    });
+  getToolLabel(tool: string): string {
+    return this.codeAssistantTools.find(t => t.value === tool)?.label || tool;
+  }
+
+  getApiKeyEnv(tool: string): string {
+    return this.codeAssistantTools.find(t => t.value === tool)?.apiKeyEnv || 'API_KEY';
+  }
+
+  updateTemplateCodeAssistant(): void {
+    if (!this.selectedTemplateId) {
+      this.templateCodeAssistant = null;
+      return;
+    }
+    const tmpl = this.templates.find(t => t.id === this.selectedTemplateId);
+    if (tmpl?.codeAssistant) {
+      try {
+        this.templateCodeAssistant = JSON.parse(tmpl.codeAssistant);
+      } catch {
+        this.templateCodeAssistant = null;
+      }
+    } else {
+      this.templateCodeAssistant = null;
+    }
   }
 
   onSubmit(): void {
     if (!this.name || !this.selectedTemplateId) return;
     this.submitting = true;
     this.error = '';
+
+    const gitRepos = this.repos
+      .filter(r => r.url)
+      .map(r => ({
+        url: r.url,
+        branch: r.branch || undefined,
+        targetPath: r.targetPath || undefined,
+        credentialRef: r.credentialRef || undefined,
+      }));
+
+    // Check for duplicate URLs
+    const urls = gitRepos.map(r => r.url.toLowerCase());
+    const dupes = urls.filter((u, i) => urls.indexOf(u) !== i);
+    if (dupes.length > 0) {
+      this.error = `Duplicate repository URL: ${dupes[0]}`;
+      this.submitting = false;
+      return;
+    }
 
     const request: any = {
       name: this.name,
@@ -234,16 +280,20 @@ export class ContainerCreateComponent implements OnInit {
     if (this.selectedWorkspaceId) {
       request.workspaceId = this.selectedWorkspaceId;
     }
-    if (this.gitRepoUrl) {
-      request.gitRepository = {
-        url: this.gitRepoUrl,
-        credentialRef: this.selectedCredentialLabel && this.selectedCredentialLabel !== '__new__'
-          ? this.selectedCredentialLabel
-          : undefined,
-      };
+    if (gitRepos.length > 0) {
+      request.gitRepositories = gitRepos;
       if (this.skipUrlValidation) {
         request.skipUrlValidation = true;
       }
+    }
+    if (this.selectedCodeAssistant) {
+      const tool = this.codeAssistantTools.find(t => t.value === this.selectedCodeAssistant);
+      request.codeAssistant = {
+        tool: this.selectedCodeAssistant,
+        autoStart: false,
+        apiKeyEnvVar: tool?.apiKeyEnv,
+      };
+      request.excludeTemplateCodeAssistant = this.excludeTemplateCodeAssistant;
     }
 
     this.api.createContainer(request).subscribe({

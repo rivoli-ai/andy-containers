@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Container, ContainerEvent, ContainerGitRepository, ConnectionInfo, ExecResult } from '../../../core/models';
+import { Container, ContainerEvent, ContainerGitRepository, GitCloneMetadata, ConnectionInfo, ExecResult, CODE_ASSISTANT_TOOLS } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 
 @Component({
@@ -90,6 +90,10 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
             <div *ngIf="container.creationSource && container.creationSource !== 'Unknown'" class="flex justify-between">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Source</dt>
               <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.creationSource }}</dd>
+            </div>
+            <div *ngIf="codeAssistantLabel" class="flex justify-between">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Code Assistant</dt>
+              <dd class="text-sm text-surface-600 dark:text-surface-300">{{ codeAssistantLabel }}</dd>
             </div>
             <div *ngIf="container.startedAt" class="flex justify-between">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Started</dt>
@@ -232,36 +236,52 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
         </div>
       </div>
 
-      <!-- Repositories Card -->
-      <div *ngIf="repositories.length > 0" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800">
-        <div class="px-5 py-4 border-b border-surface-200 dark:border-surface-700">
-          <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100">Repositories</h2>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-surface-200 dark:divide-surface-700">
-            <thead class="bg-surface-50 dark:bg-surface-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">URL</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Branch</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Path</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Status</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-surface-200 dark:divide-surface-700">
-              <tr *ngFor="let repo of repositories" class="hover:bg-surface-50 dark:hover:bg-surface-700/50">
-                <td class="px-4 py-3 text-sm font-mono text-surface-700 dark:text-surface-300 truncate max-w-xs">{{ repo.url }}</td>
-                <td class="px-4 py-3 text-sm text-surface-600 dark:text-surface-300">{{ repo.branch || 'default' }}</td>
-                <td class="px-4 py-3 text-sm font-mono text-surface-600 dark:text-surface-300">{{ repo.targetPath }}</td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                  <span [ngClass]="getCloneStatusClasses(repo.cloneStatus)">
-                    <span *ngIf="repo.cloneStatus === 'Cloning'" class="inline-block w-3 h-3 mr-1 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
-                    {{ repo.cloneStatus }}
-                  </span>
-                  <span *ngIf="repo.cloneError" class="block text-xs text-red-500 dark:text-red-400 mt-1 truncate max-w-xs" [title]="repo.cloneError">{{ repo.cloneError }}</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+      <!-- Repositories -->
+      <div *ngIf="repositories.length > 0" class="space-y-4">
+        <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100">Repositories</h2>
+        <div *ngFor="let repo of repositories" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-sm font-mono text-surface-900 dark:text-surface-100 truncate">{{ repo.url }}</span>
+              <span *ngIf="repo.branch" class="shrink-0 text-xs px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-300">{{ repo.branch }}</span>
+            </div>
+            <span [ngClass]="getCloneStatusClasses(repo.cloneStatus)">
+              <span *ngIf="repo.cloneStatus === 'Cloning'" class="inline-block w-3 h-3 mr-1 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+              {{ repo.cloneStatus }}
+            </span>
+          </div>
+          <div class="text-xs text-surface-500 dark:text-surface-400 mb-2 font-mono">{{ repo.targetPath }}</div>
+          <div *ngIf="repo.cloneError" class="text-xs text-red-600 dark:text-red-400 mb-2">{{ repo.cloneError }}</div>
+          <div *ngIf="getMetadata(repo) as meta" class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 pt-3 border-t border-surface-100 dark:border-surface-700">
+            <div *ngIf="meta.checkedOutBranch">
+              <dt class="text-xs text-surface-400">Branch</dt>
+              <dd class="text-sm text-surface-700 dark:text-surface-200">{{ meta.checkedOutBranch }}</dd>
+            </div>
+            <div *ngIf="meta.fileCount !== undefined && meta.fileCount !== null">
+              <dt class="text-xs text-surface-400">Files</dt>
+              <dd class="text-sm text-surface-700 dark:text-surface-200">{{ meta.fileCount | number }}</dd>
+            </div>
+            <div *ngIf="meta.diskUsageBytes !== undefined && meta.diskUsageBytes !== null">
+              <dt class="text-xs text-surface-400">Size</dt>
+              <dd class="text-sm text-surface-700 dark:text-surface-200">{{ formatBytes(meta.diskUsageBytes) }}</dd>
+            </div>
+            <div *ngIf="meta.lastCommitHash">
+              <dt class="text-xs text-surface-400">Last Commit</dt>
+              <dd class="text-sm font-mono text-surface-700 dark:text-surface-200">{{ meta.lastCommitHash }}</dd>
+            </div>
+            <div *ngIf="meta.lastCommitAuthor">
+              <dt class="text-xs text-surface-400">Author</dt>
+              <dd class="text-sm text-surface-700 dark:text-surface-200">{{ meta.lastCommitAuthor }}</dd>
+            </div>
+            <div *ngIf="meta.lastCommitDate">
+              <dt class="text-xs text-surface-400">Date</dt>
+              <dd class="text-sm text-surface-700 dark:text-surface-200">{{ meta.lastCommitDate | date:'medium' }}</dd>
+            </div>
+            <div *ngIf="meta.lastCommitMessage" class="col-span-2 sm:col-span-3">
+              <dt class="text-xs text-surface-400">Message</dt>
+              <dd class="text-sm text-surface-700 dark:text-surface-200 truncate">{{ meta.lastCommitMessage }}</dd>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -314,6 +334,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   actionBusy = false;
   copiedField = '';
   isStuck = false;
+  codeAssistantLabel = '';
 
   private pollTimer: any = null;
   private eventPollTimer: any = null;
@@ -351,6 +372,18 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
       next: (c) => {
         this.container = c;
         this.loading = false;
+
+        // Parse code assistant label
+        if (c.codeAssistant) {
+          try {
+            const ca = JSON.parse(c.codeAssistant);
+            this.codeAssistantLabel = CODE_ASSISTANT_TOOLS.find(t => t.value === ca.Tool)?.label || ca.Tool || '';
+          } catch {
+            this.codeAssistantLabel = '';
+          }
+        } else {
+          this.codeAssistantLabel = '';
+        }
 
         // Check if stuck (>2 min in Creating/Pending)
         if (c.status === 'Creating' || c.status === 'Pending') {
@@ -483,8 +516,24 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
     }
   }
 
+  getMetadata(repo: ContainerGitRepository): GitCloneMetadata | null {
+    if (!repo.cloneMetadata) return null;
+    try {
+      return JSON.parse(repo.cloneMetadata) as GitCloneMetadata;
+    } catch {
+      return null;
+    }
+  }
+
+  formatBytes(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+    return (bytes / 1073741824).toFixed(1) + ' GB';
+  }
+
   getCloneStatusClasses(status: string): string[] {
-    const base = ['inline-flex', 'items-center', 'px-2', 'py-0.5', 'rounded-full', 'text-xs', 'font-semibold'];
+    const base = ['inline-flex', 'items-center', 'px-3', 'py-1', 'rounded-sm', 'text-sm', 'font-medium'];
     switch (status) {
       case 'Cloned':
         return [...base, 'bg-green-100', 'text-green-800', 'dark:bg-green-900/30', 'dark:text-green-400'];
@@ -502,7 +551,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   }
 
   getEventBadgeClasses(eventType: string): string[] {
-    const base = ['inline-flex', 'items-center', 'px-2', 'py-0.5', 'rounded-full', 'text-xs', 'font-semibold'];
+    const base = ['inline-flex', 'items-center', 'px-3', 'py-1', 'rounded-sm', 'text-sm', 'font-medium'];
     const lower = eventType?.toLowerCase() || '';
     if (lower.includes('failed') || lower.includes('error')) {
       return [...base, 'bg-red-100', 'text-red-800', 'dark:bg-red-900/30', 'dark:text-red-400'];

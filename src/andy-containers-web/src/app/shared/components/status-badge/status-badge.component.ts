@@ -11,7 +11,7 @@ export class StatusBadgeComponent {
   @Input() status = 'Unknown';
 
   get badgeClasses(): string[] {
-    const base = ['inline-flex', 'items-center', 'px-2.5', 'py-0.5', 'rounded-full', 'text-xs', 'font-semibold'];
+    const base = ['inline-flex', 'items-center', 'px-3', 'py-1', 'rounded-sm', 'text-sm', 'font-medium'];
     switch (this.status?.toLowerCase()) {
       case 'running':
       case 'healthy':

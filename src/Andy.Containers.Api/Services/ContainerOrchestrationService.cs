@@ -17,6 +17,7 @@ public class ContainerOrchestrationService : IContainerService
     private readonly IInfrastructureProviderFactory _providerFactory;
     private readonly ContainerProvisioningQueue _queue;
     private readonly IGitRepositoryProbeService _probeService;
+    private readonly IApiKeyService _apiKeyService;
     private readonly ILogger<ContainerOrchestrationService> _logger;
 
     public ContainerOrchestrationService(
@@ -25,6 +26,7 @@ public class ContainerOrchestrationService : IContainerService
         IInfrastructureProviderFactory providerFactory,
         ContainerProvisioningQueue queue,
         IGitRepositoryProbeService probeService,
+        IApiKeyService apiKeyService,
         ILogger<ContainerOrchestrationService> logger)
     {
         _db = db;
@@ -32,6 +34,7 @@ public class ContainerOrchestrationService : IContainerService
         _providerFactory = providerFactory;
         _queue = queue;
         _probeService = probeService;
+        _apiKeyService = apiKeyService;
         _logger = logger;
     }
 
@@ -97,12 +100,29 @@ public class ContainerOrchestrationService : IContainerService
             container.GitRepository = JsonSerializer.Serialize(request.GitRepository);
         }
 
+        // Resolve code assistant: request override > template default
+        CodeAssistantConfig? codeAssistant = null;
+        if (request.CodeAssistant is not null)
+        {
+            codeAssistant = request.CodeAssistant;
+        }
+        else if (!request.ExcludeTemplateCodeAssistant && !string.IsNullOrEmpty(template.CodeAssistant))
+        {
+            codeAssistant = JsonSerializer.Deserialize<CodeAssistantConfig>(template.CodeAssistant);
+        }
+
+        if (codeAssistant is not null)
+        {
+            container.CodeAssistant = JsonSerializer.Serialize(codeAssistant);
+        }
+
         _db.Containers.Add(container);
 
         // Link to workspace if specified
+        Workspace? workspace = null;
         if (request.WorkspaceId.HasValue)
         {
-            var workspace = await _db.Workspaces.Include(w => w.Containers).FirstOrDefaultAsync(w => w.Id == request.WorkspaceId, ct)
+            workspace = await _db.Workspaces.Include(w => w.Containers).FirstOrDefaultAsync(w => w.Id == request.WorkspaceId, ct)
                 ?? throw new ArgumentException($"Workspace not found: {request.WorkspaceId}");
             workspace.Containers.Add(container);
         }
@@ -147,6 +167,26 @@ public class ContainerOrchestrationService : IContainerService
                 }
             }
         }
+
+        // Merge workspace repos (user-specified repos win on URL conflict)
+        if (workspace is not null && !string.IsNullOrEmpty(workspace.GitRepositories))
+        {
+            var wsRepos = JsonSerializer.Deserialize<List<GitRepositoryConfig>>(workspace.GitRepositories);
+            if (wsRepos is not null)
+            {
+                var existingUrls = gitRepos.Select(r => r.Url).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var wr in wsRepos.Where(wr => !existingUrls.Contains(wr.Url)))
+                {
+                    gitRepos.Add(wr);
+                }
+            }
+        }
+
+        // Deduplicate by URL (user-specified wins)
+        gitRepos = gitRepos
+            .GroupBy(r => r.Url, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
 
         // Probe repository URLs for accessibility and credential validation (unless skipped)
         if (gitRepos.Count > 0 && !request.SkipUrlValidation)
@@ -196,6 +236,34 @@ public class ContainerOrchestrationService : IContainerService
             }
         }
 
+        // Resolve API key for code assistant if configured
+        Dictionary<string, string>? envVars = null;
+        if (codeAssistant is not null)
+        {
+            var assistantProvider = MapCodeAssistantToApiKeyProvider(codeAssistant.Tool);
+            var apiKey = await _apiKeyService.ResolveKeyAsync(container.OwnerId, assistantProvider, ct);
+            if (apiKey is not null)
+            {
+                var envVarName = codeAssistant.ApiKeyEnvVar ?? GetDefaultEnvVar(assistantProvider);
+                envVars = new Dictionary<string, string> { [envVarName] = apiKey };
+                _logger.LogInformation("Resolved API key for {Provider}, will inject as {EnvVar}",
+                    assistantProvider, envVarName);
+            }
+            else
+            {
+                _logger.LogWarning("No API key found for {Provider} for user {OwnerId}, container will start without it",
+                    assistantProvider, container.OwnerId);
+            }
+        }
+
+        // Merge user-specified env vars (don't override API key)
+        if (request.EnvironmentVariables is { Count: > 0 })
+        {
+            envVars ??= new Dictionary<string, string>();
+            foreach (var kv in request.EnvironmentVariables.Where(kv => !envVars.ContainsKey(kv.Key)))
+                envVars[kv.Key] = kv.Value;
+        }
+
         // Enqueue the provisioning job for the background worker
         var job = new ContainerProvisionJob(
             ContainerId: container.Id,
@@ -207,7 +275,9 @@ public class ContainerOrchestrationService : IContainerService
             Resources: request.Resources,
             Gpu: request.Gpu,
             HasGitRepositories: hasGitRepos,
-            PostCreateScripts: postCreateScripts);
+            PostCreateScripts: postCreateScripts,
+            CodeAssistant: codeAssistant,
+            EnvironmentVariables: envVars);
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",
@@ -265,6 +335,9 @@ public class ContainerOrchestrationService : IContainerService
 
     public async Task StartContainerAsync(Guid containerId, CancellationToken ct)
     {
+        using var activity = ActivitySources.Provisioning.StartActivity("StartContainer");
+        activity?.SetTag("containerId", containerId.ToString());
+
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status != ContainerStatus.Stopped)
             throw new InvalidOperationException($"Container is {container.Status}, cannot start");
@@ -281,6 +354,9 @@ public class ContainerOrchestrationService : IContainerService
 
     public async Task StopContainerAsync(Guid containerId, CancellationToken ct)
     {
+        using var activity = ActivitySources.Provisioning.StartActivity("StopContainer");
+        activity?.SetTag("containerId", containerId.ToString());
+
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status != ContainerStatus.Running)
             throw new InvalidOperationException($"Container is {container.Status}, cannot stop");
@@ -315,6 +391,9 @@ public class ContainerOrchestrationService : IContainerService
 
     public async Task<ExecResult> ExecAsync(Guid containerId, string command, CancellationToken ct)
     {
+        using var activity = ActivitySources.Provisioning.StartActivity("ExecCommand");
+        activity?.SetTag("containerId", containerId.ToString());
+
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status != ContainerStatus.Running)
             throw new InvalidOperationException($"Container is {container.Status}, cannot exec");
@@ -332,4 +411,25 @@ public class ContainerOrchestrationService : IContainerService
         var infra = _providerFactory.GetProvider(container.Provider!);
         return await infra.GetConnectionInfoAsync(container.ExternalId, ct);
     }
+
+    private static ApiKeyProvider MapCodeAssistantToApiKeyProvider(CodeAssistantType tool) => tool switch
+    {
+        CodeAssistantType.ClaudeCode => ApiKeyProvider.Anthropic,
+        CodeAssistantType.CodexCli => ApiKeyProvider.OpenAI,
+        CodeAssistantType.Aider => ApiKeyProvider.OpenAI,
+        CodeAssistantType.Continue => ApiKeyProvider.Custom,
+        CodeAssistantType.OpenCode => ApiKeyProvider.OpenAI,
+        CodeAssistantType.QwenCoder => ApiKeyProvider.Dashscope,
+        CodeAssistantType.GeminiCode => ApiKeyProvider.Google,
+        _ => ApiKeyProvider.Custom
+    };
+
+    private static string GetDefaultEnvVar(ApiKeyProvider provider) => provider switch
+    {
+        ApiKeyProvider.Anthropic => "ANTHROPIC_API_KEY",
+        ApiKeyProvider.OpenAI => "OPENAI_API_KEY",
+        ApiKeyProvider.Google => "GOOGLE_API_KEY",
+        ApiKeyProvider.Dashscope => "DASHSCOPE_API_KEY",
+        _ => "API_KEY"
+    };
 }

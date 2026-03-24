@@ -18,10 +18,11 @@ public class ActivitySourcesTests
     [Fact]
     public void All_array_contains_all_source_names()
     {
-        ActivitySources.All.Should().HaveCount(4);
+        ActivitySources.All.Should().HaveCount(5);
         ActivitySources.All.Should().Contain(ActivitySources.Provisioning.Name);
         ActivitySources.All.Should().Contain(ActivitySources.Introspection.Name);
         ActivitySources.All.Should().Contain(ActivitySources.Git.Name);
         ActivitySources.All.Should().Contain(ActivitySources.Infrastructure.Name);
+        ActivitySources.All.Should().Contain(ActivitySources.ApiKeys.Name);
     }
 }

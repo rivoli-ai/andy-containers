@@ -94,6 +94,11 @@ scripts:
     /usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 &
     startxfce4 &
 
+code_assistant:
+  tool: claude-code
+  auto_start: false
+  api_key_env: ANTHROPIC_API_KEY
+
 tags:
   - agent
   - devpilot

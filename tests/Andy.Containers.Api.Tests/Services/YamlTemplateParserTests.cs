@@ -533,4 +533,51 @@ public class YamlTemplateParserTests
 
         template.IdeType.Should().Be(IdeType.CodeServer);
     }
+
+    [Fact]
+    public void Parse_CodeAssistant_ParsedAsJson()
+    {
+        var yaml = """
+            code: my-ai-template
+            name: AI Template
+            version: 1.0.0
+            base_image: ubuntu:24.04
+            code_assistant:
+              tool: claude-code
+              auto_start: false
+              api_key_env: ANTHROPIC_API_KEY
+            """;
+
+        var template = _parser.Parse(yaml);
+
+        template.CodeAssistant.Should().NotBeNull();
+        template.CodeAssistant.Should().Contain("claude-code");
+        template.CodeAssistant.Should().Contain("ANTHROPIC_API_KEY");
+    }
+
+    [Fact]
+    public void Parse_WithoutCodeAssistant_CodeAssistantIsNull()
+    {
+        var template = _parser.Parse(MinimalValidYaml);
+
+        template.CodeAssistant.Should().BeNull();
+    }
+
+    [Fact]
+    public void Validate_CodeAssistant_IsKnownKey()
+    {
+        var yaml = """
+            code: my-ai-template
+            name: AI Template
+            version: 1.0.0
+            base_image: ubuntu:24.04
+            code_assistant:
+              tool: claude-code
+            """;
+
+        var result = _parser.Validate(yaml);
+
+        result.IsValid.Should().BeTrue();
+        result.Warnings.Should().NotContain(w => w.Field == "code_assistant");
+    }
 }

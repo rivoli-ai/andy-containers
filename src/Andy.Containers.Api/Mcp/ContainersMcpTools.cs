@@ -12,6 +12,7 @@ namespace Andy.Containers.Api.Mcp;
 public class ContainersMcpTools
 {
     private readonly ContainersDbContext _db;
+    private readonly IContainerService _containerService;
     private readonly IGitCloneService _gitCloneService;
     private readonly IGitCredentialService _credentialService;
     private readonly IGitRepositoryProbeService _probeService;
@@ -19,18 +20,22 @@ public class ContainersMcpTools
     private readonly IImageDiffService _diffService;
     private readonly ICurrentUserService _currentUser;
     private readonly IOrganizationMembershipService _orgMembership;
+    private readonly IApiKeyService _apiKeyService;
 
     public ContainersMcpTools(
         ContainersDbContext db,
+        IContainerService containerService,
         IGitCloneService gitCloneService,
         IGitCredentialService credentialService,
         IGitRepositoryProbeService probeService,
         IImageManifestService manifestService,
         IImageDiffService diffService,
         ICurrentUserService currentUser,
-        IOrganizationMembershipService orgMembership)
+        IOrganizationMembershipService orgMembership,
+        IApiKeyService apiKeyService)
     {
         _db = db;
+        _containerService = containerService;
         _gitCloneService = gitCloneService;
         _credentialService = credentialService;
         _probeService = probeService;
@@ -38,6 +43,7 @@ public class ContainersMcpTools
         _diffService = diffService;
         _currentUser = currentUser;
         _orgMembership = orgMembership;
+        _apiKeyService = apiKeyService;
     }
 
     [McpServerTool, Description("List all containers with their status")]
@@ -45,19 +51,27 @@ public class ContainersMcpTools
         [Description("Filter by status: Pending, Creating, Running, Stopped, Failed, Destroyed")] string? status = null,
         [Description("Filter by organization ID (GUID)")] string? organizationId = null)
     {
-        var query = _db.Containers.Include(c => c.Template).Include(c => c.Provider).AsQueryable();
+        ContainerStatus? statusFilter = null;
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<ContainerStatus>(status, true, out var s))
-            query = query.Where(c => c.Status == s);
-        if (!string.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, out var orgId))
+            statusFilter = s;
+
+        Guid? orgId = null;
+        if (!string.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, out var parsedOrgId))
         {
             if (!_currentUser.IsAdmin())
             {
-                var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), orgId);
+                var isMember = await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), parsedOrgId);
                 if (!isMember) return [];
             }
-            query = query.Where(c => c.OrganizationId == orgId);
+            orgId = parsedOrgId;
         }
-        var containers = await query.OrderByDescending(c => c.CreatedAt).Take(50).ToListAsync();
+
+        var containers = await _containerService.ListContainersAsync(new ContainerFilter
+        {
+            Status = statusFilter,
+            OrganizationId = orgId,
+            Take = 50
+        });
         return containers.Select(c => new McpContainerInfo(c.Id, c.Name, c.Template?.Name ?? "", c.Provider?.Name ?? "", c.Status.ToString(), c.IdeEndpoint, c.VncEndpoint, c.CreatedAt)).ToList();
     }
 
@@ -65,9 +79,15 @@ public class ContainersMcpTools
     public async Task<McpContainerDetail?> GetContainer([Description("Container ID (GUID)")] string containerId)
     {
         if (!Guid.TryParse(containerId, out var id)) return null;
-        var c = await _db.Containers.Include(c => c.Template).Include(c => c.Provider).FirstOrDefaultAsync(c => c.Id == id);
-        if (c is null) return null;
-        return new McpContainerDetail(c.Id, c.Name, c.Template?.Name ?? "", c.Template?.Code ?? "", c.Provider?.Name ?? "", c.Provider?.Type.ToString() ?? "", c.Status.ToString(), c.OwnerId, c.IdeEndpoint, c.VncEndpoint, c.ExternalId, c.CreatedAt, c.StartedAt, c.StoppedAt, c.ExpiresAt);
+        try
+        {
+            var c = await _containerService.GetContainerAsync(id);
+            return new McpContainerDetail(c.Id, c.Name, c.Template?.Name ?? "", c.Template?.Code ?? "", c.Provider?.Name ?? "", c.Provider?.Type.ToString() ?? "", c.Status.ToString(), c.OwnerId, c.IdeEndpoint, c.VncEndpoint, c.ExternalId, c.CreatedAt, c.StartedAt, c.StoppedAt, c.ExpiresAt);
+        }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
     }
 
     [McpServerTool, Description("Browse the container template catalog")]
@@ -366,15 +386,68 @@ public class ContainersMcpTools
         _db.Images.Add(image);
         await _db.SaveChangesAsync();
 
-        image.BuildStatus = ImageBuildStatus.Succeeded;
-        image.BuildCompletedAt = DateTime.UtcNow;
-        image.Changelog = "Organization-scoped build";
-        await _db.SaveChangesAsync();
+        try
+        {
+            var (manifest, finalImage) = await _manifestService.GenerateManifestAsync(image.Id);
+            finalImage.BuildStatus = ImageBuildStatus.Succeeded;
+            finalImage.BuildCompletedAt = DateTime.UtcNow;
+            finalImage.Changelog = "Organization-scoped build";
+            await _db.SaveChangesAsync();
+            image = finalImage;
+        }
+        catch
+        {
+            image.BuildStatus = ImageBuildStatus.Succeeded;
+            image.BuildCompletedAt = DateTime.UtcNow;
+            image.Changelog = "Organization-scoped build (introspection unavailable)";
+            await _db.SaveChangesAsync();
+        }
 
-        return new McpImageInfo(image.Id, image.Tag, image.ContentHash, image.BuildNumber, image.BuildStatus.ToString(), image.BuiltOffline, image.Changelog, image.CreatedAt);
+        return new McpImageInfo(image.Id, image.Tag, image.ContentHash, image.BuildNumber, image.BuildStatus.ToString(), image.BuiltOffline, image.Changelog ?? "", image.CreatedAt);
+    }
+    [McpServerTool, Description("Store an API key for an AI code assistant provider. The key is validated immediately and encrypted at rest.")]
+    public async Task<McpApiKeyInfo?> StoreApiKey(
+        [Description("Provider: Anthropic, OpenAI, Google, Dashscope, Custom")] string provider,
+        [Description("Label for this key (e.g., 'my-anthropic-key')")] string label,
+        [Description("The API key value")] string apiKey,
+        [Description("Environment variable name (defaults based on provider)")] string? envVarName = null)
+    {
+        if (!Enum.TryParse<ApiKeyProvider>(provider, true, out var p)) return null;
+        var userId = _currentUser.GetUserId();
+        var credential = await _apiKeyService.CreateAsync(userId, label, p, apiKey, envVarName);
+        return new McpApiKeyInfo(credential.Id, credential.Label, credential.Provider.ToString(), credential.EnvVarName, credential.MaskedValue ?? "****", credential.IsValid, credential.LastValidatedAt, credential.LastUsedAt, credential.CreatedAt);
+    }
+
+    [McpServerTool, Description("List stored API keys for the current user (values are never returned)")]
+    public async Task<IReadOnlyList<McpApiKeyInfo>> ListApiKeys()
+    {
+        var userId = _currentUser.GetUserId();
+        var keys = await _apiKeyService.ListAsync(userId);
+        return keys.Select(k => new McpApiKeyInfo(k.Id, k.Label, k.Provider.ToString(), k.EnvVarName, k.MaskedValue ?? "****", k.IsValid, k.LastValidatedAt, k.LastUsedAt, k.CreatedAt)).ToList();
+    }
+
+    [McpServerTool, Description("Delete a stored API key")]
+    public async Task<bool> DeleteApiKey(
+        [Description("API key ID (GUID)")] string apiKeyId)
+    {
+        if (!Guid.TryParse(apiKeyId, out var id)) return false;
+        var userId = _currentUser.GetUserId();
+        return await _apiKeyService.DeleteAsync(id, userId);
+    }
+
+    [McpServerTool, Description("Re-validate a stored API key against the provider's API")]
+    public async Task<McpApiKeyValidationInfo?> ValidateApiKey(
+        [Description("API key ID (GUID)")] string apiKeyId)
+    {
+        if (!Guid.TryParse(apiKeyId, out var id)) return null;
+        var userId = _currentUser.GetUserId();
+        var result = await _apiKeyService.ValidateExistingAsync(id, userId);
+        return new McpApiKeyValidationInfo(result.IsValid, result.Error);
     }
 }
 
+public record McpApiKeyInfo(Guid Id, string Label, string Provider, string EnvVarName, string MaskedValue, bool IsValid, DateTime? LastValidatedAt, DateTime? LastUsedAt, DateTime CreatedAt);
+public record McpApiKeyValidationInfo(bool IsValid, string? Error);
 public record McpGitRepositoryInfo(Guid Id, string Url, string Branch, string TargetPath, string CloneStatus, string CloneError, bool IsFromTemplate, DateTime? CloneStartedAt, DateTime? CloneCompletedAt);
 public record McpGitCredentialInfo(Guid Id, string Label, string GitHost, string CredentialType, DateTime CreatedAt, DateTime? LastUsedAt);
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);

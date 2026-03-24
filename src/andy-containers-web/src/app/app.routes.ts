@@ -13,4 +13,5 @@ export const routes: Routes = [
   { path: 'workspaces', loadComponent: () => import('./features/workspaces/workspace-list/workspace-list.component').then(m => m.WorkspaceListComponent) },
   { path: 'workspaces/create', loadComponent: () => import('./features/workspaces/workspace-create/workspace-create.component').then(m => m.WorkspaceCreateComponent) },
   { path: 'workspaces/:id', loadComponent: () => import('./features/workspaces/workspace-detail/workspace-detail.component').then(m => m.WorkspaceDetailComponent) },
+  { path: 'settings', loadComponent: () => import('./features/settings/settings.component').then(m => m.SettingsComponent) },
 ];

@@ -17,6 +17,8 @@ import {
   ProviderHealthResult,
   CostEstimate,
   PaginatedResult,
+  ApiKeyCredential,
+  ApiKeyChangeEntry,
 } from '../models';
 
 @Injectable({ providedIn: 'root' })
@@ -148,15 +150,40 @@ export class ContainersApiService {
     return this.http.get<Workspace>(`${this.baseUrl}/workspaces/${id}`);
   }
 
-  createWorkspace(data: { name: string; description?: string; organizationId?: string; teamId?: string; gitRepositoryUrl?: string; gitBranch?: string }): Observable<Workspace> {
+  createWorkspace(data: { name: string; description?: string; organizationId?: string; teamId?: string; gitRepositoryUrl?: string; gitBranch?: string; gitRepositories?: { url: string; branch?: string; credentialRef?: string; targetPath?: string }[] }): Observable<Workspace> {
     return this.http.post<Workspace>(`${this.baseUrl}/workspaces`, data);
   }
 
-  updateWorkspace(id: string, data: { name?: string; description?: string; gitBranch?: string }): Observable<Workspace> {
+  updateWorkspace(id: string, data: { name?: string; description?: string; gitBranch?: string; gitRepositories?: { url: string; branch?: string; credentialRef?: string; targetPath?: string }[] }): Observable<Workspace> {
     return this.http.put<Workspace>(`${this.baseUrl}/workspaces/${id}`, data);
   }
 
   deleteWorkspace(id: string): Observable<void> {
     return this.http.delete<void>(`${this.baseUrl}/workspaces/${id}`);
+  }
+
+  // API Keys
+  getApiKeys(): Observable<ApiKeyCredential[]> {
+    return this.http.get<ApiKeyCredential[]>(`${this.baseUrl}/api-keys`);
+  }
+
+  createApiKey(data: { label: string; provider: string; apiKey: string; envVarName?: string }): Observable<ApiKeyCredential> {
+    return this.http.post<ApiKeyCredential>(`${this.baseUrl}/api-keys`, data);
+  }
+
+  updateApiKey(id: string, data: { label?: string; apiKey?: string }): Observable<ApiKeyCredential> {
+    return this.http.put<ApiKeyCredential>(`${this.baseUrl}/api-keys/${id}`, data);
+  }
+
+  deleteApiKey(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/api-keys/${id}`);
+  }
+
+  validateApiKey(id: string): Observable<{ isValid: boolean; error?: string }> {
+    return this.http.post<{ isValid: boolean; error?: string }>(`${this.baseUrl}/api-keys/${id}/validate`, {});
+  }
+
+  getApiKeyHistory(id: string): Observable<ApiKeyChangeEntry[]> {
+    return this.http.get<ApiKeyChangeEntry[]>(`${this.baseUrl}/api-keys/${id}/history`);
   }
 }

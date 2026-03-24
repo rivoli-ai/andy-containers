@@ -19,6 +19,7 @@ public class Container
     public string? VncEndpoint { get; set; }
     public string? GitRepository { get; set; }
     public string? EnvironmentVariables { get; set; }
+    public string? CodeAssistant { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? StoppedAt { get; set; }

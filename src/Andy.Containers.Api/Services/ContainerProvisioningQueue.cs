@@ -12,7 +12,9 @@ public record ContainerProvisionJob(
     Abstractions.ResourceSpec? Resources,
     Abstractions.GpuSpec? Gpu,
     bool HasGitRepositories = false,
-    IReadOnlyList<string>? PostCreateScripts = null);
+    IReadOnlyList<string>? PostCreateScripts = null,
+    Andy.Containers.Models.CodeAssistantConfig? CodeAssistant = null,
+    Dictionary<string, string>? EnvironmentVariables = null);
 
 public class ContainerProvisioningQueue
 {

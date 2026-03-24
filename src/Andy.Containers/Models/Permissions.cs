@@ -18,6 +18,10 @@ public static class Permissions
     // Provider permissions
     public const string ProviderRead = "provider:read";
     public const string ProviderManage = "provider:manage";
+
+    // API Key permissions
+    public const string ApiKeyManage = "api-key:manage";
+    public const string ApiKeyAdmin = "api-key:admin";
 }
 
 public static class OrgRoles
@@ -33,14 +37,17 @@ public static class OrgRoles
             Permissions.ImageDelete, Permissions.ImageBuild,
             Permissions.TemplateCreate, Permissions.TemplateRead,
             Permissions.TemplatePublish, Permissions.TemplateManage,
-            Permissions.ProviderRead, Permissions.ProviderManage
+            Permissions.ProviderRead, Permissions.ProviderManage,
+            Permissions.ApiKeyManage, Permissions.ApiKeyAdmin
         ],
         Editor => [
             Permissions.ImageCreate, Permissions.ImageRead, Permissions.ImageBuild,
-            Permissions.TemplateCreate, Permissions.TemplateRead, Permissions.TemplateManage
+            Permissions.TemplateCreate, Permissions.TemplateRead, Permissions.TemplateManage,
+            Permissions.ApiKeyManage
         ],
         Viewer => [
-            Permissions.ImageRead, Permissions.TemplateRead, Permissions.ProviderRead
+            Permissions.ImageRead, Permissions.TemplateRead, Permissions.ProviderRead,
+            Permissions.ApiKeyManage
         ],
         _ => []
     };

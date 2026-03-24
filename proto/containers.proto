@@ -70,6 +70,14 @@ message CreateContainerRequest {
   int64 expires_after_seconds = 13;
   repeated GitRepositoryConfig git_repositories = 14;
   bool exclude_template_repos = 15;
+  CodeAssistantConfig code_assistant = 16;
+  bool exclude_template_code_assistant = 17;
+}
+
+message CodeAssistantConfig {
+  string tool = 1;          // claude-code, codex-cli, aider, continue, open-code, qwen-coder, gemini-code
+  bool auto_start = 2;
+  string api_key_env = 3;   // env var name for API key injection
 }
 
 message ContainerIdRequest {

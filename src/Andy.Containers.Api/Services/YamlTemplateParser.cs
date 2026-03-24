@@ -14,7 +14,7 @@ public class YamlTemplateParser : IYamlTemplateParser
         "code", "name", "description", "version", "base_image",
         "scope", "catalog_scope", "ide_type", "gpu_required", "gpu_preferred",
         "tags", "ports", "environment", "scripts", "resources",
-        "dependencies", "git_repositories"
+        "dependencies", "git_repositories", "code_assistant"
     };
 
     private static readonly HashSet<string> ValidDependencyTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -236,6 +236,7 @@ public class YamlTemplateParser : IYamlTemplateParser
         template.DefaultResources = SerializeIfPresent(dict, "resources");
         template.Toolchains = SerializeIfPresent(dict, "dependencies");
         template.GitRepositories = SerializeIfPresent(dict, "git_repositories");
+        template.CodeAssistant = SerializeIfPresent(dict, "code_assistant");
 
         return template;
     }

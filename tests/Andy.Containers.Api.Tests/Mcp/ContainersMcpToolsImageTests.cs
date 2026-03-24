@@ -30,13 +30,15 @@ public class ContainersMcpToolsImageTests : IDisposable
         mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _tools = new ContainersMcpTools(
             _db,
+            new Mock<IContainerService>().Object,
             new Mock<IGitCloneService>().Object,
             new Mock<IGitCredentialService>().Object,
             new Mock<IGitRepositoryProbeService>().Object,
             _mockManifestService.Object,
             _mockDiffService.Object,
             mockCurrentUser.Object,
-            mockOrgMembership.Object);
+            mockOrgMembership.Object,
+            new Mock<IApiKeyService>().Object);
     }
 
     public void Dispose() => _db.Dispose();
