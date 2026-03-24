@@ -111,8 +111,8 @@ public class TerminalController : ControllerBase
             Environment =
             {
                 ["TERM"] = "xterm-256color",
-                ["COLUMNS"] = "200",
-                ["LINES"] = "50"
+                ["COLUMNS"] = "120",
+                ["LINES"] = "30"
             }
         };
 
@@ -223,7 +223,16 @@ public class TerminalController : ControllerBase
                         // Handle terminal resize messages (format: \x1b[R<cols>;<rows>)
                         if (data.StartsWith("\x1b[R") && data.Contains(';'))
                         {
-                            // PTY resize would require ioctl — skip for now
+                            var sizeStr = data[3..]; // strip \x1b[R
+                            var parts = sizeStr.Split(';');
+                            if (parts.Length == 2 && int.TryParse(parts[0], out var cols) && int.TryParse(parts[1], out var rows))
+                            {
+                                // Send resize via stty and also tell tmux to refresh
+                                await process.StandardInput.WriteAsync(
+                                    $" stty cols {cols} rows {rows} 2>/dev/null; [ -n \"$TMUX\" ] && tmux refresh-client -C {cols},{rows} 2>/dev/null\n");
+                                await process.StandardInput.FlushAsync();
+                                _logger.LogDebug("Terminal resized to {Cols}x{Rows}", cols, rows);
+                            }
                             continue;
                         }
 
