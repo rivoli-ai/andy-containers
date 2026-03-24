@@ -13,32 +13,29 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
   standalone: true,
   imports: [CommonModule, RouterLink, StatusBadgeComponent],
   template: `
-    <div [class]="isFullscreen ? 'fixed inset-0 z-50 flex flex-col' : 'flex flex-col h-[calc(100vh-4rem)]'"
-         style="background-color: #1a1a2e;">
+    <div class="terminal-wrapper" [class.fullscreen]="isFullscreen">
       <!-- Header bar -->
-      <div class="flex items-center justify-between px-4 py-1.5 border-b border-gray-700 bg-[#16213e] shrink-0">
+      <div class="terminal-header">
         <div class="flex items-center gap-3">
           <a *ngIf="!isFullscreen" [routerLink]="['/containers', containerId]" class="text-gray-400 hover:text-gray-200">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
           </a>
-          <span class="text-white font-medium text-sm">{{ container?.name || 'Terminal' }}</span>
+          <span class="text-white font-medium">{{ container?.name || 'Terminal' }}</span>
           <app-status-badge *ngIf="container" [status]="container.status"></app-status-badge>
-          <span *ngIf="connected" class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-green-900/30 text-green-400">Connected</span>
-          <span *ngIf="connecting" class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-yellow-900/30 text-yellow-400">Connecting...</span>
-          <span *ngIf="!connected && !connecting && error" class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-red-900/30 text-red-400">Disconnected</span>
+          <span *ngIf="connected" class="badge bg-green-900/30 text-green-400">Connected</span>
+          <span *ngIf="connecting" class="badge bg-yellow-900/30 text-yellow-400">Connecting...</span>
+          <span *ngIf="!connected && !connecting && error" class="badge bg-red-900/30 text-red-400">Disconnected</span>
         </div>
         <div class="flex items-center gap-2">
           <button (click)="showCheatsheet = !showCheatsheet"
-                  class="text-xs px-2 py-1 rounded border"
-                  [class]="showCheatsheet ? 'text-cyan-400 border-cyan-600 bg-cyan-900/20' : 'text-gray-400 hover:text-gray-200 border-gray-600 hover:border-gray-500'">
+                  class="header-btn"
+                  [class.active]="showCheatsheet">
             tmux help
           </button>
-          <button *ngIf="!connected && !connecting" (click)="connect()"
-                  class="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded border border-gray-600 hover:border-gray-500">
+          <button *ngIf="!connected && !connecting" (click)="connect()" class="header-btn">
             Reconnect
           </button>
-          <button (click)="toggleFullscreen()"
-                  class="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded border border-gray-600 hover:border-gray-500"
+          <button (click)="toggleFullscreen()" class="header-btn"
                   [title]="isFullscreen ? 'Exit full screen (Esc)' : 'Full screen (F11)'">
             <svg *ngIf="!isFullscreen" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/>
@@ -51,30 +48,102 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
       </div>
 
       <!-- tmux cheatsheet -->
-      <div *ngIf="showCheatsheet" class="px-4 py-2 bg-[#0d1b2a] border-b border-gray-700 text-xs text-gray-400 shrink-0">
+      <div *ngIf="showCheatsheet" class="cheatsheet">
         <div class="flex flex-wrap gap-x-6 gap-y-1">
-          <span class="text-gray-500 font-medium">tmux shortcuts (prefix: Ctrl+B)</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">d</kbd> detach</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">c</kbd> new window</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">n</kbd>/<kbd class="text-cyan-400">p</kbd> next/prev window</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">%</kbd> split vertical</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">"</kbd> split horizontal</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">arrow</kbd> switch pane</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">[</kbd> scroll mode (q to exit)</span>
-          <span><kbd class="text-cyan-400">Ctrl+B</kbd> <kbd class="text-cyan-400">z</kbd> zoom pane</span>
-          <span><kbd class="text-cyan-400">Ctrl+D</kbd> close pane/window</span>
+          <span class="text-gray-500 font-semibold">tmux (prefix: Ctrl+B)</span>
+          <span><kbd>Ctrl+B d</kbd> detach</span>
+          <span><kbd>Ctrl+B c</kbd> new window</span>
+          <span><kbd>Ctrl+B n/p</kbd> next/prev</span>
+          <span><kbd>Ctrl+B %</kbd> split vert</span>
+          <span><kbd>Ctrl+B "</kbd> split horiz</span>
+          <span><kbd>Ctrl+B arrow</kbd> switch pane</span>
+          <span><kbd>Ctrl+B [</kbd> scroll (q exit)</span>
+          <span><kbd>Ctrl+B z</kbd> zoom pane</span>
+          <span><kbd>Ctrl+D</kbd> close</span>
         </div>
       </div>
 
       <!-- Terminal -->
-      <div #terminalContainer class="flex-1 min-h-0 overflow-hidden"></div>
+      <div #terminalContainer class="terminal-container"></div>
     </div>
   `,
   styles: [`
-    :host { display: block; }
-    ::ng-deep .xterm { height: 100%; padding: 4px; }
-    ::ng-deep .xterm-viewport { overflow-y: auto !important; }
-    kbd { font-family: inherit; padding: 1px 4px; border-radius: 3px; background: rgba(255,255,255,0.08); }
+    :host {
+      display: block;
+      height: calc(100vh - 4rem);
+      overflow: hidden;
+    }
+    .terminal-wrapper {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background-color: #1a1a2e;
+      overflow: hidden;
+    }
+    .terminal-wrapper.fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      height: 100vh;
+    }
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      border-bottom: 1px solid #374151;
+      background: #16213e;
+      flex-shrink: 0;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .header-btn {
+      font-size: 12px;
+      color: #9ca3af;
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid #4b5563;
+      background: transparent;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+    }
+    .header-btn:hover { color: #e5e7eb; border-color: #6b7280; }
+    .header-btn.active { color: #22d3ee; border-color: #0891b2; background: rgba(6,182,212,0.1); }
+    .cheatsheet {
+      padding: 8px 16px;
+      background: #0d1b2a;
+      border-bottom: 1px solid #374151;
+      font-size: 13px;
+      color: #9ca3af;
+      flex-shrink: 0;
+    }
+    .cheatsheet kbd {
+      font-family: inherit;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.1);
+      color: #22d3ee;
+      font-size: 12px;
+    }
+    .terminal-container {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    ::ng-deep .terminal-container .xterm {
+      height: 100%;
+      padding: 4px;
+    }
+    ::ng-deep .terminal-container .xterm-viewport {
+      overflow-y: auto !important;
+    }
   `],
 })
 export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDestroy {
@@ -136,11 +205,7 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   toggleFullscreen(): void {
     this.isFullscreen = !this.isFullscreen;
-    // Refit terminal after layout change
-    setTimeout(() => {
-      this.fitAddon.fit();
-      this.sendResize();
-    }, 50);
+    setTimeout(() => this.fitAddon.fit(), 50);
   }
 
   private initTerminal(): void {
@@ -148,8 +213,9 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
     this.terminal = new Terminal({
       cursorBlink: true,
-      fontSize: 15,
-      lineHeight: 1.15,
+      fontSize: 16,
+      lineHeight: 1.2,
+      letterSpacing: 0,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
       theme: {
         background: '#1a1a2e',
@@ -187,7 +253,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     // Watch for resize
     this.resizeObserver = new ResizeObserver(() => {
       this.fitAddon.fit();
-      this.sendResize();
     });
     this.resizeObserver.observe(this.terminalContainer.nativeElement);
 
@@ -197,10 +262,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
         this.ws.send(data);
       }
     });
-
-    this.terminal.onResize(() => {
-      this.sendResize();
-    });
   }
 
   connect(): void {
@@ -208,7 +269,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.connecting = true;
     this.error = '';
 
-    // Build WebSocket URL — use same host (works through Angular proxy or direct)
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${location.host}/api/containers/${this.containerId}/terminal`;
 
@@ -224,8 +284,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       this.connecting = false;
       this.connected = true;
       this.hasConnectedBefore = true;
-      // Send actual terminal size immediately
-      this.sendResize();
     };
 
     this.ws.onmessage = (event) => {
@@ -250,14 +308,5 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       this.error = 'Connection failed';
       this.terminal.writeln('\r\n\x1b[31mFailed to connect. Is the container running?\x1b[0m');
     };
-  }
-
-  private sendResize(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      const cols = this.terminal.cols;
-      const rows = this.terminal.rows;
-      // Send resize escape sequence
-      this.ws.send(`\x1b[R${cols};${rows}`);
-    }
   }
 }
