@@ -1,10 +1,9 @@
+using System.Diagnostics;
 using System.Net.WebSockets;
-using Andy.Containers.Abstractions;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Renci.SshNet;
 
 namespace Andy.Containers.Api.Controllers;
 
@@ -14,11 +13,6 @@ public class TerminalController : ControllerBase
 {
     private readonly ContainersDbContext _db;
     private readonly ILogger<TerminalController> _logger;
-
-    // Default SSH credentials set by the post-create script
-    private const string SshUser = "root";
-    private const string SshPassword = "container";
-    private const int SshPort = 22;
 
     public TerminalController(ContainersDbContext db, ILogger<TerminalController> logger)
     {
@@ -54,21 +48,20 @@ public class TerminalController : ControllerBase
             return;
         }
 
-        var hostIp = container.HostIp;
-        if (string.IsNullOrEmpty(hostIp))
+        if (string.IsNullOrEmpty(container.ExternalId))
         {
             HttpContext.Response.StatusCode = 400;
-            await HttpContext.Response.WriteAsync("Container has no host IP assigned");
+            await HttpContext.Response.WriteAsync("Container has no external ID");
             return;
         }
 
         var ws = await HttpContext.WebSockets.AcceptWebSocketAsync();
-        _logger.LogInformation("Terminal WebSocket connected for container {Name} ({Id}) at {HostIp}",
-            container.Name, container.Id, hostIp);
+        _logger.LogInformation("Terminal WebSocket connected for container {Name} ({Id})",
+            container.Name, container.Id);
 
         try
         {
-            await RunSshSession(ws, hostIp, container.Name, HttpContext.RequestAborted);
+            await RunExecSession(ws, container, HttpContext.RequestAborted);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -83,36 +76,76 @@ public class TerminalController : ControllerBase
         }
     }
 
-    private async Task RunSshSession(WebSocket ws, string hostIp, string containerName, CancellationToken ct)
+    private async Task RunExecSession(WebSocket ws, Container container, CancellationToken ct)
     {
-        using var sshClient = new SshClient(hostIp, SshPort, SshUser, SshPassword);
-        sshClient.ConnectionInfo.Timeout = TimeSpan.FromSeconds(10);
+        var externalId = container.ExternalId!;
+        var providerType = container.Provider?.Type ?? ProviderType.Docker;
+
+        // Build the exec command based on provider type
+        var (command, args) = providerType switch
+        {
+            ProviderType.AppleContainer => ("container", $"exec -it {externalId} -- bash -l"),
+            ProviderType.Docker => ("docker", $"exec -it {externalId} bash -l"),
+            _ => ("docker", $"exec -it {externalId} bash -l")
+        };
+
+        // Use 'script' to allocate a PTY for the subprocess
+        // script -q /dev/null wraps the command in a pseudo-terminal
+        var psi = new ProcessStartInfo
+        {
+            FileName = "/usr/bin/script",
+            ArgumentList = { "-q", "/dev/null", command },
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            Environment =
+            {
+                ["TERM"] = "xterm-256color",
+                ["COLUMNS"] = "200",
+                ["LINES"] = "50"
+            }
+        };
+
+        // script command takes the actual command after the filename arg
+        // On macOS: script -q /dev/null command arg1 arg2...
+        foreach (var arg in args.Split(' '))
+            psi.ArgumentList.Add(arg);
+
+        var process = new Process { StartInfo = psi };
 
         try
         {
-            sshClient.Connect();
+            if (!process.Start())
+            {
+                var msg = "\r\n\x1b[31mFailed to start terminal process\x1b[0m\r\n";
+                await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(msg), WebSocketMessageType.Binary, true, ct);
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Process start failed", ct);
+                return;
+            }
         }
         catch (Exception ex)
         {
-            var msg = $"\r\n\x1b[31mSSH connection failed to {hostIp}: {ex.Message}\x1b[0m\r\n";
+            var msg = $"\r\n\x1b[31mFailed to start terminal: {ex.Message}\x1b[0m\r\n";
             await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(msg), WebSocketMessageType.Binary, true, ct);
-            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "SSH failed", ct);
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Process start failed", ct);
             return;
         }
 
-        _logger.LogInformation("SSH connected to {HostIp} for container {Name}", hostIp, containerName);
+        _logger.LogInformation("Terminal process started (PID {Pid}) for container {Name} via {Command}",
+            process.Id, container.Name, command);
 
-        using var shell = sshClient.CreateShellStream("xterm-256color", 200, 50, 0, 0, 8192);
-
-        // Relay: SSH -> WebSocket
-        var sshToWs = Task.Run(async () =>
+        // Relay: Process stdout -> WebSocket
+        var processToWs = Task.Run(async () =>
         {
             var buffer = new byte[4096];
-            while (!ct.IsCancellationRequested && sshClient.IsConnected && ws.State == WebSocketState.Open)
+            var stream = process.StandardOutput.BaseStream;
+            while (!ct.IsCancellationRequested && !process.HasExited && ws.State == WebSocketState.Open)
             {
                 try
                 {
-                    var bytesRead = await shell.ReadAsync(buffer, ct);
+                    var bytesRead = await stream.ReadAsync(buffer, ct);
                     if (bytesRead > 0)
                     {
                         await ws.SendAsync(
@@ -123,23 +156,51 @@ public class TerminalController : ControllerBase
                     }
                     else
                     {
-                        await Task.Delay(10, ct);
+                        break; // EOF
                     }
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "SSH read error");
+                    _logger.LogDebug(ex, "Process read error");
                     break;
                 }
             }
         }, ct);
 
-        // Relay: WebSocket -> SSH
-        var wsToSsh = Task.Run(async () =>
+        // Relay: Process stderr -> WebSocket
+        var stderrToWs = Task.Run(async () =>
         {
             var buffer = new byte[4096];
-            while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
+            var stream = process.StandardError.BaseStream;
+            while (!ct.IsCancellationRequested && !process.HasExited && ws.State == WebSocketState.Open)
+            {
+                try
+                {
+                    var bytesRead = await stream.ReadAsync(buffer, ct);
+                    if (bytesRead > 0)
+                    {
+                        await ws.SendAsync(
+                            new ArraySegment<byte>(buffer, 0, bytesRead),
+                            WebSocketMessageType.Binary,
+                            true,
+                            ct);
+                    }
+                    else
+                    {
+                        break; // EOF
+                    }
+                }
+                catch (OperationCanceledException) { break; }
+                catch { break; }
+            }
+        }, ct);
+
+        // Relay: WebSocket -> Process stdin
+        var wsToProcess = Task.Run(async () =>
+        {
+            var buffer = new byte[4096];
+            while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open && !process.HasExited)
             {
                 try
                 {
@@ -155,13 +216,12 @@ public class TerminalController : ControllerBase
                         // Handle terminal resize messages (format: \x1b[R<cols>;<rows>)
                         if (data.StartsWith("\x1b[R") && data.Contains(';'))
                         {
-                            // Resize is acknowledged but SSH.NET ShellStream doesn't expose
-                            // window-change requests directly. The terminal was created with
-                            // a generous default size (200x50). Skip for now.
+                            // PTY resize would require ioctl — skip for now
                             continue;
                         }
 
-                        shell.Write(data);
+                        await process.StandardInput.WriteAsync(data);
+                        await process.StandardInput.FlushAsync();
                     }
                 }
                 catch (OperationCanceledException) { break; }
@@ -174,14 +234,27 @@ public class TerminalController : ControllerBase
             }
         }, ct);
 
-        await Task.WhenAny(sshToWs, wsToSsh);
+        await Task.WhenAny(processToWs, wsToProcess);
+
+        // Cleanup
+        if (!process.HasExited)
+        {
+            try { process.Kill(entireProcessTree: true); }
+            catch { /* ignore */ }
+        }
 
         if (ws.State == WebSocketState.Open)
         {
-            try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None); }
+            try
+            {
+                var exitMsg = $"\r\n\x1b[33mSession ended (exit code: {(process.HasExited ? process.ExitCode : -1)})\x1b[0m\r\n";
+                await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(exitMsg), WebSocketMessageType.Binary, true, CancellationToken.None);
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+            }
             catch { /* ignore close errors */ }
         }
 
-        _logger.LogInformation("Terminal session ended for container {Name}", containerName);
+        process.Dispose();
+        _logger.LogInformation("Terminal session ended for container {Name}", container.Name);
     }
 }
