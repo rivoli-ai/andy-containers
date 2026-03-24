@@ -13,22 +13,21 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
   standalone: true,
   imports: [CommonModule, RouterLink, StatusBadgeComponent],
   template: `
-    <div class="terminal-page" [class.fullscreen]="isFullscreen">
+    <div #page class="terminal-page" [class.fullscreen]="isFullscreen">
       <!-- Header bar -->
-      <div class="terminal-header">
+      <div #header class="terminal-header">
         <div class="flex items-center gap-3">
           <a *ngIf="!isFullscreen" [routerLink]="['/containers', containerId]" class="text-gray-400 hover:text-gray-200">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
           </a>
           <span class="text-white font-medium">{{ container?.name || 'Terminal' }}</span>
           <app-status-badge *ngIf="container" [status]="container.status"></app-status-badge>
-          <span *ngIf="connected" class="badge bg-green-900/30 text-green-400">Connected</span>
-          <span *ngIf="connecting" class="badge bg-yellow-900/30 text-yellow-400">Connecting...</span>
-          <span *ngIf="!connected && !connecting && error" class="badge bg-red-900/30 text-red-400">Disconnected</span>
+          <span *ngIf="connected" class="badge-connected">Connected</span>
+          <span *ngIf="connecting" class="badge-connecting">Connecting...</span>
+          <span *ngIf="!connected && !connecting && error" class="badge-error">Disconnected</span>
         </div>
         <div class="flex items-center gap-2">
-          <button (click)="showCheatsheet = !showCheatsheet"
-                  class="header-btn" [class.active]="showCheatsheet">
+          <button (click)="toggleCheatsheet()" class="header-btn" [class.active]="showCheatsheet">
             tmux help
           </button>
           <button *ngIf="!connected && !connecting" (click)="connect()" class="header-btn">
@@ -47,7 +46,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
       </div>
 
       <!-- tmux cheatsheet -->
-      <div *ngIf="showCheatsheet" class="cheatsheet">
+      <div *ngIf="showCheatsheet" #cheatsheetEl class="cheatsheet">
         <div class="flex flex-wrap gap-x-6 gap-y-1">
           <span class="text-gray-500 font-semibold">tmux (prefix: Ctrl+B)</span>
           <span><kbd>Ctrl+B d</kbd> detach</span>
@@ -62,29 +61,14 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
         </div>
       </div>
 
-      <!-- Terminal fills remaining space -->
+      <!-- Terminal: height set explicitly via JS -->
       <div #terminalContainer class="terminal-container"></div>
     </div>
   `,
   styles: [`
-    :host {
-      display: block;
-      height: calc(100vh - 4rem);
-      overflow: hidden;
-    }
-    .terminal-page {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      background: #0d1117;
-      overflow: hidden;
-    }
-    .terminal-page.fullscreen {
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      height: 100vh;
-    }
+    :host { display: block; overflow: hidden; }
+    .terminal-page { background: #0d1117; overflow: hidden; }
+    .terminal-page.fullscreen { position: fixed; inset: 0; z-index: 9999; }
     .terminal-header {
       display: flex;
       align-items: center;
@@ -92,57 +76,36 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
       padding: 6px 16px;
       border-bottom: 1px solid #21262d;
       background: #161b22;
-      flex-shrink: 0;
     }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      font-weight: 500;
+    .badge-connected, .badge-connecting, .badge-error {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;
     }
+    .badge-connected { background: rgba(63,185,80,0.15); color: #3fb950; }
+    .badge-connecting { background: rgba(210,153,34,0.15); color: #d29922; }
+    .badge-error { background: rgba(255,123,114,0.15); color: #ff7b72; }
     .header-btn {
-      font-size: 12px;
-      color: #8b949e;
-      padding: 4px 8px;
-      border-radius: 4px;
-      border: 1px solid #30363d;
-      background: transparent;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
+      font-size: 12px; color: #8b949e; padding: 4px 8px; border-radius: 4px;
+      border: 1px solid #30363d; background: transparent; cursor: pointer;
+      display: inline-flex; align-items: center;
     }
     .header-btn:hover { color: #e6edf3; border-color: #484f58; }
     .header-btn.active { color: #58a6ff; border-color: #1f6feb; background: rgba(31,111,235,0.1); }
     .cheatsheet {
-      padding: 8px 16px;
-      background: #0d1117;
-      border-bottom: 1px solid #21262d;
-      font-size: 13px;
-      color: #8b949e;
-      flex-shrink: 0;
+      padding: 8px 16px; background: #0d1117; border-bottom: 1px solid #21262d;
+      font-size: 13px; color: #8b949e;
     }
     .cheatsheet kbd {
-      font-family: inherit;
-      padding: 1px 5px;
-      border-radius: 3px;
-      background: rgba(110,118,129,0.2);
-      color: #58a6ff;
-      font-size: 12px;
+      font-family: inherit; padding: 1px 5px; border-radius: 3px;
+      background: rgba(110,118,129,0.2); color: #58a6ff; font-size: 12px;
     }
-    .terminal-container {
-      flex: 1 1 0;
-      min-height: 0;
-      overflow: hidden;
-    }
-    ::ng-deep .xterm {
-      height: 100% !important;
-      padding: 4px;
-    }
+    .terminal-container { overflow: hidden; }
   `],
 })
 export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild('page') page!: ElementRef<HTMLDivElement>;
+  @ViewChild('header') headerEl!: ElementRef<HTMLDivElement>;
+  @ViewChild('cheatsheetEl') cheatsheetEl?: ElementRef<HTMLDivElement>;
   @ViewChild('terminalContainer') terminalContainer!: ElementRef<HTMLDivElement>;
 
   containerId = '';
@@ -157,7 +120,7 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
   private terminal!: Terminal;
   private fitAddon!: FitAddon;
   private ws: WebSocket | null = null;
-  private resizeObserver: ResizeObserver | null = null;
+  private resizeListener: (() => void) | null = null;
 
   constructor(
     private api: ContainersApiService,
@@ -173,11 +136,18 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   ngAfterViewInit(): void {
     this.initTerminal();
+    this.sizeTerminal();
     this.connect();
+
+    // Resize on window resize
+    this.resizeListener = () => this.sizeTerminal();
+    window.addEventListener('resize', this.resizeListener);
   }
 
   ngOnDestroy(): void {
-    this.resizeObserver?.disconnect();
+    if (this.resizeListener) {
+      window.removeEventListener('resize', this.resizeListener);
+    }
     if (this.ws) {
       this.ws.onmessage = null;
       this.ws.onclose = null;
@@ -201,6 +171,35 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   toggleFullscreen(): void {
     this.isFullscreen = !this.isFullscreen;
+    setTimeout(() => this.sizeTerminal(), 0);
+  }
+
+  toggleCheatsheet(): void {
+    this.showCheatsheet = !this.showCheatsheet;
+    setTimeout(() => this.sizeTerminal(), 0);
+  }
+
+  /**
+   * Calculate available height in pixels, set the terminal container to that
+   * exact height, then fit xterm inside it. No CSS flex needed.
+   */
+  private sizeTerminal(): void {
+    const navbarHeight = this.isFullscreen ? 0 : 64; // 4rem app navbar
+    const pageHeight = this.isFullscreen ? window.innerHeight : (window.innerHeight - navbarHeight);
+    const headerHeight = this.headerEl?.nativeElement.offsetHeight ?? 0;
+    const cheatsheetHeight = this.showCheatsheet && this.cheatsheetEl
+      ? this.cheatsheetEl.nativeElement.offsetHeight : 0;
+
+    // Set page height explicitly
+    this.page.nativeElement.style.height = pageHeight + 'px';
+
+    // Terminal gets whatever is left
+    const terminalHeight = pageHeight - headerHeight - cheatsheetHeight;
+    this.terminalContainer.nativeElement.style.height = terminalHeight + 'px';
+    this.terminalContainer.nativeElement.style.width = '100%';
+
+    // Now fit xterm to the pixel-sized container
+    this.fitAddon.fit();
   }
 
   private initTerminal(): void {
@@ -241,9 +240,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.terminal.loadAddon(new WebLinksAddon());
     this.terminal.open(this.terminalContainer.nativeElement);
 
-    // Fit xterm to fill the container div — this determines cols/rows
-    this.fitAddon.fit();
-
     // Send keystrokes to WebSocket
     this.terminal.onData((data) => {
       if (this.ws?.readyState === WebSocket.OPEN) {
@@ -257,8 +253,8 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.connecting = true;
     this.error = '';
 
-    // Fit first so we know the exact cols/rows
-    this.fitAddon.fit();
+    // Ensure terminal is sized before connecting
+    this.sizeTerminal();
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${location.host}/api/containers/${this.containerId}/terminal`;
@@ -272,8 +268,8 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
-      // Send terminal dimensions as the first message — server waits for this
-      // before creating the PTY so the sizes match exactly
+      // Send terminal dimensions as the first message — the server waits for
+      // this before creating the PTY so the sizes match exactly
       const size = { cols: this.terminal.cols, rows: this.terminal.rows };
       this.ws!.send(JSON.stringify(size));
 
