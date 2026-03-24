@@ -22,6 +22,7 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="SSH.NET" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="Serilog.AspNetCore" />

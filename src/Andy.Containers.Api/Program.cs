@@ -185,6 +185,7 @@ try
         });
     }
 
+    app.UseWebSockets();
     app.UseAuthorization();
     app.MapControllers().RequireAuthorization();
     app.MapHealthChecks("/health").AllowAnonymous();

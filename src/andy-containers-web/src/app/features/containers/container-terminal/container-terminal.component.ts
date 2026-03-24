@@ -1,21 +1,17 @@
-import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewChecked } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
 import { Container } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
-
-interface TerminalEntry {
-  type: 'command' | 'stdout' | 'stderr' | 'exit';
-  text: string;
-  cwd?: string;
-}
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 
 @Component({
   selector: 'app-container-terminal',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent],
+  imports: [CommonModule, RouterLink, StatusBadgeComponent],
   template: `
     <div class="flex flex-col h-[calc(100vh-4rem)]" style="background-color: #1a1a2e;">
       <!-- Header bar -->
@@ -26,59 +22,40 @@ interface TerminalEntry {
           </a>
           <span class="text-white font-medium">{{ container?.name || 'Terminal' }}</span>
           <app-status-badge *ngIf="container" [status]="container.status"></app-status-badge>
+          <span *ngIf="connected" class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-green-900/30 text-green-400">Connected</span>
+          <span *ngIf="connecting" class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-yellow-900/30 text-yellow-400">Connecting...</span>
+          <span *ngIf="!connected && !connecting && error" class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-red-900/30 text-red-400">Disconnected</span>
         </div>
-        <button (click)="clearOutput()" class="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded border border-gray-600 hover:border-gray-500">
-          Clear
-        </button>
-      </div>
-
-      <!-- Output area -->
-      <div #outputArea class="flex-1 overflow-y-auto px-4 py-2 font-mono text-sm" (click)="focusInput()">
-        <div *ngFor="let entry of output" class="leading-relaxed">
-          <div *ngIf="entry.type === 'command'" class="flex gap-2">
-            <span class="text-cyan-400">{{ entry.cwd || '~' }} $</span>
-            <span class="text-white">{{ entry.text }}</span>
-          </div>
-          <pre *ngIf="entry.type === 'stdout'" class="text-gray-200 whitespace-pre-wrap m-0">{{ entry.text }}</pre>
-          <pre *ngIf="entry.type === 'stderr'" class="text-red-400 whitespace-pre-wrap m-0">{{ entry.text }}</pre>
-          <div *ngIf="entry.type === 'exit'" class="text-orange-400 text-xs">exit code: {{ entry.text }}</div>
+        <div class="flex items-center gap-2">
+          <button *ngIf="!connected && !connecting" (click)="connect()" class="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded border border-gray-600 hover:border-gray-500">
+            Reconnect
+          </button>
         </div>
       </div>
 
-      <!-- Input line -->
-      <div class="flex items-center gap-2 px-4 py-3 border-t border-gray-700 bg-[#16213e]">
-        <span class="text-cyan-400 font-mono text-sm">{{ cwd }} $</span>
-        <input #cmdInput type="text" [(ngModel)]="currentCommand"
-          (keydown.enter)="executeCommand()"
-          (keydown.arrowUp)="historyUp($event)"
-          (keydown.arrowDown)="historyDown($event)"
-          (keydown)="onKeydown($event)"
-          class="flex-1 bg-transparent border-none outline-none text-white font-mono text-sm caret-white"
-          placeholder="Enter command..."
-          [disabled]="running"
-          autocomplete="off" spellcheck="false" />
-      </div>
+      <!-- Terminal -->
+      <div #terminalContainer class="flex-1 overflow-hidden p-1"></div>
     </div>
   `,
   styles: [`
     :host { display: block; }
-    input::placeholder { color: #4a5568; }
+    ::ng-deep .xterm { height: 100%; }
+    ::ng-deep .xterm-viewport { overflow-y: auto !important; }
   `],
 })
-export class ContainerTerminalComponent implements OnInit, AfterViewChecked {
-  @ViewChild('outputArea') outputArea!: ElementRef<HTMLDivElement>;
-  @ViewChild('cmdInput') cmdInput!: ElementRef<HTMLInputElement>;
+export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild('terminalContainer') terminalContainer!: ElementRef<HTMLDivElement>;
 
   containerId = '';
   container: Container | null = null;
-  output: TerminalEntry[] = [];
-  currentCommand = '';
-  running = false;
-  cwd = '~';
+  connected = false;
+  connecting = false;
+  error = '';
 
-  private commandHistory: string[] = [];
-  private historyIndex = -1;
-  private shouldScroll = false;
+  private terminal!: Terminal;
+  private fitAddon!: FitAddon;
+  private ws: WebSocket | null = null;
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor(
     private api: ContainersApiService,
@@ -90,128 +67,126 @@ export class ContainerTerminalComponent implements OnInit, AfterViewChecked {
     this.api.getContainer(this.containerId).subscribe({
       next: (c) => { this.container = c; },
     });
-    // Resolve initial working directory
-    this.api.execCommand(this.containerId, 'pwd').subscribe({
-      next: (result) => {
-        if (result.exitCode === 0 && result.stdOut) {
-          this.cwd = result.stdOut.trim();
-        }
+  }
+
+  ngAfterViewInit(): void {
+    this.initTerminal();
+    this.connect();
+  }
+
+  ngOnDestroy(): void {
+    this.resizeObserver?.disconnect();
+    this.ws?.close();
+    this.terminal?.dispose();
+  }
+
+  private initTerminal(): void {
+    this.fitAddon = new FitAddon();
+
+    this.terminal = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
+      theme: {
+        background: '#1a1a2e',
+        foreground: '#e0e0e0',
+        cursor: '#e0e0e0',
+        selectionBackground: '#3a3a5e',
+        black: '#1a1a2e',
+        red: '#ff6b6b',
+        green: '#51cf66',
+        yellow: '#ffd43b',
+        blue: '#5c7cfa',
+        magenta: '#cc5de8',
+        cyan: '#22b8cf',
+        white: '#e0e0e0',
+        brightBlack: '#4a4a6e',
+        brightRed: '#ff8787',
+        brightGreen: '#69db7c',
+        brightYellow: '#ffe066',
+        brightBlue: '#748ffc',
+        brightMagenta: '#da77f2',
+        brightCyan: '#3bc9db',
+        brightWhite: '#ffffff',
       },
+      allowProposedApi: true,
     });
-    setTimeout(() => this.focusInput(), 100);
-  }
 
-  ngAfterViewChecked(): void {
-    if (this.shouldScroll && this.outputArea) {
-      const el = this.outputArea.nativeElement;
-      el.scrollTop = el.scrollHeight;
-      this.shouldScroll = false;
-    }
-  }
+    this.terminal.loadAddon(this.fitAddon);
+    this.terminal.loadAddon(new WebLinksAddon());
+    this.terminal.open(this.terminalContainer.nativeElement);
 
-  focusInput(): void {
-    this.cmdInput?.nativeElement?.focus();
-  }
+    // Fit terminal to container size
+    setTimeout(() => this.fitAddon.fit(), 0);
 
-  executeCommand(): void {
-    const cmd = this.currentCommand.trim();
-    if (!cmd || this.running) return;
+    // Watch for resize
+    this.resizeObserver = new ResizeObserver(() => {
+      this.fitAddon.fit();
+      this.sendResize();
+    });
+    this.resizeObserver.observe(this.terminalContainer.nativeElement);
 
-    this.commandHistory.push(cmd);
-    this.historyIndex = this.commandHistory.length;
-
-    this.output.push({ type: 'command', text: cmd, cwd: this.cwd });
-    this.currentCommand = '';
-    this.running = true;
-    this.shouldScroll = true;
-
-    // Build the actual command to send — prepend cd to maintain working directory
-    const resolvedCwd = this.cwd === '~' ? '$HOME' : this.cwd;
-    let execCmd: string;
-
-    // For cd commands, we need to resolve the new path on the server
-    if (cmd === 'cd' || cmd.startsWith('cd ')) {
-      const target = cmd === 'cd' ? '' : cmd.substring(3).trim();
-      // Execute cd and then pwd to get the real resolved path
-      if (!target || target === '~') {
-        execCmd = 'cd $HOME && pwd';
-      } else {
-        execCmd = `cd ${resolvedCwd} && cd ${target} && pwd`;
+    // Send keystrokes to WebSocket
+    this.terminal.onData((data) => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(data);
       }
-    } else {
-      execCmd = `cd ${resolvedCwd} && ${cmd}`;
-    }
+    });
 
-    const previousCwd = this.cwd;
-    const isCdCommand = cmd === 'cd' || cmd.startsWith('cd ');
-
-    this.api.execCommand(this.containerId, execCmd).subscribe({
-      next: (result) => {
-        if (isCdCommand) {
-          if (result.exitCode === 0 && result.stdOut) {
-            // pwd output is the resolved path
-            this.cwd = result.stdOut.trim();
-          } else {
-            // cd failed — show error but don't change cwd
-            if (result.stdErr) {
-              this.output.push({ type: 'stderr', text: result.stdErr });
-            }
-            if (result.exitCode !== 0) {
-              this.output.push({ type: 'exit', text: String(result.exitCode) });
-            }
-          }
-        } else {
-          if (result.stdOut) {
-            this.output.push({ type: 'stdout', text: result.stdOut });
-          }
-          if (result.stdErr) {
-            this.output.push({ type: 'stderr', text: result.stdErr });
-          }
-          if (result.exitCode !== 0) {
-            this.output.push({ type: 'exit', text: String(result.exitCode) });
-          }
-        }
-        this.running = false;
-        this.shouldScroll = true;
-        this.focusInput();
-      },
-      error: () => {
-        this.output.push({ type: 'stderr', text: 'Failed to execute command' });
-        this.running = false;
-        this.shouldScroll = true;
-        this.focusInput();
-      },
+    this.terminal.onResize(() => {
+      this.sendResize();
     });
   }
 
-  historyUp(event: Event): void {
-    event.preventDefault();
-    if (this.historyIndex > 0) {
-      this.historyIndex--;
-      this.currentCommand = this.commandHistory[this.historyIndex];
-    }
+  connect(): void {
+    if (this.connecting || this.connected) return;
+    this.connecting = true;
+    this.error = '';
+
+    // Build WebSocket URL from current location
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // API is on port 5200, proxy through Angular dev server or direct
+    const wsUrl = `${protocol}//localhost:5200/api/containers/${this.containerId}/terminal`;
+
+    this.terminal.writeln('\x1b[33mConnecting to container...\x1b[0m');
+
+    this.ws = new WebSocket(wsUrl);
+    this.ws.binaryType = 'arraybuffer';
+
+    this.ws.onopen = () => {
+      this.connecting = false;
+      this.connected = true;
+      this.sendResize();
+    };
+
+    this.ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        this.terminal.write(new Uint8Array(event.data));
+      } else {
+        this.terminal.write(event.data);
+      }
+    };
+
+    this.ws.onclose = (event) => {
+      this.connecting = false;
+      this.connected = false;
+      this.terminal.writeln(`\r\n\x1b[33mSession ended (code: ${event.code})\x1b[0m`);
+    };
+
+    this.ws.onerror = () => {
+      this.connecting = false;
+      this.connected = false;
+      this.error = 'Connection failed';
+      this.terminal.writeln('\r\n\x1b[31mFailed to connect. Is the container running with SSH enabled?\x1b[0m');
+    };
   }
 
-  historyDown(event: Event): void {
-    event.preventDefault();
-    if (this.historyIndex < this.commandHistory.length - 1) {
-      this.historyIndex++;
-      this.currentCommand = this.commandHistory[this.historyIndex];
-    } else {
-      this.historyIndex = this.commandHistory.length;
-      this.currentCommand = '';
+  private sendResize(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      const cols = this.terminal.cols;
+      const rows = this.terminal.rows;
+      // Send resize escape sequence
+      this.ws.send(`\x1b[R${cols};${rows}`);
     }
-  }
-
-  onKeydown(event: KeyboardEvent): void {
-    // Ctrl+L to clear
-    if (event.ctrlKey && event.key === 'l') {
-      event.preventDefault();
-      this.clearOutput();
-    }
-  }
-
-  clearOutput(): void {
-    this.output = [];
   }
 }
