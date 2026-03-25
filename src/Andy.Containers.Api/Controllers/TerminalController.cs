@@ -117,10 +117,14 @@ public class TerminalController : ControllerBase
         _logger.LogInformation("Terminal size: {Cols}x{Rows} for container {Name}", cols, rows, container.Name);
 
         // Build the exec arguments based on provider type
-        // unset TMUX prevents nesting when reattaching to an existing session
+        // 1. Set PTY size via stty so tmux picks up the correct dimensions
+        // 2. Export locale for proper character rendering
+        // 3. unset TMUX prevents nesting when reattaching to an existing session
         const string tmuxCmd = "unset TMUX; tmux new-session -A -s web";
         const string fallbackCmd = "bash -l";
-        var shellCmd = $"command -v tmux >/dev/null 2>&1 && {{ {tmuxCmd}; }} || {fallbackCmd}";
+        var shellCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
+                       $"export LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
+                       $"command -v tmux >/dev/null 2>&1 && {{ {tmuxCmd}; }} || {fallbackCmd}";
 
         var execArgs = providerType switch
         {
@@ -144,7 +148,9 @@ public class TerminalController : ControllerBase
             {
                 ["TERM"] = "xterm-256color",
                 ["COLUMNS"] = cols.ToString(),
-                ["LINES"] = rows.ToString()
+                ["LINES"] = rows.ToString(),
+                ["LANG"] = "C.UTF-8",
+                ["LC_ALL"] = "C.UTF-8"
             }
         };
 

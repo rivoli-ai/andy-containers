@@ -14,11 +14,16 @@ public static class DataSeeder
         // Ensure localhost resolves (minimal container images often have empty /etc/hosts)
         "grep -q localhost /etc/hosts 2>/dev/null || " +
             "{ echo '127.0.0.1 localhost' >> /etc/hosts && echo '::1 localhost' >> /etc/hosts; }; " +
+        // Set UTF-8 locale for proper character rendering (tmux box-drawing, etc.)
+        "echo 'LANG=C.UTF-8' >> /etc/environment; " +
+        "echo 'LC_ALL=C.UTF-8' >> /etc/environment; " +
+        "export LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
         // Install base packages
         "if command -v apt-get >/dev/null 2>&1; then " +
             "export DEBIAN_FRONTEND=noninteractive && " +
             "apt-get update -qq && " +
-            "apt-get install -y -qq git curl wget ca-certificates openssh-server tmux >/dev/null 2>&1; " +
+            "apt-get install -y -qq git curl wget ca-certificates openssh-server tmux locales >/dev/null 2>&1 && " +
+            "locale-gen en_US.UTF-8 >/dev/null 2>&1; " +
         "elif command -v apk >/dev/null 2>&1; then " +
             "apk add --quiet --no-cache git curl wget ca-certificates openssh tmux; " +
         "elif command -v dnf >/dev/null 2>&1; then " +
@@ -40,6 +45,37 @@ public static class DataSeeder
 
     private static string ScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string> { ["post_create"] = PostCreateScript });
+
+    // Template-specific post-create scripts that install toolchains after base packages
+    private static string PythonScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+            "apt-get install -y -qq python3 python3-pip python3-venv >/dev/null 2>&1 && " +
+            "ln -sf /usr/bin/python3 /usr/bin/python 2>/dev/null; " +
+            "ln -sf /usr/bin/pip3 /usr/bin/pip 2>/dev/null" });
+
+    private static string DotnetScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+            "apt-get install -y -qq dotnet-sdk-8.0 >/dev/null 2>&1 || " +
+            "{ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 && " +
+            "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null; }" });
+
+    private static string NodeScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+            "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && " +
+            "apt-get install -y -qq nodejs >/dev/null 2>&1" });
+
+    private static string FullStackScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+            // Python
+            "apt-get install -y -qq python3 python3-pip python3-venv >/dev/null 2>&1 && " +
+            "ln -sf /usr/bin/python3 /usr/bin/python 2>/dev/null; " +
+            "ln -sf /usr/bin/pip3 /usr/bin/pip 2>/dev/null && " +
+            // Node
+            "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && " +
+            "apt-get install -y -qq nodejs >/dev/null 2>&1 && " +
+            // .NET
+            "{ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0; " +
+            "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null; } || true" });
 
     public static async Task SeedAsync(ContainersDbContext db)
     {
@@ -97,7 +133,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["dotnet", "python", "node", "angular", "full-stack"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":40}""",
-                Scripts = ScriptsJson
+                Scripts = FullStackScriptsJson
             },
             new ContainerTemplate
             {
@@ -107,7 +143,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.Both, GpuPreferred = true,
                 IsPublished = true, Tags = ["agent", "devpilot", "ui", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
-                Scripts = ScriptsJson,
+                Scripts = FullStackScriptsJson,
                 CodeAssistant = """{"Tool":"ClaudeCode","AutoStart":false,"ApiKeyEnvVar":"ANTHROPIC_API_KEY"}"""
             },
             new ContainerTemplate
@@ -118,7 +154,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["dotnet"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = ScriptsJson
+                Scripts = DotnetScriptsJson
             },
             new ContainerTemplate
             {
@@ -128,7 +164,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["python"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = ScriptsJson
+                Scripts = PythonScriptsJson
             },
             new ContainerTemplate
             {
@@ -138,7 +174,7 @@ public static class DataSeeder
                 CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
                 IsPublished = true, Tags = ["angular", "node"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = ScriptsJson
+                Scripts = NodeScriptsJson
             },
             new ContainerTemplate
             {
@@ -224,14 +260,23 @@ public static class DataSeeder
             .Where(t => seedTemplateIds.Contains(t.Id))
             .ToListAsync();
 
+        var scriptsByCode = new Dictionary<string, string>
+        {
+            ["full-stack"] = FullStackScriptsJson,
+            ["agent-sandbox-ui"] = FullStackScriptsJson,
+            ["dotnet-8-vscode"] = DotnetScriptsJson,
+            ["python-3.12-vscode"] = PythonScriptsJson,
+            ["angular-18-vscode"] = NodeScriptsJson,
+            ["andy-cli-dev"] = ScriptsJson,
+        };
+
         var updated = false;
         foreach (var template in templates)
         {
-            // Compare by checking if the script contains expected content,
-            // since JSON formatting may differ between C# and PostgreSQL
-            if (template.Scripts is null || !template.Scripts.Contains("openssh"))
+            var expected = scriptsByCode.GetValueOrDefault(template.Code, ScriptsJson);
+            if (template.Scripts != expected)
             {
-                template.Scripts = ScriptsJson;
+                template.Scripts = expected;
                 updated = true;
             }
         }

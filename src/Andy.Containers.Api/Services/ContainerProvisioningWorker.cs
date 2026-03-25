@@ -141,7 +141,7 @@ public class ContainerProvisioningWorker : BackgroundService
                     try
                     {
                         _logger.LogInformation("Running post-create script for container {ContainerId}", job.ContainerId);
-                        var scriptResult = await containerService.ExecAsync(job.ContainerId, script, stoppingToken);
+                        var scriptResult = await containerService.ExecAsync(job.ContainerId, script, TimeSpan.FromMinutes(10), stoppingToken);
                         if (scriptResult.ExitCode != 0)
                             _logger.LogWarning("Post-create script exited with {ExitCode} for container {ContainerId}: {StdErr}",
                                 scriptResult.ExitCode, job.ContainerId, scriptResult.StdErr);
@@ -187,7 +187,7 @@ public class ContainerProvisioningWorker : BackgroundService
 
                     _logger.LogInformation("Installing code assistant {Tool} for container {ContainerId}",
                         job.CodeAssistant.Tool, job.ContainerId);
-                    var installResult = await containerService.ExecAsync(job.ContainerId, installScript, TimeSpan.FromMinutes(5), stoppingToken);
+                    var installResult = await containerService.ExecAsync(job.ContainerId, installScript, TimeSpan.FromMinutes(10), stoppingToken);
                     if (installResult.ExitCode != 0)
                         _logger.LogWarning("Code assistant install exited with {ExitCode} for container {ContainerId}: {StdErr}",
                             installResult.ExitCode, job.ContainerId, installResult.StdErr);

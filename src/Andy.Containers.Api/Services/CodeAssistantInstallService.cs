@@ -9,13 +9,13 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
         var install = config.Tool switch
         {
             CodeAssistantType.ClaudeCode =>
-                "npm install -g @anthropic-ai/claude-code 2>/dev/null || " +
-                "(command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs; }) && " +
+                "export DEBIAN_FRONTEND=noninteractive; " +
+                "command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && apt-get install -y -qq nodejs >/dev/null 2>&1; } && " +
                 "npm install -g @anthropic-ai/claude-code",
 
             CodeAssistantType.CodexCli =>
-                "npm install -g @openai/codex 2>/dev/null || " +
-                "(command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs; }) && " +
+                "export DEBIAN_FRONTEND=noninteractive; " +
+                "command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && apt-get install -y -qq nodejs >/dev/null 2>&1; } && " +
                 "npm install -g @openai/codex",
 
             CodeAssistantType.Aider =>
@@ -27,8 +27,8 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
                 "echo 'Continue extension will be installed via IDE marketplace'",
 
             CodeAssistantType.OpenCode =>
-                "npm install -g open-code 2>/dev/null || " +
-                "(command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs; }) && " +
+                "export DEBIAN_FRONTEND=noninteractive; " +
+                "command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && apt-get install -y -qq nodejs >/dev/null 2>&1; } && " +
                 "npm install -g open-code",
 
             CodeAssistantType.QwenCoder =>
@@ -37,8 +37,8 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
                 "(pip install qwen-coder-cli 2>/dev/null || pip3 install qwen-coder-cli)",
 
             CodeAssistantType.GeminiCode =>
-                "npm install -g @anthropic-ai/gemini-code 2>/dev/null || " +
-                "(command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs; }) && " +
+                "export DEBIAN_FRONTEND=noninteractive; " +
+                "command -v npm >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && apt-get install -y -qq nodejs >/dev/null 2>&1; } && " +
                 "npm install -g gemini-code",
 
             _ => "echo 'Unknown code assistant type'"
