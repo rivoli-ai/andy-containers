@@ -297,7 +297,7 @@ public class ContainerProvisioningWorkerTests : IDisposable
             TemplateId = template.Id,
             ProviderId = provider.Id,
             Status = ContainerStatus.Creating,
-            CreatedAt = DateTime.UtcNow.AddMinutes(-10) // well past the 2-minute threshold
+            CreatedAt = DateTime.UtcNow.AddMinutes(-60) // well past the 30-minute threshold
         };
         var recentContainer = new Container
         {
@@ -621,5 +621,105 @@ public class ContainerProvisioningWorkerTests : IDisposable
         try { await workerTask; } catch (OperationCanceledException) { }
 
         callOrder.Should().Equal("post_create", "code_assistant");
+    }
+
+    [Fact]
+    public async Task ProcessJob_WithCodeAssistant_ShouldStayCreatingUntilInstallDone()
+    {
+        // The container must NOT be Running while scripts/code assistant are still installing.
+        // Previously it was set to Running immediately after infrastructure creation,
+        // causing users to connect before setup was complete.
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        _mockCodeAssistantInstallService.Setup(s => s.GenerateInstallScript(It.IsAny<CodeAssistantConfig>()))
+            .Returns("npm install -g @anthropic-ai/claude-code");
+
+        ContainerStatus? statusDuringInstall = null;
+        _mockContainerService.Setup(s => s.ExecAsync(
+                It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("claude-code")),
+                It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                // Check what the container status is while the install is running
+                using var checkDb = CreateDb();
+                var c = checkDb.Containers.Find(container.Id);
+                statusDuringInstall = c?.Status;
+            })
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null,
+            CodeAssistant: new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode });
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        // During install, container should be Creating (not Running)
+        statusDuringInstall.Should().Be(ContainerStatus.Creating,
+            "container must not be Running while code assistant is being installed");
+
+        // After completion, container should be Running
+        using var verifyDb = CreateDb();
+        var updated = await verifyDb.Containers.FindAsync(container.Id);
+        updated!.Status.Should().Be(ContainerStatus.Running);
+        updated.StartedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ProcessJob_WithPostCreateScripts_ShouldStayCreatingDuringScripts()
+    {
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        ContainerStatus? statusDuringScript = null;
+        _mockContainerService.Setup(s => s.ExecAsync(
+                It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("apt-get")),
+                It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                using var checkDb = CreateDb();
+                var c = checkDb.Containers.Find(container.Id);
+                statusDuringScript = c?.Status;
+            })
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var scripts = new List<string> { "apt-get install -y python3" };
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null, PostCreateScripts: scripts);
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        statusDuringScript.Should().Be(ContainerStatus.Creating,
+            "container must not be Running while post-create scripts are executing");
+
+        using var verifyDb = CreateDb();
+        var updated = await verifyDb.Containers.FindAsync(container.Id);
+        updated!.Status.Should().Be(ContainerStatus.Running);
     }
 }

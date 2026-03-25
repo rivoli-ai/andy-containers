@@ -108,8 +108,10 @@ public class ContainerProvisioningWorker : BackgroundService
                 result.ExternalId, result.Status, job.ContainerId);
 
             container.ExternalId = result.ExternalId;
-            container.Status = ContainerStatus.Running;
-            container.StartedAt = DateTime.UtcNow;
+            // Keep status as Creating while post-create scripts, env vars, and
+            // code assistant install run. This prevents users from connecting
+            // to a container that isn't fully set up yet.
+            container.Status = ContainerStatus.Creating;
 
             if (result.ConnectionInfo is not null)
             {
@@ -119,17 +121,8 @@ public class ContainerProvisioningWorker : BackgroundService
                 container.NetworkConfig = System.Text.Json.JsonSerializer.Serialize(result.ConnectionInfo);
             }
 
-            db.Events.Add(new ContainerEvent
-            {
-                ContainerId = job.ContainerId,
-                EventType = ContainerEventType.Started,
-                SubjectId = job.OwnerId
-            });
-
             await db.SaveChangesAsync(stoppingToken);
-            sw.Stop();
-            Meters.ProvisioningDuration.Record(sw.Elapsed.TotalMilliseconds);
-            _logger.LogInformation("Container {ContainerId} provisioned successfully on {Provider}",
+            _logger.LogInformation("Container {ContainerId} infrastructure ready on {Provider}, running setup scripts",
                 job.ContainerId, job.ProviderCode);
 
             // Run post-create scripts (e.g., install git, dev tools)
@@ -218,6 +211,22 @@ public class ContainerProvisioningWorker : BackgroundService
                         job.ContainerId);
                 }
             }
+
+            // All setup complete — now mark as Running
+            container.Status = ContainerStatus.Running;
+            container.StartedAt = DateTime.UtcNow;
+            db.Events.Add(new ContainerEvent
+            {
+                ContainerId = job.ContainerId,
+                EventType = ContainerEventType.Started,
+                SubjectId = job.OwnerId
+            });
+            await db.SaveChangesAsync(stoppingToken);
+
+            sw.Stop();
+            Meters.ProvisioningDuration.Record(sw.Elapsed.TotalMilliseconds);
+            _logger.LogInformation("Container {ContainerId} fully provisioned on {Provider}",
+                job.ContainerId, job.ProviderCode);
         }
         catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
         {
@@ -270,7 +279,7 @@ public class ContainerProvisioningWorker : BackgroundService
 
             var stuckContainers = db.Containers
                 .Where(c => c.Status == ContainerStatus.Creating || c.Status == ContainerStatus.Pending)
-                .Where(c => c.CreatedAt < DateTime.UtcNow.AddMinutes(-2))
+                .Where(c => c.CreatedAt < DateTime.UtcNow.AddMinutes(-30))
                 .ToList();
 
             foreach (var container in stuckContainers)

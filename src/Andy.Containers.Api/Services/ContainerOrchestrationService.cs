@@ -395,8 +395,11 @@ public class ContainerOrchestrationService : IContainerService
         activity?.SetTag("containerId", containerId.ToString());
 
         var container = await GetContainerAsync(containerId, ct);
-        if (container.Status != ContainerStatus.Running)
+        // Allow exec on Running (normal) and Creating (provisioning worker running setup scripts)
+        if (container.Status is not (ContainerStatus.Running or ContainerStatus.Creating))
             throw new InvalidOperationException($"Container is {container.Status}, cannot exec");
+        if (string.IsNullOrEmpty(container.ExternalId))
+            throw new InvalidOperationException("Container has no external ID yet");
 
         var infra = _providerFactory.GetProvider(container.Provider!);
         return await infra.ExecAsync(container.ExternalId!, command, ct);
@@ -409,8 +412,10 @@ public class ContainerOrchestrationService : IContainerService
         activity?.SetTag("timeout", timeout.TotalSeconds);
 
         var container = await GetContainerAsync(containerId, ct);
-        if (container.Status != ContainerStatus.Running)
+        if (container.Status is not (ContainerStatus.Running or ContainerStatus.Creating))
             throw new InvalidOperationException($"Container is {container.Status}, cannot exec");
+        if (string.IsNullOrEmpty(container.ExternalId))
+            throw new InvalidOperationException("Container has no external ID yet");
 
         var infra = _providerFactory.GetProvider(container.Provider!);
         return await infra.ExecAsync(container.ExternalId!, command, timeout, ct);
