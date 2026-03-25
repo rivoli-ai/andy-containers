@@ -20,6 +20,8 @@ public class ContainerProvisioningWorkerTests : IDisposable
     private readonly Mock<IInfrastructureProviderFactory> _mockProviderFactory;
     private readonly Mock<IInfrastructureProvider> _mockProvider;
     private readonly Mock<IGitCloneService> _mockGitCloneService;
+    private readonly Mock<IContainerService> _mockContainerService;
+    private readonly Mock<ICodeAssistantInstallService> _mockCodeAssistantInstallService;
     private readonly ServiceProvider _serviceProvider;
 
     public ContainerProvisioningWorkerTests()
@@ -30,11 +32,21 @@ public class ContainerProvisioningWorkerTests : IDisposable
         _mockProvider = new Mock<IInfrastructureProvider>();
         _mockProviderFactory.Setup(f => f.GetProvider(It.IsAny<InfrastructureProvider>())).Returns(_mockProvider.Object);
         _mockGitCloneService = new Mock<IGitCloneService>();
+        _mockContainerService = new Mock<IContainerService>();
+        _mockCodeAssistantInstallService = new Mock<ICodeAssistantInstallService>();
+
+        // Default: ExecAsync succeeds
+        _mockContainerService.Setup(s => s.ExecAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+        _mockContainerService.Setup(s => s.ExecAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var services = new ServiceCollection();
         services.AddDbContext<ContainersDbContext>(options =>
             options.UseInMemoryDatabase(_dbName));
         services.AddScoped<IGitCloneService>(_ => _mockGitCloneService.Object);
+        services.AddScoped<IContainerService>(_ => _mockContainerService.Object);
+        services.AddScoped<ICodeAssistantInstallService>(_ => _mockCodeAssistantInstallService.Object);
         _serviceProvider = services.BuildServiceProvider();
     }
 
@@ -387,5 +399,227 @@ public class ContainerProvisioningWorkerTests : IDisposable
         var events = verifyDb.Events.Where(e => e.ContainerId == container.Id).ToList();
         events.Should().Contain(e => e.EventType == ContainerEventType.Started);
         events.First(e => e.EventType == ContainerEventType.Started).SubjectId.Should().Be("user1");
+    }
+
+    [Fact]
+    public async Task ProcessJob_WithPostCreateScripts_ShouldExecWithLongTimeout()
+    {
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        var scripts = new List<string> { "apt-get install -y python3" };
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null, PostCreateScripts: scripts);
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        // Verify ExecAsync was called with the script and a timeout >= 10 minutes
+        _mockContainerService.Verify(s => s.ExecAsync(
+            container.Id,
+            "apt-get install -y python3",
+            It.Is<TimeSpan>(t => t >= TimeSpan.FromMinutes(10)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessJob_WithCodeAssistant_ShouldGenerateAndExecInstallScript()
+    {
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        _mockCodeAssistantInstallService.Setup(s => s.GenerateInstallScript(It.IsAny<CodeAssistantConfig>()))
+            .Returns("npm install -g @anthropic-ai/claude-code");
+
+        var codeAssistant = new CodeAssistantConfig
+        {
+            Tool = CodeAssistantType.ClaudeCode,
+            ApiKeyEnvVar = "ANTHROPIC_API_KEY"
+        };
+
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null, CodeAssistant: codeAssistant);
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        // Verify install script was generated
+        _mockCodeAssistantInstallService.Verify(s => s.GenerateInstallScript(
+            It.Is<CodeAssistantConfig>(c => c.Tool == CodeAssistantType.ClaudeCode)), Times.Once);
+
+        // Verify install script was executed with a timeout >= 10 minutes
+        _mockContainerService.Verify(s => s.ExecAsync(
+            container.Id,
+            "npm install -g @anthropic-ai/claude-code",
+            It.Is<TimeSpan>(t => t >= TimeSpan.FromMinutes(10)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessJob_CodeAssistantInstallFails_ShouldNotFailContainer()
+    {
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        _mockCodeAssistantInstallService.Setup(s => s.GenerateInstallScript(It.IsAny<CodeAssistantConfig>()))
+            .Returns("npm install -g @anthropic-ai/claude-code");
+
+        // ExecAsync for code assistant fails
+        _mockContainerService.Setup(s => s.ExecAsync(
+                It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("claude-code")),
+                It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 1, StdErr = "npm ERR!" });
+
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null, CodeAssistant: new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode });
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        // Container should still be Running
+        using var verifyDb = CreateDb();
+        var updated = await verifyDb.Containers.FindAsync(container.Id);
+        updated!.Status.Should().Be(ContainerStatus.Running);
+    }
+
+    [Fact]
+    public async Task ProcessJob_WithCodeAssistantNull_ShouldNotCallInstall()
+    {
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null); // No CodeAssistant
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        _mockCodeAssistantInstallService.Verify(s => s.GenerateInstallScript(It.IsAny<CodeAssistantConfig>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessJob_WithEnvVars_ShouldExecExportCommands()
+    {
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        var envVars = new Dictionary<string, string> { ["ANTHROPIC_API_KEY"] = "sk-test-123" };
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null, EnvironmentVariables: envVars);
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        // Verify ExecAsync was called with export and persist commands containing the key
+        _mockContainerService.Verify(s => s.ExecAsync(
+            container.Id,
+            It.Is<string>(cmd => cmd.Contains("ANTHROPIC_API_KEY") && cmd.Contains("export")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessJob_PostCreateAndCodeAssistant_ShouldRunInOrder()
+    {
+        // Verifies that post-create scripts run before code assistant installation
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        _mockCodeAssistantInstallService.Setup(s => s.GenerateInstallScript(It.IsAny<CodeAssistantConfig>()))
+            .Returns("npm install -g @anthropic-ai/claude-code");
+
+        var callOrder = new List<string>();
+        _mockContainerService.Setup(s => s.ExecAsync(
+                It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("apt-get")),
+                It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("post_create"))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        _mockContainerService.Setup(s => s.ExecAsync(
+                It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("claude-code")),
+                It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("code_assistant"))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null,
+            PostCreateScripts: new List<string> { "apt-get install -y python3" },
+            CodeAssistant: new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode });
+
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        callOrder.Should().Equal("post_create", "code_assistant");
     }
 }

@@ -72,4 +72,45 @@ public class CodeAssistantInstallServiceTests
             script.Should().Contain("python3-pip", $"{tool} should have pip fallback install");
         }
     }
+
+    [Fact]
+    public void GenerateInstallScript_NpmTools_InstallNodeBeforePackage()
+    {
+        // The script should check for npm first, install Node if missing, THEN install the package.
+        // Previously the script tried npm first and fell back, which failed silently.
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        foreach (var tool in npmTools)
+        {
+            var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
+
+            // Should check for npm availability first
+            script.Should().Contain("command -v npm", $"{tool} should check npm availability");
+
+            // Node install should come before the npm install -g command
+            var nodeInstallPos = script.IndexOf("nodesource");
+            var npmInstallPos = script.LastIndexOf("npm install -g");
+            nodeInstallPos.Should().BeLessThan(npmInstallPos,
+                $"{tool}: Node.js install should come before npm install -g");
+        }
+    }
+
+    [Fact]
+    public void GenerateInstallScript_NpmTools_SetDebianFrontend()
+    {
+        // Ensure DEBIAN_FRONTEND=noninteractive is set to prevent apt-get prompts
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        foreach (var tool in npmTools)
+        {
+            var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
+            script.Should().Contain("DEBIAN_FRONTEND=noninteractive",
+                $"{tool} should set DEBIAN_FRONTEND for unattended apt-get");
+        }
+    }
+
+    [Fact]
+    public void GenerateInstallScript_ClaudeCode_ContainsExactPackageName()
+    {
+        var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode });
+        script.Should().Contain("npm install -g @anthropic-ai/claude-code");
+    }
 }

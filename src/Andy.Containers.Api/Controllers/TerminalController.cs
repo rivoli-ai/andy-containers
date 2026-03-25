@@ -120,7 +120,10 @@ public class TerminalController : ControllerBase
         // 1. Set PTY size via stty so tmux picks up the correct dimensions
         // 2. Export locale for proper character rendering
         // 3. unset TMUX prevents nesting when reattaching to an existing session
-        const string tmuxCmd = "unset TMUX; tmux new-session -A -s web";
+        // 4. After tmux attach, force-resize the window to match the client PTY
+        //    (tmux sessions remember their creation size; -A reattach keeps the old size)
+        var tmuxCmd = $"unset TMUX; tmux set-option -g default-size {cols}x{rows} 2>/dev/null; " +
+                      $"tmux new-session -A -s web \\; resize-window -x {cols} -y {rows}";
         const string fallbackCmd = "bash -l";
         var shellCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
                        $"export LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
