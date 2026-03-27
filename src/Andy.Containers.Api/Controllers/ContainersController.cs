@@ -63,7 +63,7 @@ public class ContainersController : ControllerBase
             if (!isMember) return Forbid();
         }
 
-        var containers = await _containerService.ListContainersAsync(new ContainerFilter
+        var filter = new ContainerFilter
         {
             OwnerId = effectiveOwnerId,
             OrganizationId = organizationId,
@@ -72,11 +72,29 @@ public class ContainersController : ControllerBase
             Status = status,
             TemplateId = templateId,
             ProviderId = providerId,
-            Skip = skip,
-            Take = take
-        }, ct);
+        };
 
-        return Ok(new { items = containers, totalCount = containers.Count });
+        // Build count query with same filters but no skip/take
+        var countQuery = _db.Containers.AsQueryable();
+        if (!string.IsNullOrEmpty(filter.OwnerId))
+            countQuery = countQuery.Where(c => c.OwnerId == filter.OwnerId);
+        if (filter.OrganizationId.HasValue)
+            countQuery = countQuery.Where(c => c.OrganizationId == filter.OrganizationId);
+        if (filter.TeamId.HasValue)
+            countQuery = countQuery.Where(c => c.TeamId == filter.TeamId);
+        if (filter.Status.HasValue)
+            countQuery = countQuery.Where(c => c.Status == filter.Status);
+        if (filter.TemplateId.HasValue)
+            countQuery = countQuery.Where(c => c.TemplateId == filter.TemplateId);
+        if (filter.ProviderId.HasValue)
+            countQuery = countQuery.Where(c => c.ProviderId == filter.ProviderId);
+
+        filter.Skip = skip;
+        filter.Take = take;
+        var containers = await _containerService.ListContainersAsync(filter, ct);
+        var totalCount = await countQuery.CountAsync(ct);
+
+        return Ok(new { items = containers, totalCount });
     }
 
     [HttpGet("{id:guid}")]
@@ -127,8 +145,20 @@ public class ContainersController : ControllerBase
         var container = await _containerService.GetContainerAsync(id, ct);
         if (!CanAccess(container)) return Forbid();
 
-        await _containerService.StartContainerAsync(id, ct);
-        container = await _containerService.GetContainerAsync(id, ct);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await _containerService.StartContainerAsync(id, cts.Token);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(504, new { message = "Container start timed out" });
+        }
+        container = await _containerService.GetContainerAsync(id, CancellationToken.None);
         return Ok(container);
     }
 
@@ -138,8 +168,23 @@ public class ContainersController : ControllerBase
         var container = await _containerService.GetContainerAsync(id, ct);
         if (!CanAccess(container)) return Forbid();
 
-        await _containerService.StopContainerAsync(id, ct);
-        container = await _containerService.GetContainerAsync(id, ct);
+        try
+        {
+            // Use a separate timeout instead of the request's CancellationToken,
+            // because the browser may cancel the request before the container
+            // finishes stopping, leaving it in an inconsistent state.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await _containerService.StopContainerAsync(id, cts.Token);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(504, new { message = "Container stop timed out" });
+        }
+        container = await _containerService.GetContainerAsync(id, CancellationToken.None);
         return Ok(container);
     }
 

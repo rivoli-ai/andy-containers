@@ -22,26 +22,29 @@ public static class DataSeeder
         "if command -v apt-get >/dev/null 2>&1; then " +
             "export DEBIAN_FRONTEND=noninteractive && " +
             "apt-get update -qq && " +
-            "apt-get install -y -qq git curl wget ca-certificates openssh-server tmux locales >/dev/null 2>&1 && " +
+            "apt-get install -y -qq git curl wget ca-certificates openssh-server dtach tmux locales >/dev/null 2>&1 && " +
             "locale-gen en_US.UTF-8 >/dev/null 2>&1; " +
         "elif command -v apk >/dev/null 2>&1; then " +
-            "apk add --quiet --no-cache git curl wget ca-certificates openssh tmux; " +
+            "apk add --quiet --no-cache git curl wget ca-certificates openssh dtach tmux; " +
         "elif command -v dnf >/dev/null 2>&1; then " +
-            "dnf install -y -q git curl wget ca-certificates openssh-server tmux; " +
+            "dnf install -y -q git curl wget ca-certificates openssh-server dtach tmux; " +
         "elif command -v yum >/dev/null 2>&1; then " +
-            "yum install -y -q git curl wget ca-certificates openssh-server tmux; " +
+            "yum install -y -q git curl wget ca-certificates openssh-server dtach tmux; " +
         "elif command -v zypper >/dev/null 2>&1; then " +
-            "zypper install -y -n git curl wget ca-certificates openssh tmux; " +
+            "zypper install -y -n git curl wget ca-certificates openssh dtach tmux; " +
         "elif command -v pacman >/dev/null 2>&1; then " +
-            "pacman -Sy --noconfirm git curl wget ca-certificates openssh tmux; " +
-        "fi && " +
-        // Configure and start SSH
-        "mkdir -p /run/sshd && " +
-        "sed -i 's/#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && " +
-        "sed -i 's/#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && " +
-        "echo 'root:container' | chpasswd && " +
+            "pacman -Sy --noconfirm git curl wget ca-certificates openssh dtach tmux; " +
+        "fi; " +
+        // Configure and start SSH (use ; not && so failures don't stop the chain)
+        "mkdir -p /run/sshd; " +
+        "sed -i 's/#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null; " +
+        "sed -i 's/#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null; " +
+        "echo 'root:container' | chpasswd 2>/dev/null; " +
         "ssh-keygen -A 2>/dev/null; " +
-        "/usr/sbin/sshd 2>/dev/null || true";
+        "/usr/sbin/sshd 2>/dev/null || true; " +
+        // Ensure login shells source .bashrc (for color support in terminal)
+        "grep -q bashrc /root/.bash_profile 2>/dev/null || " +
+            "echo '[ -f ~/.bashrc ] && . ~/.bashrc' >> /root/.bash_profile";
 
     private static string ScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string> { ["post_create"] = PostCreateScript });
@@ -55,9 +58,18 @@ public static class DataSeeder
 
     private static string DotnetScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
-            "apt-get install -y -qq dotnet-sdk-8.0 >/dev/null 2>&1 || " +
-            "{ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 && " +
-            "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null; }" });
+            // Use official install script (works without Microsoft repo registration)
+            "curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 && " +
+            "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
+            "echo 'export DOTNET_ROOT=/root/.dotnet' >> /root/.bashrc && " +
+            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc" });
+
+    private static string Dotnet10ScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+            "curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 && " +
+            "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
+            "echo 'export DOTNET_ROOT=/root/.dotnet' >> /root/.bashrc && " +
+            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc" });
 
     private static string NodeScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
@@ -74,16 +86,18 @@ public static class DataSeeder
             "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && " +
             "apt-get install -y -qq nodejs >/dev/null 2>&1 && " +
             // .NET
-            "{ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0; " +
-            "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null; } || true" });
+            "{ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 && " +
+            "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
+            "echo 'export DOTNET_ROOT=/root/.dotnet' >> /root/.bashrc && " +
+            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc; } || true" });
 
     public static async Task SeedAsync(ContainersDbContext db)
     {
         if (await db.Providers.AnyAsync())
         {
-            // DB already seeded — update template scripts if they changed
+            // DB already seeded — add new seed templates, update scripts, backfill deps
+            await AddNewSeedTemplatesAsync(db);
             await UpdateTemplateScriptsAsync(db);
-            // Backfill missing dependency specs for seed templates
             await BackfillDependencySpecsAsync(db);
             return;
         }
@@ -123,6 +137,7 @@ public static class DataSeeder
         var pythonId = Guid.Parse("00000002-0001-0001-0001-000000000004");
         var angularId = Guid.Parse("00000002-0001-0001-0001-000000000005");
         var andyCliId = Guid.Parse("00000002-0001-0001-0001-000000000006");
+        var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
 
         db.Templates.AddRange(
             new ContainerTemplate
@@ -185,17 +200,27 @@ public static class DataSeeder
                 IsPublished = true, Tags = ["andy-cli", "dotnet", "ai"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = ScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = dotnet10Id, Code = "dotnet-10-cli", Name = ".NET 10 CLI Development",
+                Description = ".NET 10 SDK for CLI and API development",
+                Version = "1.0.0", BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
+                IsPublished = true, Tags = ["dotnet", "dotnet-10"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
+                Scripts = Dotnet10ScriptsJson
             }
         );
 
         // Seed dependencies for all templates
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id);
 
         await db.SaveChangesAsync();
     }
 
     private static void SeedDependencySpecs(ContainersDbContext db,
-        Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId)
+        Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id)
     {
         db.DependencySpecs.AddRange(
             // Full Stack: dotnet + python + node + angular + git + code-server
@@ -236,8 +261,49 @@ public static class DataSeeder
             new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
             new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Tool, Name = "andy-cli", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
             new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 3 },
-            new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 }
+            new DependencySpec { TemplateId = andyCliId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 },
+
+            // .NET 10 CLI: dotnet-sdk 10 + git + code-server
+            new DependencySpec { TemplateId = dotnet10Id, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "10.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = dotnet10Id, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
+            new DependencySpec { TemplateId = dotnet10Id, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 }
         );
+    }
+
+    /// <summary>
+    /// Adds new seed templates that were introduced in a later version.
+    /// Only adds templates with well-known IDs that don't exist yet.
+    /// </summary>
+    private static async Task AddNewSeedTemplatesAsync(ContainersDbContext db)
+    {
+        var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
+
+        // Check which new templates are missing
+        var newTemplates = new Dictionary<Guid, ContainerTemplate>
+        {
+            [dotnet10Id] = new ContainerTemplate
+            {
+                Id = dotnet10Id, Code = "dotnet-10-cli", Name = ".NET 10 CLI Development",
+                Description = ".NET 10 SDK for CLI and API development",
+                Version = "1.0.0", BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
+                IsPublished = true, Tags = ["dotnet", "dotnet-10"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
+                Scripts = Dotnet10ScriptsJson
+            }
+        };
+
+        var existingIds = await db.Templates
+            .Where(t => newTemplates.Keys.Contains(t.Id))
+            .Select(t => t.Id)
+            .ToListAsync();
+
+        var toAdd = newTemplates.Where(kv => !existingIds.Contains(kv.Key)).Select(kv => kv.Value).ToList();
+        if (toAdd.Count > 0)
+        {
+            db.Templates.AddRange(toAdd);
+            await db.SaveChangesAsync();
+        }
     }
 
     /// <summary>
@@ -254,6 +320,7 @@ public static class DataSeeder
             Guid.Parse("00000002-0001-0001-0001-000000000004"),
             Guid.Parse("00000002-0001-0001-0001-000000000005"),
             Guid.Parse("00000002-0001-0001-0001-000000000006"),
+            Guid.Parse("00000002-0001-0001-0001-000000000007"),
         };
 
         var templates = await db.Templates
@@ -268,6 +335,7 @@ public static class DataSeeder
             ["python-3.12-vscode"] = PythonScriptsJson,
             ["angular-18-vscode"] = NodeScriptsJson,
             ["andy-cli-dev"] = ScriptsJson,
+            ["dotnet-10-cli"] = Dotnet10ScriptsJson,
         };
 
         var updated = false;
@@ -297,8 +365,9 @@ public static class DataSeeder
         var pythonId = Guid.Parse("00000002-0001-0001-0001-000000000004");
         var angularId = Guid.Parse("00000002-0001-0001-0001-000000000005");
         var andyCliId = Guid.Parse("00000002-0001-0001-0001-000000000006");
+        var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
 
-        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId };
+        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id };
 
         // Find which seed templates have no dependency specs at all
         var templatesWithDeps = await db.DependencySpecs
@@ -313,7 +382,7 @@ public static class DataSeeder
 
         // Only seed deps for templates that have none — use a temporary context
         // to avoid duplicating the full-stack deps that may already exist
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id);
 
         // Remove specs for templates that already had them (we just re-added everything)
         var duplicates = db.ChangeTracker.Entries<DependencySpec>()

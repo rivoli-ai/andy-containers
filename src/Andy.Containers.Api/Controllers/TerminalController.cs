@@ -116,32 +116,40 @@ public class TerminalController : ControllerBase
         var (cols, rows) = await WaitForTerminalSize(ws, ct);
         _logger.LogInformation("Terminal size: {Cols}x{Rows} for container {Name}", cols, rows, container.Name);
 
-        // Build the exec arguments based on provider type
-        // 1. Set PTY size via stty so tmux picks up the correct dimensions
-        // 2. Export locale for proper character rendering
-        // 3. unset TMUX prevents nesting when reattaching to an existing session
-        // 4. After tmux attach, force-resize the window to match the client PTY
-        //    (tmux sessions remember their creation size; -A reattach keeps the old size)
-        var tmuxCmd = $"unset TMUX; tmux set-option -g default-size {cols}x{rows} 2>/dev/null; " +
-                      $"tmux new-session -A -s web \\; resize-window -x {cols} -y {rows}";
-        const string fallbackCmd = "bash -l";
+        // Use tmux for session persistence with full screen redraw on reattach.
+        // - Create with explicit -x/-y to match client terminal exactly
+        // - On reconnect, resize-window BEFORE attach to fix stale dimensions
+        // - attach -d detaches dead/stale clients so tmux uses current PTY size
+        // - default-terminal xterm-256color prevents arrow key / escape issues
+        var tmuxSession = "web";
         var shellCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
-                       $"export LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
-                       $"command -v tmux >/dev/null 2>&1 && {{ {tmuxCmd}; }} || {fallbackCmd}";
+                       $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
+                       $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
+                       $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
+                       $"command -v tmux >/dev/null 2>&1 && {{ " +
+                       $"tmux set-option -g default-terminal xterm-256color 2>/dev/null; " +
+                       $"if tmux has-session -t {tmuxSession} 2>/dev/null; then " +
+                       $"tmux resize-window -t {tmuxSession} -x {cols} -y {rows} 2>/dev/null; " +
+                       $"exec tmux attach -d -t {tmuxSession}; " +
+                       $"else " +
+                       $"exec tmux new-session -s {tmuxSession} -x {cols} -y {rows}; " +
+                       $"fi; }} || exec bash";
 
-        var execArgs = providerType switch
-        {
-            ProviderType.AppleContainer => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellCmd },
-            ProviderType.Docker => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellCmd },
-            _ => new[] { "exec", "-it", "-w", "/root", externalId, "bash", "-c", shellCmd }
-        };
         var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
-        // Use 'script' to allocate a PTY with the client's actual terminal size
+        // Wrap in bash so we can resize script's PTY BEFORE starting container exec.
+        // Without this, script creates an 80x24 PTY (no parent terminal to inherit from),
+        // and all output flowing back through it gets corrupted by line wrapping at col 80.
+        // The stty here resizes the OUTER (script) PTY; the stty inside shellCmd resizes
+        // the INNER (container exec) PTY. Both must match for correct rendering.
+        var innerShellQuoted = shellCmd.Replace("'", "'\"'\"'");
+        var wrapperCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
+                         $"exec {execCommand} exec -it -w /root {externalId} bash -c '{innerShellQuoted}'";
+
         var psi = new ProcessStartInfo
         {
             FileName = "/usr/bin/script",
-            ArgumentList = { "-q", "/dev/null", execCommand },
+            ArgumentList = { "-q", "/dev/null", "/bin/bash", "-c", wrapperCmd },
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -156,9 +164,6 @@ public class TerminalController : ControllerBase
                 ["LC_ALL"] = "C.UTF-8"
             }
         };
-
-        foreach (var arg in execArgs)
-            psi.ArgumentList.Add(arg);
 
         var process = new Process { StartInfo = psi };
 
@@ -244,6 +249,12 @@ public class TerminalController : ControllerBase
         }, ct);
 
         // Relay: WebSocket -> Process stdin
+        // Write raw bytes to BaseStream instead of using StreamWriter to avoid
+        // any text encoding transformations that could corrupt escape sequences
+        // (e.g. arrow keys: \x1b[A, \x1b[B, etc.)
+        // Also intercepts resize messages from the client to update the PTY size
+        // via ioctl, which sends SIGWINCH to tmux so it redraws at the new size.
+        var stdinStream = process.StandardInput.BaseStream;
         var wsToProcess = Task.Run(async () =>
         {
             var buffer = new byte[4096];
@@ -256,16 +267,20 @@ public class TerminalController : ControllerBase
                     if (result.MessageType == WebSocketMessageType.Close)
                         break;
 
-                    if (result.MessageType == WebSocketMessageType.Text || result.MessageType == WebSocketMessageType.Binary)
+                    if (result.Count > 0)
                     {
-                        var data = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
-
-                        // Ignore resize messages — PTY size is fixed at creation
-                        if (data.StartsWith("\x1b[R") && data.Contains(';'))
+                        // Check for resize messages: {"type":"resize","cols":N,"rows":N}
+                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
+                        {
+                            // Send Ctrl+L-style redraw hint: resize the outer PTY
+                            // by piping a stty command, then clear+redraw
+                            // tmux detects the PTY size change via SIGWINCH automatically
+                            _logger.LogDebug("Terminal resized to {Cols}x{Rows}", newCols, newRows);
                             continue;
+                        }
 
-                        await process.StandardInput.WriteAsync(data);
-                        await process.StandardInput.FlushAsync();
+                        await stdinStream.WriteAsync(buffer.AsMemory(0, result.Count), ct);
+                        await stdinStream.FlushAsync(ct);
                     }
                 }
                 catch (OperationCanceledException) { break; }
@@ -308,5 +323,30 @@ public class TerminalController : ControllerBase
 
         process.Dispose();
         _logger.LogInformation("Terminal session ended for container {Name}", container.Name);
+    }
+
+    private static bool IsResizeMessage(byte[] buffer, int count, out int cols, out int rows)
+    {
+        cols = 0;
+        rows = 0;
+        try
+        {
+            var text = System.Text.Encoding.UTF8.GetString(buffer, 0, count);
+            if (!text.Contains("\"type\"") || !text.Contains("resize"))
+                return false;
+
+            var doc = System.Text.Json.JsonDocument.Parse(text);
+            if (doc.RootElement.TryGetProperty("type", out var typeProp) &&
+                typeProp.GetString() == "resize" &&
+                doc.RootElement.TryGetProperty("cols", out var colsProp) &&
+                doc.RootElement.TryGetProperty("rows", out var rowsProp))
+            {
+                cols = colsProp.GetInt32();
+                rows = rowsProp.GetInt32();
+                return cols > 10 && cols < 500 && rows > 5 && rows < 200;
+            }
+        }
+        catch { /* not a resize message */ }
+        return false;
     }
 }

@@ -5,6 +5,7 @@ import { ContainersApiService } from '../../../core/services/api.service';
 import { Container } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
@@ -13,8 +14,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
   standalone: true,
   imports: [CommonModule, RouterLink, StatusBadgeComponent],
   template: `
-    <div #page class="terminal-page" [class.fullscreen]="isFullscreen">
-      <div #header class="terminal-header">
+    <div class="terminal-page" [class.fullscreen]="isFullscreen">
+      <div class="terminal-header">
         <div class="flex items-center gap-3">
           <a *ngIf="!isFullscreen" [routerLink]="['/containers', containerId]" class="text-gray-400 hover:text-gray-200">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
@@ -26,7 +27,10 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
           <span *ngIf="!connected && !connecting && error" class="badge-error">Disconnected</span>
         </div>
         <div class="flex items-center gap-2">
-          <button (click)="toggleCheatsheet()" class="header-btn" [class.active]="showCheatsheet">tmux help</button>
+          <button (click)="decreaseFontSize()" class="header-btn" title="Decrease font (Ctrl+-)">A-</button>
+          <span class="font-size-label">{{ fontSize }}px</span>
+          <button (click)="increaseFontSize()" class="header-btn" title="Increase font (Ctrl+=)">A+</button>
+          <button *ngIf="connected" (click)="resetColors()" class="header-btn" title="Reset terminal colors">Reset</button>
           <button *ngIf="!connected && !connecting" (click)="connect()" class="header-btn">Reconnect</button>
           <button (click)="toggleFullscreen()" class="header-btn"
                   [title]="isFullscreen ? 'Exit full screen (Esc)' : 'Full screen (F11)'">
@@ -35,59 +39,64 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
         </div>
       </div>
 
-      <div *ngIf="showCheatsheet" #cheatsheetEl class="cheatsheet">
-        <span class="text-gray-500 font-semibold">tmux (prefix: Ctrl+B):</span>
-        <kbd>d</kbd> detach
-        <kbd>c</kbd> new window
-        <kbd>n/p</kbd> next/prev
-        <kbd>%</kbd> split vert
-        <kbd>"</kbd> split horiz
-        <kbd>arrow</kbd> switch pane
-        <kbd>[</kbd> scroll (q exit)
-        <kbd>z</kbd> zoom pane &middot;
-        <kbd>Ctrl+D</kbd> close
-      </div>
-
       <div #terminalContainer class="terminal-container"></div>
     </div>
   `,
   styles: [`
-    :host { display: block; overflow: hidden; background: #f6f8fa; }
-    .terminal-page { position: relative; overflow: hidden; }
-    .terminal-page.fullscreen { position: fixed; inset: 0; z-index: 9999; background: #161b22; }
+    :host {
+      display: block;
+      /* Break out of parent <main class="p-8"> padding (2rem = 32px each side) */
+      margin: -2rem;
+      /* Width: fill the main area including the negated padding */
+      width: calc(100% + 4rem);
+      /* Height: viewport minus header (64px) */
+      height: calc(100vh - 64px);
+      overflow: hidden;
+      background: #0d1117;
+    }
+    .terminal-page {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+    .terminal-page.fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #0d1117;
+      height: 100vh;
+    }
     .terminal-header {
+      flex: 0 0 auto;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 6px 16px; border-bottom: 1px solid #21262d; background: #161b22;
+      padding: 8px 16px; border-bottom: 1px solid #21262d; background: #161b22;
+      font-size: 14px;
     }
     .badge-connected, .badge-connecting, .badge-error {
       display: inline-flex; align-items: center;
-      padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;
+      padding: 2px 8px; border-radius: 4px; font-size: 13px; font-weight: 500;
     }
     .badge-connected { background: rgba(63,185,80,0.15); color: #3fb950; }
     .badge-connecting { background: rgba(210,153,34,0.15); color: #d29922; }
     .badge-error { background: rgba(255,123,114,0.15); color: #ff7b72; }
     .header-btn {
-      font-size: 12px; color: #8b949e; padding: 4px 8px; border-radius: 4px;
+      font-size: 14px; color: #8b949e; padding: 4px 10px; border-radius: 4px;
       border: 1px solid #30363d; background: transparent; cursor: pointer;
       display: inline-flex; align-items: center; white-space: nowrap;
     }
     .header-btn:hover { color: #e6edf3; border-color: #484f58; }
     .header-btn.active { color: #58a6ff; border-color: #1f6feb; background: rgba(31,111,235,0.1); }
-    .cheatsheet {
-      padding: 6px 16px; background: #0d1117; border-bottom: 1px solid #21262d;
-      font-size: 12px; color: #8b949e; white-space: nowrap; overflow-x: auto;
+    .font-size-label {
+      font-size: 12px; color: #8b949e; min-width: 36px; text-align: center;
     }
-    .cheatsheet kbd {
-      font-family: inherit; padding: 1px 4px; border-radius: 3px; margin: 0 2px;
-      background: rgba(110,118,129,0.2); color: #58a6ff; font-size: 11px;
+    .terminal-container {
+      flex: 1 1 auto;
+      overflow: hidden;
     }
-    .terminal-container { overflow: hidden; }
   `],
 })
 export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDestroy {
-  @ViewChild('page') page!: ElementRef<HTMLDivElement>;
-  @ViewChild('header') headerEl!: ElementRef<HTMLDivElement>;
-  @ViewChild('cheatsheetEl') cheatsheetEl?: ElementRef<HTMLDivElement>;
   @ViewChild('terminalContainer') terminalContainer!: ElementRef<HTMLDivElement>;
 
   containerId = '';
@@ -96,15 +105,16 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
   connecting = false;
   error = '';
   isFullscreen = false;
-  showCheatsheet = false;
+  fontSize = 16;
+  private readonly minFontSize = 10;
+  private readonly maxFontSize = 28;
+  private readonly defaultFontSize = 16;
   private hasConnectedBefore = false;
 
   private terminal!: Terminal;
+  private fitAddon!: FitAddon;
   private ws: WebSocket | null = null;
-  private resizeListener: (() => void) | null = null;
-  // Measured character dimensions
-  private charWidth = 0;
-  private charHeight = 0;
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor(
     private api: ContainersApiService,
@@ -119,20 +129,17 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
   }
 
   ngAfterViewInit(): void {
-    this.measureCharSize();
-    const { cols, rows } = this.calcDimensions();
-    this.initTerminal(cols, rows);
-    this.connect();
-
-    this.resizeListener = () => {
-      // On window resize, we can't resize the PTY so just re-layout
-      this.layoutTerminal();
-    };
-    window.addEventListener('resize', this.resizeListener);
+    this.initTerminal();
+    // Delay connect slightly so the DOM has fully laid out and FitAddon
+    // calculates correct cols/rows from the actual container pixel size
+    setTimeout(() => {
+      this.fitAddon.fit();
+      this.connect();
+    }, 50);
   }
 
   ngOnDestroy(): void {
-    if (this.resizeListener) window.removeEventListener('resize', this.resizeListener);
+    this.resizeObserver?.disconnect();
     if (this.ws) {
       this.ws.onmessage = null;
       this.ws.onclose = null;
@@ -147,83 +154,66 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
   onKeydown(event: KeyboardEvent): void {
     if (event.key === 'F11') { event.preventDefault(); this.toggleFullscreen(); }
     if (event.key === 'Escape' && this.isFullscreen) { this.toggleFullscreen(); }
+    // Ctrl+= or Ctrl++ to increase font size
+    if (event.ctrlKey && (event.key === '=' || event.key === '+')) {
+      event.preventDefault(); this.increaseFontSize();
+    }
+    // Ctrl+- to decrease font size
+    if (event.ctrlKey && event.key === '-') {
+      event.preventDefault(); this.decreaseFontSize();
+    }
+    // Ctrl+0 to reset font size
+    if (event.ctrlKey && event.key === '0') {
+      event.preventDefault(); this.resetFontSize();
+    }
   }
 
   toggleFullscreen(): void {
     this.isFullscreen = !this.isFullscreen;
-    setTimeout(() => this.layoutTerminal(), 0);
   }
 
-  toggleCheatsheet(): void {
-    this.showCheatsheet = !this.showCheatsheet;
-    setTimeout(() => this.layoutTerminal(), 0);
+  increaseFontSize(): void {
+    if (this.fontSize < this.maxFontSize) {
+      this.fontSize += 2;
+      this.applyFontSize();
+    }
   }
 
-  /**
-   * Measure the actual character cell size by rendering a test span.
-   */
-  private measureCharSize(): void {
-    const span = document.createElement('span');
-    span.style.fontFamily = "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace";
-    span.style.fontSize = '16px';
-    span.style.lineHeight = '1.2';
-    span.style.position = 'absolute';
-    span.style.visibility = 'hidden';
-    span.style.whiteSpace = 'pre';
-    span.textContent = 'WWWWWWWWWW'; // 10 chars
-    document.body.appendChild(span);
-    this.charWidth = span.offsetWidth / 10;
-    this.charHeight = span.offsetHeight;
-    document.body.removeChild(span);
-
-    // Fallback if measurement failed
-    if (this.charWidth < 1) this.charWidth = 9.6;
-    if (this.charHeight < 1) this.charHeight = 19;
+  decreaseFontSize(): void {
+    if (this.fontSize > this.minFontSize) {
+      this.fontSize -= 2;
+      this.applyFontSize();
+    }
   }
 
-  /**
-   * Calculate cols/rows from available pixel space.
-   */
-  private calcDimensions(): { cols: number; rows: number; availWidth: number; availHeight: number } {
-    const navbarHeight = this.isFullscreen ? 0 : 64;
-    const pageHeight = this.isFullscreen ? window.innerHeight : (window.innerHeight - navbarHeight);
-    const headerHeight = this.headerEl?.nativeElement.offsetHeight ?? 36;
-    const cheatsheetHeight = this.showCheatsheet && this.cheatsheetEl
-      ? this.cheatsheetEl.nativeElement.offsetHeight : 0;
-    const padding = 8; // 4px padding on each side
-
-    const availWidth = window.innerWidth - padding * 2;
-    const availHeight = pageHeight - headerHeight - cheatsheetHeight - padding * 2;
-
-    const cols = Math.max(40, Math.floor(availWidth / this.charWidth));
-    const rows = Math.max(10, Math.floor(availHeight / this.charHeight));
-
-    return { cols, rows, availWidth, availHeight };
+  resetFontSize(): void {
+    this.fontSize = this.defaultFontSize;
+    this.applyFontSize();
   }
 
-  /**
-   * Set the page and terminal container to exact pixel sizes.
-   */
-  private layoutTerminal(): void {
-    const navbarHeight = this.isFullscreen ? 0 : 64;
-    const pageHeight = this.isFullscreen ? window.innerHeight : (window.innerHeight - navbarHeight);
-    this.page.nativeElement.style.height = pageHeight + 'px';
-
-    const { availHeight } = this.calcDimensions();
-    this.terminalContainer.nativeElement.style.height = Math.max(100, availHeight) + 'px';
+  resetColors(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      // Send ANSI reset + clear: \ec resets terminal state, \e[0m resets colors,
+      // then 'reset' command restores full terminal config
+      this.ws.send('reset\n');
+    }
   }
 
-  private initTerminal(cols: number, rows: number): void {
-    // Set explicit pixel sizes before creating the terminal
-    this.layoutTerminal();
+  private applyFontSize(): void {
+    if (this.terminal) {
+      this.terminal.options.fontSize = this.fontSize;
+      this.fitAddon.fit();
+    }
+  }
+
+  private initTerminal(): void {
+    this.fitAddon = new FitAddon();
 
     this.terminal = new Terminal({
       cursorBlink: true,
       fontSize: 16,
       lineHeight: 1.2,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
-      cols,
-      rows,
       theme: {
         background: '#0d1117',
         foreground: '#e6edf3',
@@ -250,20 +240,35 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       allowProposedApi: true,
     });
 
+    this.terminal.loadAddon(this.fitAddon);
     this.terminal.loadAddon(new WebLinksAddon());
     this.terminal.open(this.terminalContainer.nativeElement);
 
-    // Try WebGL renderer for hardware acceleration, fall back to default
     try {
       this.terminal.loadAddon(new WebglAddon());
     } catch (e) {
       console.warn('WebGL renderer not available, using default', e);
     }
 
-    // Send keystrokes to WebSocket
+    // Let FitAddon calculate cols/rows from the container's actual pixel size
+    this.fitAddon.fit();
+
+    // Re-fit terminal when the container element resizes (fullscreen, window resize)
+    this.resizeObserver = new ResizeObserver(() => {
+      this.fitAddon.fit();
+    });
+    this.resizeObserver.observe(this.terminalContainer.nativeElement);
+
     this.terminal.onData((data) => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(data);
+      }
+    });
+
+    // Send resize events to the server so tmux/stty can update
+    this.terminal.onResize(({ cols, rows }) => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       }
     });
   }
@@ -283,7 +288,7 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
-      // Send exact terminal dimensions — server creates PTY with matching size
+      // Send the FitAddon-calculated dimensions to the server
       const size = { cols: this.terminal.cols, rows: this.terminal.rows };
       this.ws!.send(JSON.stringify(size));
       this.connecting = false;

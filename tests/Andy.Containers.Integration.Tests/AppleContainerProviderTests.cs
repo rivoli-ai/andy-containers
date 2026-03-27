@@ -97,6 +97,71 @@ public class AppleContainerProviderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TmuxSession_SurvivesDisconnectAndReattach()
+    {
+        // Setup: create a container with tmux installed
+        var spec = new ContainerSpec
+        {
+            Name = _testContainerName,
+            ImageReference = "ubuntu:24.04",
+            Resources = new ResourceSpec { CpuCores = 2, MemoryMb = 512 }
+        };
+        var result = await _provider.CreateContainerAsync(spec, CancellationToken.None);
+        _externalId = result.ExternalId;
+
+        // Install tmux
+        await _provider.ExecAsync(_externalId, "apt-get update -qq && apt-get install -y -qq tmux >/dev/null 2>&1", CancellationToken.None);
+
+        // 1. Create a detached tmux session with explicit dimensions (same as TerminalController does)
+        var cols = 120;
+        var rows = 40;
+        await _provider.ExecAsync(_externalId,
+            $"tmux new-session -d -s web -x {cols} -y {rows}",
+            CancellationToken.None);
+        await Task.Delay(300);
+
+        // 2. Verify the tmux session exists
+        var sessionCheck = await _provider.ExecAsync(_externalId, "tmux has-session -t web 2>/dev/null && echo EXISTS", CancellationToken.None);
+        sessionCheck.StdOut.Should().Contain("EXISTS", "tmux session 'web' should exist after creation");
+
+        // 3. Verify window dimensions match what we requested
+        var sizeCheck = await _provider.ExecAsync(_externalId, "tmux display-message -t web -p '#{window_width}x#{window_height}'", CancellationToken.None);
+        sizeCheck.StdOut!.Trim().Should().Be($"{cols}x{rows}",
+            "tmux window should match requested dimensions");
+
+        // 4. Set default-terminal to xterm-256color (same as TerminalController does)
+        await _provider.ExecAsync(_externalId, "tmux set-option -g default-terminal xterm-256color", CancellationToken.None);
+        var termCheck = await _provider.ExecAsync(_externalId, "tmux show-option -gv default-terminal", CancellationToken.None);
+        termCheck.StdOut.Should().Contain("xterm-256color", "tmux should use xterm-256color as default-terminal");
+
+        // 5. Write state inside the tmux session, then "disconnect" (the session stays)
+        await _provider.ExecAsync(_externalId,
+            "tmux send-keys -t web 'cd /tmp && echo RECONNECT_TEST > reconnect-marker' Enter",
+            CancellationToken.None);
+        await Task.Delay(500);
+
+        // 6. Simulate reconnect with a different terminal size
+        var newCols = 100;
+        var newRows = 30;
+        await _provider.ExecAsync(_externalId,
+            $"tmux resize-window -t web -x {newCols} -y {newRows} 2>/dev/null",
+            CancellationToken.None);
+
+        // 7. Verify session still exists after simulated disconnect/reconnect
+        var sessionAfter = await _provider.ExecAsync(_externalId, "tmux has-session -t web 2>/dev/null && echo STILL_EXISTS", CancellationToken.None);
+        sessionAfter.StdOut.Should().Contain("STILL_EXISTS", "tmux session should survive after client disconnects");
+
+        // 8. Verify window resized to new dimensions
+        var newSizeCheck = await _provider.ExecAsync(_externalId, "tmux display-message -t web -p '#{window_width}x#{window_height}'", CancellationToken.None);
+        newSizeCheck.StdOut!.Trim().Should().Be($"{newCols}x{newRows}",
+            "tmux window should resize to new dimensions on reconnect");
+
+        // 9. Verify state persisted inside the session
+        var reconnectMarker = await _provider.ExecAsync(_externalId, "cat /tmp/reconnect-marker", CancellationToken.None);
+        reconnectMarker.StdOut.Should().Contain("RECONNECT_TEST", "state written in tmux session should persist across reconnects");
+    }
+
+    [Fact]
     public async Task GetCapabilities_ShouldReturnAppleContainerCapabilities()
     {
         var caps = await _provider.GetCapabilitiesAsync(CancellationToken.None);

@@ -18,10 +18,10 @@ public class DataSeederTests
         await DataSeeder.SeedAsync(db);
 
         var templates = await db.Templates.ToListAsync();
-        templates.Should().HaveCount(6);
+        templates.Should().HaveCount(7);
         templates.Select(t => t.Code).Should().BeEquivalentTo(
             "full-stack", "agent-sandbox-ui", "dotnet-8-vscode",
-            "python-3.12-vscode", "angular-18-vscode", "andy-cli-dev");
+            "python-3.12-vscode", "angular-18-vscode", "andy-cli-dev", "dotnet-10-cli");
     }
 
     [Fact]
@@ -58,6 +58,7 @@ public class DataSeederTests
     [InlineData("python-3.12-vscode", new[] { "python", "pip", "git", "code-server" })]
     [InlineData("angular-18-vscode", new[] { "node", "angular-cli", "git", "code-server" })]
     [InlineData("andy-cli-dev", new[] { "dotnet-sdk", "andy-cli", "git", "code-server" })]
+    [InlineData("dotnet-10-cli", new[] { "dotnet-sdk", "git", "code-server" })]
     public async Task SeedAsync_TemplateHasExpectedDependencies(string templateCode, string[] expectedDeps)
     {
         using var db = InMemoryDbHelper.CreateContext(_dbName);
@@ -131,6 +132,145 @@ public class DataSeederTests
                 .AnyAsync(d => d.TemplateId == template.Id && d.Name == "git");
             hasGit.Should().BeTrue($"template '{template.Code}' should include git");
         }
+    }
+
+    [Fact]
+    public async Task SeedAsync_AllTemplateScriptsIncludeLocalhostFix()
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var templates = await db.Templates.ToListAsync();
+        foreach (var template in templates)
+        {
+            template.Scripts.Should().NotBeNullOrEmpty($"template '{template.Code}' should have scripts");
+            template.Scripts.Should().Contain("localhost",
+                $"template '{template.Code}' scripts should ensure /etc/hosts has localhost");
+            template.Scripts.Should().Contain("127.0.0.1",
+                $"template '{template.Code}' scripts should add 127.0.0.1 localhost mapping");
+        }
+    }
+
+    [Fact]
+    public async Task SeedAsync_AllTemplateScriptsIncludeUtf8Locale()
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var templates = await db.Templates.ToListAsync();
+        foreach (var template in templates)
+        {
+            template.Scripts.Should().Contain("LANG=C.UTF-8",
+                $"template '{template.Code}' scripts should set UTF-8 locale");
+            template.Scripts.Should().Contain("LC_ALL=C.UTF-8",
+                $"template '{template.Code}' scripts should set LC_ALL to UTF-8");
+        }
+    }
+
+    [Fact]
+    public async Task SeedAsync_AllTemplateScriptsInstallTmux()
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var templates = await db.Templates.ToListAsync();
+        foreach (var template in templates)
+        {
+            template.Scripts.Should().Contain("tmux",
+                $"template '{template.Code}' scripts should install tmux");
+        }
+    }
+
+    [Theory]
+    [InlineData("python-3.12-vscode", "python3")]
+    [InlineData("dotnet-8-vscode", "dotnet")]
+    [InlineData("dotnet-10-cli", "dotnet")]
+    [InlineData("angular-18-vscode", "nodejs")]
+    [InlineData("full-stack", "python3")]
+    [InlineData("full-stack", "nodejs")]
+    [InlineData("full-stack", "dotnet")]
+    public async Task SeedAsync_TemplateScriptsInstallCorrectToolchain(string templateCode, string expectedToolchain)
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var template = await db.Templates.FirstAsync(t => t.Code == templateCode);
+        template.Scripts.Should().Contain(expectedToolchain,
+            $"template '{templateCode}' should install {expectedToolchain}");
+    }
+
+    [Theory]
+    [InlineData("andy-cli-dev", "python3")]
+    [InlineData("andy-cli-dev", "nodejs")]
+    [InlineData("dotnet-8-vscode", "python3")]
+    [InlineData("angular-18-vscode", "dotnet")]
+    [InlineData("python-3.12-vscode", "dotnet")]
+    [InlineData("dotnet-10-cli", "python3")]
+    [InlineData("dotnet-10-cli", "nodejs")]
+    public async Task SeedAsync_TemplateScriptsDoNotInstallUnrelatedToolchain(string templateCode, string unexpectedToolchain)
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var template = await db.Templates.FirstAsync(t => t.Code == templateCode);
+        template.Scripts.Should().NotContain(unexpectedToolchain,
+            $"template '{templateCode}' should NOT install {unexpectedToolchain}");
+    }
+
+    [Fact]
+    public async Task SeedAsync_AllTemplateScriptsInstallLocalesPackage()
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var templates = await db.Templates.ToListAsync();
+        foreach (var template in templates)
+        {
+            template.Scripts.Should().Contain("locales",
+                $"template '{template.Code}' scripts should install locales package");
+            template.Scripts.Should().Contain("locale-gen",
+                $"template '{template.Code}' scripts should run locale-gen");
+        }
+    }
+
+    [Fact]
+    public async Task SeedAsync_DotnetTemplatesUseDotnetInstallScript()
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var dotnet8 = await db.Templates.FirstAsync(t => t.Code == "dotnet-8-vscode");
+        dotnet8.Scripts.Should().Contain("dotnet-install.sh",
+            ".NET 8 template should use official install script");
+        dotnet8.Scripts.Should().Contain("--channel 8.0");
+        dotnet8.Scripts.Should().Contain("DOTNET_ROOT",
+            ".NET 8 template should set DOTNET_ROOT in bashrc");
+
+        var dotnet10 = await db.Templates.FirstAsync(t => t.Code == "dotnet-10-cli");
+        dotnet10.Scripts.Should().Contain("dotnet-install.sh",
+            ".NET 10 template should use official install script");
+        dotnet10.Scripts.Should().Contain("--channel 10.0");
+        dotnet10.Scripts.Should().Contain("DOTNET_ROOT",
+            ".NET 10 template should set DOTNET_ROOT in bashrc");
+    }
+
+    [Fact]
+    public async Task SeedAsync_UpdateTemplateScripts_WhenReseeded()
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        // Tamper with a template's scripts
+        var python = await db.Templates.FirstAsync(t => t.Code == "python-3.12-vscode");
+        python.Scripts = "{}";
+        await db.SaveChangesAsync();
+
+        // Re-seed should fix it
+        await DataSeeder.SeedAsync(db);
+
+        var updated = await db.Templates.FirstAsync(t => t.Code == "python-3.12-vscode");
+        updated.Scripts.Should().Contain("python3",
+            "re-seeding should restore template-specific scripts");
     }
 
     [Fact]

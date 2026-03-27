@@ -77,11 +77,11 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
             </div>
             <div class="flex justify-between">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Template</dt>
-              <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.templateId | slice:0:8 }}</dd>
+              <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.template?.name || container.templateId | slice:0:8 }}</dd>
             </div>
             <div class="flex justify-between">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Provider</dt>
-              <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.providerId | slice:0:8 }}</dd>
+              <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.provider?.name || container.providerId | slice:0:8 }}</dd>
             </div>
             <div class="flex justify-between">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Created</dt>
@@ -216,16 +216,19 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
         <!-- Actions Card -->
         <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
           <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Actions</h2>
+          <div *ngIf="actionError" class="mb-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+            <p class="text-sm text-red-800 dark:text-red-200">{{ actionError }}</p>
+          </div>
           <div class="flex flex-wrap gap-2">
             <button *ngIf="container.status === 'Stopped' || container.status === 'Failed'" (click)="startContainer()"
               [disabled]="actionBusy"
               class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 transition-colors">
-              Start
+              {{ actionBusy ? 'Starting...' : 'Start' }}
             </button>
             <button *ngIf="container.status === 'Running'" (click)="stopContainer()"
               [disabled]="actionBusy"
               class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 transition-colors">
-              Stop
+              {{ actionBusy ? 'Stopping...' : 'Stop' }}
             </button>
             <button (click)="destroyContainer()"
               [disabled]="actionBusy || container.status === 'Destroyed' || container.status === 'Destroying'"
@@ -332,6 +335,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   execResult: ExecResult | null = null;
   execRunning = false;
   actionBusy = false;
+  actionError = '';
   copiedField = '';
   isStuck = false;
   codeAssistantLabel = '';
@@ -455,17 +459,25 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
 
   startContainer(): void {
     this.actionBusy = true;
+    this.actionError = '';
     this.api.startContainer(this.containerId).subscribe({
       next: () => { this.actionBusy = false; this.loadContainer(); },
-      error: () => { this.actionBusy = false; },
+      error: (err) => {
+        this.actionBusy = false;
+        this.actionError = err.error?.message || err.error || 'Failed to start container';
+      },
     });
   }
 
   stopContainer(): void {
     this.actionBusy = true;
+    this.actionError = '';
     this.api.stopContainer(this.containerId).subscribe({
       next: () => { this.actionBusy = false; this.loadContainer(); },
-      error: () => { this.actionBusy = false; },
+      error: (err) => {
+        this.actionBusy = false;
+        this.actionError = err.error?.message || err.error || 'Failed to stop container';
+      },
     });
   }
 

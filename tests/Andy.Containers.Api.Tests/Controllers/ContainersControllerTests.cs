@@ -61,6 +61,39 @@ public class ContainersControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task List_TotalCount_ReflectsAllMatchingContainers_NotJustPage()
+    {
+        // Seed 10 containers in the DB
+        for (var i = 0; i < 10; i++)
+            _db.Containers.Add(new Container { Name = $"c{i}", OwnerId = "user1" });
+        await _db.SaveChangesAsync();
+
+        // Mock service returns only 3 items (simulating take=3)
+        var pageItems = new List<Container>
+        {
+            new() { Name = "c0", OwnerId = "user1" },
+            new() { Name = "c1", OwnerId = "user1" },
+            new() { Name = "c2", OwnerId = "user1" }
+        };
+        _mockService
+            .Setup(s => s.ListContainersAsync(It.IsAny<ContainerFilter>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pageItems);
+
+        var result = await _controller.List(ownerId: null, organizationId: null, teamId: null,
+            workspaceId: null, status: null, templateId: null, providerId: null,
+            skip: 0, take: 3);
+
+        var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = System.Text.Json.JsonSerializer.Serialize(okResult.Value);
+        var doc = System.Text.Json.JsonDocument.Parse(json);
+        var totalCount = doc.RootElement.GetProperty("totalCount").GetInt32();
+        var items = doc.RootElement.GetProperty("items").GetArrayLength();
+
+        items.Should().Be(3, "page should contain 3 items");
+        totalCount.Should().Be(10, "totalCount should reflect all containers in DB, not just the page");
+    }
+
+    [Fact]
     public async Task Get_ExistingContainer_ShouldReturnOk()
     {
         var id = Guid.NewGuid();

@@ -85,11 +85,17 @@ public class ContainerStatusSyncWorker : BackgroundService
 
                     if (info.Status != container.Status)
                     {
+                        // Don't override Creating → Running: the provisioning worker
+                        // sets Creating while post-create scripts run and only transitions
+                        // to Running after all setup completes. The provider reports Running
+                        // because the container process is up, but tools aren't installed yet.
+                        if (container.Status == ContainerStatus.Creating && info.Status == ContainerStatus.Running)
+                            continue;
+
                         _logger.LogInformation(
                             "Container {Name} ({Id}) status changed: {Old} -> {New}",
                             container.Name, container.Id, container.Status, info.Status);
 
-                        // If provider says it's gone (stopped/destroyed) but DB says running, update
                         container.Status = info.Status;
                         if (info.Status == ContainerStatus.Stopped && container.StoppedAt is null)
                             container.StoppedAt = DateTime.UtcNow;
