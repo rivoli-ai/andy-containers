@@ -18,10 +18,11 @@ public class DataSeederTests
         await DataSeeder.SeedAsync(db);
 
         var templates = await db.Templates.ToListAsync();
-        templates.Should().HaveCount(7);
+        templates.Should().HaveCount(8);
         templates.Select(t => t.Code).Should().BeEquivalentTo(
             "full-stack", "agent-sandbox-ui", "dotnet-8-vscode",
-            "python-3.12-vscode", "angular-18-vscode", "andy-cli-dev", "dotnet-10-cli");
+            "python-3.12-vscode", "angular-18-vscode", "andy-cli-dev", "dotnet-10-cli",
+            "dotnet-8-alpine");
     }
 
     [Fact]
@@ -59,6 +60,7 @@ public class DataSeederTests
     [InlineData("angular-18-vscode", new[] { "node", "angular-cli", "git", "code-server" })]
     [InlineData("andy-cli-dev", new[] { "dotnet-sdk", "andy-cli", "git", "code-server" })]
     [InlineData("dotnet-10-cli", new[] { "dotnet-sdk", "git", "code-server" })]
+    [InlineData("dotnet-8-alpine", new[] { "dotnet-sdk", "git", "code-server", "build-base", "bash" })]
     public async Task SeedAsync_TemplateHasExpectedDependencies(string templateCode, string[] expectedDeps)
     {
         using var db = InMemoryDbHelper.CreateContext(_dbName);
@@ -94,7 +96,7 @@ public class DataSeederTests
             .Should().AllSatisfy(d => d.Type.Should().Be(DependencyType.Tool));
 
         // OS packages
-        deps.Where(d => d.Name is "xfce4" or "tigervnc-standalone-server")
+        deps.Where(d => d.Name is "xfce4" or "tigervnc-standalone-server" or "build-base" or "bash")
             .Should().AllSatisfy(d => d.Type.Should().Be(DependencyType.OsPackage));
     }
 

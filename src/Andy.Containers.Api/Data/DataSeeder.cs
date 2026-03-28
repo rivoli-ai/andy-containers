@@ -76,6 +76,12 @@ public static class DataSeeder
             "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && " +
             "apt-get install -y -qq nodejs >/dev/null 2>&1" });
 
+    // Alpine-based .NET 8: base image already has .NET SDK, just add bash and build tools
+    private static string DotnetAlpineScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+            "apk add --quiet --no-cache bash build-base icu-libs >/dev/null 2>&1 && " +
+            "echo 'export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false' >> /root/.bashrc" });
+
     private static string FullStackScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
             // Python
@@ -138,6 +144,7 @@ public static class DataSeeder
         var angularId = Guid.Parse("00000002-0001-0001-0001-000000000005");
         var andyCliId = Guid.Parse("00000002-0001-0001-0001-000000000006");
         var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
+        var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
 
         db.Templates.AddRange(
             new ContainerTemplate
@@ -210,17 +217,27 @@ public static class DataSeeder
                 IsPublished = true, Tags = ["dotnet", "dotnet-10"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = Dotnet10ScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = dotnetAlpineId, Code = "dotnet-8-alpine", Name = ".NET 8 Alpine (Minimal)",
+                Description = "Minimal .NET 8 development environment based on Alpine Linux with essential dev tools",
+                Version = "1.0.0", BaseImage = "mcr.microsoft.com/dotnet/sdk:8.0-alpine",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
+                IsPublished = true, Tags = ["dotnet", "alpine", "minimal"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
+                Scripts = DotnetAlpineScriptsJson
             }
         );
 
         // Seed dependencies for all templates
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId);
 
         await db.SaveChangesAsync();
     }
 
     private static void SeedDependencySpecs(ContainersDbContext db,
-        Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id)
+        Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id, Guid dotnetAlpineId)
     {
         db.DependencySpecs.AddRange(
             // Full Stack: dotnet + python + node + angular + git + code-server
@@ -266,7 +283,14 @@ public static class DataSeeder
             // .NET 10 CLI: dotnet-sdk 10 + git + code-server
             new DependencySpec { TemplateId = dotnet10Id, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "10.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
             new DependencySpec { TemplateId = dotnet10Id, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
-            new DependencySpec { TemplateId = dotnet10Id, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 }
+            new DependencySpec { TemplateId = dotnet10Id, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 },
+
+            // .NET 8 Alpine: dotnet-sdk (pre-installed in base image) + git + code-server + build-base + bash
+            new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
+            new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 },
+            new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.OsPackage, Name = "build-base", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 },
+            new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.OsPackage, Name = "bash", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 5 }
         );
     }
 
@@ -277,6 +301,7 @@ public static class DataSeeder
     private static async Task AddNewSeedTemplatesAsync(ContainersDbContext db)
     {
         var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
+        var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
 
         // Check which new templates are missing
         var newTemplates = new Dictionary<Guid, ContainerTemplate>
@@ -290,6 +315,16 @@ public static class DataSeeder
                 IsPublished = true, Tags = ["dotnet", "dotnet-10"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = Dotnet10ScriptsJson
+            },
+            [dotnetAlpineId] = new ContainerTemplate
+            {
+                Id = dotnetAlpineId, Code = "dotnet-8-alpine", Name = ".NET 8 Alpine (Minimal)",
+                Description = "Minimal .NET 8 development environment based on Alpine Linux with essential dev tools",
+                Version = "1.0.0", BaseImage = "mcr.microsoft.com/dotnet/sdk:8.0-alpine",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
+                IsPublished = true, Tags = ["dotnet", "alpine", "minimal"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
+                Scripts = DotnetAlpineScriptsJson
             }
         };
 
@@ -321,6 +356,7 @@ public static class DataSeeder
             Guid.Parse("00000002-0001-0001-0001-000000000005"),
             Guid.Parse("00000002-0001-0001-0001-000000000006"),
             Guid.Parse("00000002-0001-0001-0001-000000000007"),
+            Guid.Parse("00000002-0001-0001-0001-000000000008"),
         };
 
         var templates = await db.Templates
@@ -336,6 +372,7 @@ public static class DataSeeder
             ["angular-18-vscode"] = NodeScriptsJson,
             ["andy-cli-dev"] = ScriptsJson,
             ["dotnet-10-cli"] = Dotnet10ScriptsJson,
+            ["dotnet-8-alpine"] = DotnetAlpineScriptsJson,
         };
 
         var updated = false;
@@ -366,8 +403,9 @@ public static class DataSeeder
         var angularId = Guid.Parse("00000002-0001-0001-0001-000000000005");
         var andyCliId = Guid.Parse("00000002-0001-0001-0001-000000000006");
         var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
+        var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
 
-        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id };
+        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId };
 
         // Find which seed templates have no dependency specs at all
         var templatesWithDeps = await db.DependencySpecs
@@ -382,7 +420,7 @@ public static class DataSeeder
 
         // Only seed deps for templates that have none — use a temporary context
         // to avoid duplicating the full-stack deps that may already exist
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId);
 
         // Remove specs for templates that already had them (we just re-added everything)
         var duplicates = db.ChangeTracker.Entries<DependencySpec>()

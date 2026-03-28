@@ -1,0 +1,66 @@
+code: dotnet-8-alpine
+name: .NET 8 Alpine (Minimal)
+description: Minimal .NET 8 development environment based on Alpine Linux with essential dev tools
+version: "1.0.0"
+base_image: mcr.microsoft.com/dotnet/sdk:8.0-alpine
+catalog_scope: global
+ide_type: code-server
+
+gpu:
+  required: false
+  preferred: false
+
+resources:
+  cpu_cores: 2
+  memory_mb: 2048
+  disk_gb: 10
+
+dependencies:
+  - type: sdk
+    name: dotnet-sdk
+    version: "8.0.*"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: git
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: code-server
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+  - type: os_package
+    name: build-base
+    version: "latest"
+    auto_update: false
+    update_policy: security-only
+
+  - type: os_package
+    name: bash
+    version: "latest"
+    auto_update: false
+    update_policy: security-only
+
+environment:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_RUNNING_IN_CONTAINER: "true"
+
+ports:
+  8080: code-server
+  5000: dotnet-api
+
+scripts:
+  init: |
+    git config --global init.defaultBranch main
+  setup: |
+    echo "Container ready"
+
+tags:
+  - dotnet
+  - alpine
+  - minimal

@@ -64,6 +64,7 @@ public class InfrastructureRoutingService : IInfrastructureRoutingService
             .ToListAsync(ct);
 
         var candidates = providers
+            .Where(p => p.HealthStatus != ProviderHealth.Unreachable)
             .Select(p => new ProviderCandidate
             {
                 Provider = p,

@@ -48,8 +48,11 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
           <select id="provider" [(ngModel)]="selectedProviderId" name="provider"
             class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
             <option value="">Auto-select</option>
-            <option *ngFor="let p of providers" [value]="p.id">{{ p.name }} ({{ p.type }})</option>
+            <option *ngFor="let p of providers" [value]="p.id"
+              [disabled]="p.healthStatus === 'Unreachable'"
+              [class.text-surface-400]="p.healthStatus === 'Unreachable'">{{ p.name }} ({{ p.type }}){{ p.healthStatus === 'Unreachable' ? ' (unreachable)' : p.healthStatus === 'Degraded' ? ' (degraded)' : '' }}</option>
           </select>
+          <p *ngIf="!hasReachableProvider" class="mt-1 text-xs text-red-600 dark:text-red-400">No reachable providers available. Container creation is disabled.</p>
         </div>
 
         <!-- Workspace (optional) -->
@@ -145,7 +148,7 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
             class="px-4 py-2 text-sm font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-700">
             Cancel
           </a>
-          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId"
+          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId || !hasReachableProvider"
             class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {{ submitting ? 'Creating...' : 'Create Container' }}
           </button>
@@ -173,6 +176,10 @@ export class ContainerCreateComponent implements OnInit {
   apiKeys: ApiKeyCredential[] = [];
   submitting = false;
   error = '';
+
+  get hasReachableProvider(): boolean {
+    return this.providers.some(p => p.healthStatus !== 'Unreachable');
+  }
 
   constructor(private api: ContainersApiService, private router: Router, private route: ActivatedRoute) {}
 

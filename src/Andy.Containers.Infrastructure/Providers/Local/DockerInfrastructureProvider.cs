@@ -19,19 +19,59 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     public DockerInfrastructureProvider(string? connectionConfig, ILogger<DockerInfrastructureProvider> logger)
     {
         _logger = logger;
-        var endpoint = "unix:///var/run/docker.sock";
+        var endpoint = ResolveDockerEndpoint(connectionConfig);
+        _logger.LogDebug("Using Docker endpoint: {Endpoint}", endpoint);
+        _client = new DockerClientConfiguration(new Uri(endpoint)).CreateClient();
+    }
+
+    private static string ResolveDockerEndpoint(string? connectionConfig)
+    {
+        // Try explicit configuration first, but only if the socket actually exists
         if (!string.IsNullOrEmpty(connectionConfig))
         {
             try
             {
                 var config = JsonSerializer.Deserialize<JsonElement>(connectionConfig);
                 if (config.TryGetProperty("endpoint", out var ep))
-                    endpoint = ep.GetString() ?? endpoint;
+                {
+                    var configured = ep.GetString();
+                    if (!string.IsNullOrEmpty(configured))
+                    {
+                        // For unix sockets, verify the file exists before committing to it
+                        if (configured.StartsWith("unix://"))
+                        {
+                            var socketPath = configured["unix://".Length..];
+                            if (File.Exists(socketPath))
+                                return configured;
+                            // Socket from config not found — fall through to auto-discovery
+                        }
+                        else
+                        {
+                            // TCP or other endpoints — trust the configuration
+                            return configured;
+                        }
+                    }
+                }
             }
             catch { }
         }
 
-        _client = new DockerClientConfiguration(new Uri(endpoint)).CreateClient();
+        // Auto-discover: default socket path
+        const string defaultSocket = "/var/run/docker.sock";
+        if (File.Exists(defaultSocket))
+            return $"unix://{defaultSocket}";
+
+        // macOS Docker Desktop places the socket under ~/.docker/run/
+        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(homeDir))
+        {
+            var dockerDesktopSocket = Path.Combine(homeDir, ".docker/run/docker.sock");
+            if (File.Exists(dockerDesktopSocket))
+                return $"unix://{dockerDesktopSocket}";
+        }
+
+        // Fallback to default even if not found — let HealthCheck report Unreachable
+        return $"unix://{defaultSocket}";
     }
 
     public Task<ProviderCapabilities> GetCapabilitiesAsync(CancellationToken ct)
