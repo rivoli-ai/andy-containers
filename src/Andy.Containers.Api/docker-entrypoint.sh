@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # Trust custom CA certificates mounted at runtime under /usr/local/share/ca-certificates/custom/
