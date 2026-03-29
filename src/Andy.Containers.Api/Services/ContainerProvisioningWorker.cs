@@ -92,7 +92,10 @@ public class ContainerProvisioningWorker : BackgroundService
                 ImageReference = job.TemplateBaseImage,
                 Name = job.ContainerName,
                 Resources = job.Resources ?? new ResourceSpec(),
-                Gpu = job.Gpu
+                Gpu = job.Gpu,
+                // Always expose SSH (port 22) with a dynamic host port so users
+                // can connect from their native terminal app via ssh://
+                PortMappings = new Dictionary<int, int> { [22] = 0 }
             };
 
             // Use a timeout so we don't hang forever

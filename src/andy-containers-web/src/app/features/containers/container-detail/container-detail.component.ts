@@ -148,15 +148,20 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
             <div *ngIf="connectionInfo?.sshEndpoint" class="connect-row">
               <span class="connect-dot bg-green-500"></span>
               <span class="connect-label">SSH</span>
-              <code class="flex-1 text-sm font-mono text-surface-700 dark:text-surface-300 truncate">{{ connectionInfo?.sshEndpoint }}</code>
-              <button (click)="copyWithFeedback(connectionInfo?.sshEndpoint, 'ssh')" title="Copy"
-                class="copy-btn" [class.copied]="copiedField === 'ssh'">
-                <svg *ngIf="copiedField !== 'ssh'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-                <svg *ngIf="copiedField === 'ssh'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
-              </button>
-              <a [href]="getSshUrl()" title="Open in native terminal" class="copy-btn">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              </a>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <code class="text-sm font-mono text-surface-700 dark:text-surface-300 truncate">{{ connectionInfo?.sshEndpoint }}</code>
+                  <button (click)="copyWithFeedback(connectionInfo?.sshEndpoint, 'ssh')" title="Copy command"
+                    class="copy-btn" [class.copied]="copiedField === 'ssh'">
+                    <svg *ngIf="copiedField !== 'ssh'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <svg *ngIf="copiedField === 'ssh'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                  </button>
+                  <a [href]="getSshUrl()" title="Open in native terminal app" class="copy-btn">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  </a>
+                </div>
+                <p class="text-xs text-surface-400 mt-0.5">Password: <code class="font-mono">container</code></p>
+              </div>
             </div>
 
             <!-- IDE -->
