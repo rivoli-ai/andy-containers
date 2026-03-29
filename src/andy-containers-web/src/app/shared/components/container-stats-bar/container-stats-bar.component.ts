@@ -34,9 +34,9 @@ const SETTINGS_KEY = 'andy.statsPollingInterval';
   `,
   styles: [`
     .stats-bar {
-      display: inline-flex; align-items: center; gap: 12px; font-size: 0.875rem;
+      display: inline-flex; align-items: center; gap: 12px; font-size: inherit;
     }
-    .stats-bar.compact { gap: 8px; font-size: 0.8rem; }
+    .stats-bar.compact { gap: 8px; }
     .stats-bar.terminal-overlay {
       background: rgba(22,27,34,0.85); backdrop-filter: blur(4px);
       padding: 4px 12px; border-radius: 4px; border: 1px solid #30363d;

@@ -6,11 +6,12 @@ import { ContainersApiService } from '../../../core/services/api.service';
 import { Container, ContainerEvent, ContainerGitRepository, GitCloneMetadata, ConnectionInfo, ExecResult, CODE_ASSISTANT_TOOLS } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
+import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 
 @Component({
   selector: 'app-container-detail',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent],
+  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
   template: `
     <!-- Loading -->
     <div *ngIf="loading" class="flex items-center justify-center py-12">
@@ -104,6 +105,10 @@ import { ContainerStatsBarComponent } from '../../../shared/components/container
             <div *ngIf="container.startedAt" class="flex justify-between gap-4">
               <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Started</dt>
               <dd class="text-sm text-surface-600 dark:text-surface-300 text-right min-w-0">{{ container.startedAt | date:'medium' }}</dd>
+            </div>
+            <div *ngIf="container.status === 'Running' && container.startedAt" class="flex justify-between gap-4">
+              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Uptime</dt>
+              <dd class="text-sm font-medium text-green-600 dark:text-green-400 text-right min-w-0">{{ container.startedAt | uptime }}</dd>
             </div>
             <div *ngIf="container.stoppedAt" class="flex justify-between gap-4">
               <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Stopped</dt>

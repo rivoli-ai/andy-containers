@@ -4,11 +4,12 @@ import { RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../core/services/api.service';
 import { Container, Template, Provider, Workspace } from '../../core/models';
 import { StatusBadgeComponent } from '../../shared/components/status-badge/status-badge.component';
+import { UptimePipe } from '../../shared/pipes/uptime.pipe';
 
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent],
+  imports: [CommonModule, RouterLink, StatusBadgeComponent, UptimePipe],
   template: `
     <!-- Loading state -->
     <div *ngIf="loading" class="flex items-center justify-center py-12">
@@ -80,6 +81,7 @@ import { StatusBadgeComponent } from '../../shared/components/status-badge/statu
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Name</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Status</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Uptime</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Owner</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Created</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Host</th>
@@ -95,6 +97,10 @@ import { StatusBadgeComponent } from '../../shared/components/status-badge/statu
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap">
                   <app-status-badge [status]="c.status"></app-status-badge>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">
+                  <span *ngIf="c.status === 'Running' && c.startedAt">{{ c.startedAt | uptime }}</span>
+                  <span *ngIf="c.status !== 'Running' || !c.startedAt" class="text-surface-400">--</span>
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ c.ownerId }}</td>
                 <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ c.createdAt | date:'short' }}</td>

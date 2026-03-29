@@ -5,11 +5,12 @@ import { ContainersApiService } from '../../../core/services/api.service';
 import { Container } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
+import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 
 @Component({
   selector: 'app-container-list',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent],
+  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
   template: `
     <div class="space-y-6">
       <!-- Header -->
@@ -48,6 +49,7 @@ import { ContainerStatsBarComponent } from '../../../shared/components/container
             <tr>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Name</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Uptime</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Owner</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Created</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Last Activity</th>
@@ -65,6 +67,10 @@ import { ContainerStatsBarComponent } from '../../../shared/components/container
               </td>
               <td class="px-4 py-3 whitespace-nowrap">
                 <app-status-badge [status]="c.status"></app-status-badge>
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">
+                <span *ngIf="c.status === 'Running' && c.startedAt">{{ c.startedAt | uptime }}</span>
+                <span *ngIf="c.status !== 'Running' || !c.startedAt" class="text-surface-400">--</span>
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ c.ownerId }}</td>
               <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">{{ c.createdAt | date:'short' }}</td>
@@ -106,7 +112,7 @@ import { ContainerStatsBarComponent } from '../../../shared/components/container
               </td>
             </tr>
             <tr *ngIf="containers.length === 0">
-              <td colspan="9" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">No containers found</td>
+              <td colspan="10" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">No containers found</td>
             </tr>
           </tbody>
         </table>
