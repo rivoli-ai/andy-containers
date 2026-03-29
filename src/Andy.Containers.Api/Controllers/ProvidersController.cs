@@ -2,6 +2,7 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +34,7 @@ public class ProvidersController : ControllerBase
         _orgMembership = orgMembership;
     }
 
+    [RequirePermission("provider:read")]
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] Guid? organizationId = null, CancellationToken ct = default)
     {
@@ -51,6 +53,7 @@ public class ProvidersController : ControllerBase
         return Ok(providers);
     }
 
+    [RequirePermission("provider:read")]
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
@@ -58,6 +61,7 @@ public class ProvidersController : ControllerBase
         return provider is null ? NotFound() : Ok(provider);
     }
 
+    [RequirePermission("provider:manage")]
     [HttpPost]
     [Authorize(Policy = "Admin")]
     public async Task<IActionResult> Create([FromBody] InfrastructureProvider provider, CancellationToken ct)
@@ -67,6 +71,7 @@ public class ProvidersController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = provider.Id }, provider);
     }
 
+    [RequirePermission("provider:read")]
     [HttpGet("{id:guid}/health")]
     public async Task<IActionResult> HealthCheck(Guid id, CancellationToken ct)
     {
@@ -93,6 +98,7 @@ public class ProvidersController : ControllerBase
         }
     }
 
+    [RequirePermission("provider:read")]
     [HttpGet("{id:guid}/cost-estimate")]
     public async Task<IActionResult> CostEstimate(
         Guid id,
@@ -115,6 +121,7 @@ public class ProvidersController : ControllerBase
         return Ok(estimate);
     }
 
+    [RequirePermission("provider:manage")]
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = "Admin")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)

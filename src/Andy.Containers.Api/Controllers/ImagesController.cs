@@ -1,6 +1,7 @@
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +33,7 @@ public class ImagesController : ControllerBase
         _orgMembership = orgMembership;
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{templateId:guid}")]
     public async Task<IActionResult> List(Guid templateId, [FromQuery] Guid? organizationId = null, CancellationToken ct = default)
     {
@@ -59,6 +61,7 @@ public class ImagesController : ControllerBase
         return Ok(images);
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{templateId:guid}/latest")]
     public async Task<IActionResult> GetLatest(Guid templateId, [FromQuery] Guid? organizationId = null, CancellationToken ct = default)
     {
@@ -80,6 +83,7 @@ public class ImagesController : ControllerBase
         return image is null ? NotFound() : Ok(image);
     }
 
+    [RequirePermission("image:write")]
     [HttpPost("{templateId:guid}/build")]
     public async Task<IActionResult> Build(Guid templateId, [FromBody] BuildRequest? request, CancellationToken ct)
     {
@@ -142,6 +146,7 @@ public class ImagesController : ControllerBase
         }
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("diff")]
     public async Task<IActionResult> Diff([FromQuery] Guid fromImageId, [FromQuery] Guid toImageId, CancellationToken ct)
     {
@@ -175,6 +180,7 @@ public class ImagesController : ControllerBase
         }
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{imageId:guid}/manifest")]
     public async Task<IActionResult> GetManifest(Guid imageId, CancellationToken ct)
     {
@@ -187,6 +193,7 @@ public class ImagesController : ControllerBase
         return Ok(manifest);
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{imageId:guid}/tools")]
     public async Task<IActionResult> GetTools(Guid imageId, CancellationToken ct)
     {
@@ -196,6 +203,7 @@ public class ImagesController : ControllerBase
         return Ok(manifest.Tools);
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{imageId:guid}/packages")]
     public async Task<IActionResult> GetPackages(Guid imageId, CancellationToken ct)
     {
@@ -205,6 +213,7 @@ public class ImagesController : ControllerBase
         return Ok(manifest.OsPackages);
     }
 
+    [RequirePermission("image:write")]
     [HttpPost("{imageId:guid}/introspect")]
     public async Task<IActionResult> Introspect(Guid imageId, CancellationToken ct)
     {

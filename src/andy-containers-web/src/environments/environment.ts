@@ -6,6 +6,6 @@ export const environment = {
     clientId: 'andy-containers-web',
     redirectUrl: 'https://localhost:4200/callback',
     postLogoutRedirectUri: 'https://localhost:4200',
-    scope: 'openid profile email roles',
+    scope: 'openid profile email urn:andy-containers-api offline_access',
   },
 };

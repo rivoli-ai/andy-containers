@@ -1,6 +1,7 @@
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +28,7 @@ public class TemplatesController : ControllerBase
         _orgMembership = orgMembership;
     }
 
+    [RequirePermission("template:read")]
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] CatalogScope? scope,
@@ -70,6 +72,7 @@ public class TemplatesController : ControllerBase
         return Ok(new { items, totalCount = total });
     }
 
+    [RequirePermission("template:read")]
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
@@ -77,6 +80,7 @@ public class TemplatesController : ControllerBase
         return template is null ? NotFound() : Ok(template);
     }
 
+    [RequirePermission("template:read")]
     [HttpGet("by-code/{code}")]
     public async Task<IActionResult> GetByCode(string code, CancellationToken ct)
     {
@@ -84,6 +88,7 @@ public class TemplatesController : ControllerBase
         return template is null ? NotFound() : Ok(template);
     }
 
+    [RequirePermission("template:read")]
     [HttpGet("{id:guid}/definition")]
     public async Task<IActionResult> GetDefinition(Guid id, CancellationToken ct)
     {
@@ -161,6 +166,7 @@ public class TemplatesController : ControllerBase
         return sb.ToString();
     }
 
+    [RequirePermission("template:write")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ContainerTemplate template, CancellationToken ct)
     {
@@ -178,6 +184,7 @@ public class TemplatesController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
     }
 
+    [RequirePermission("template:write")]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] ContainerTemplate update, CancellationToken ct)
     {
@@ -195,6 +202,7 @@ public class TemplatesController : ControllerBase
         return Ok(template);
     }
 
+    [RequirePermission("template:write")]
     [HttpPost("{id:guid}/publish")]
     public async Task<IActionResult> Publish(Guid id, CancellationToken ct)
     {
@@ -208,6 +216,7 @@ public class TemplatesController : ControllerBase
         return NoContent();
     }
 
+    [RequirePermission("template:delete")]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
@@ -220,6 +229,7 @@ public class TemplatesController : ControllerBase
         return NoContent();
     }
 
+    [RequirePermission("template:write")]
     [HttpPost("validate")]
     public IActionResult Validate([FromBody] YamlContentRequest request)
     {
@@ -227,6 +237,7 @@ public class TemplatesController : ControllerBase
         return Ok(result);
     }
 
+    [RequirePermission("template:write")]
     [HttpPost("from-yaml")]
     public async Task<IActionResult> CreateFromYaml([FromBody] YamlContentRequest request, CancellationToken ct)
     {
@@ -241,6 +252,7 @@ public class TemplatesController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
     }
 
+    [RequirePermission("template:write")]
     [HttpPut("{id:guid}/definition")]
     public async Task<IActionResult> UpdateDefinition(Guid id, [FromBody] YamlContentRequest request, CancellationToken ct)
     {

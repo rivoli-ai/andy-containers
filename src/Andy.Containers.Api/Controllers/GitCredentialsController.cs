@@ -1,5 +1,6 @@
 using Andy.Containers.Api.Services;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -19,6 +20,7 @@ public class GitCredentialsController : ControllerBase
         _currentUser = currentUser;
     }
 
+    [RequirePermission("settings:read")]
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
@@ -27,6 +29,7 @@ public class GitCredentialsController : ControllerBase
         return Ok(result);
     }
 
+    [RequirePermission("settings:write")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateGitCredentialDto dto, CancellationToken ct)
     {
@@ -44,6 +47,7 @@ public class GitCredentialsController : ControllerBase
             new GitCredentialDto(credential.Id, credential.Label, credential.GitHost, credential.CredentialType.ToString(), credential.CreatedAt, credential.LastUsedAt));
     }
 
+    [RequirePermission("settings:write")]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {

@@ -1,6 +1,7 @@
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -26,6 +27,7 @@ public class OrganizationsController : ControllerBase
         _orgMembership = orgMembership;
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{orgId:guid}/images")]
     public async Task<IActionResult> ListImages(Guid orgId, CancellationToken ct)
     {
@@ -43,6 +45,7 @@ public class OrganizationsController : ControllerBase
         return Ok(images);
     }
 
+    [RequirePermission("image:write")]
     [HttpPost("{orgId:guid}/images/{imageId:guid}/publish")]
     public async Task<IActionResult> PublishImage(Guid orgId, Guid imageId, CancellationToken ct)
     {
@@ -62,6 +65,7 @@ public class OrganizationsController : ControllerBase
         return Ok(image);
     }
 
+    [RequirePermission("image:delete")]
     [HttpDelete("{orgId:guid}/images/{imageId:guid}")]
     public async Task<IActionResult> DeleteImage(Guid orgId, Guid imageId, CancellationToken ct)
     {
@@ -81,6 +85,7 @@ public class OrganizationsController : ControllerBase
         return NoContent();
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{orgId:guid}/templates")]
     public async Task<IActionResult> ListTemplates(Guid orgId, CancellationToken ct)
     {
@@ -99,6 +104,7 @@ public class OrganizationsController : ControllerBase
         return Ok(templates);
     }
 
+    [RequirePermission("image:read")]
     [HttpGet("{orgId:guid}/providers")]
     public async Task<IActionResult> ListProviders(Guid orgId, CancellationToken ct)
     {

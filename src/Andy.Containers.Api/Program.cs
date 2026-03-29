@@ -5,6 +5,7 @@ using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Andy.Containers.Api.Telemetry;
+using Andy.Rbac.Client;
 using Serilog;
 using System.Text.Json.Serialization;
 
@@ -93,7 +94,7 @@ try
     builder.Services.AddScoped<IContainerAuthorizationService, ContainerAuthorizationService>();
     builder.Services.AddHttpClient("AndyRbac", client =>
     {
-        var baseUrl = builder.Configuration["Rbac:BaseUrl"] ?? "https://localhost:5300";
+        var baseUrl = builder.Configuration["Rbac:ApiBaseUrl"] ?? "https://localhost:5300";
         client.BaseAddress = new Uri(baseUrl);
     });
 
@@ -103,17 +104,48 @@ try
         .WithToolsFromAssembly();
 
     // Authentication
-    builder.Services.AddAuthentication("Bearer")
-        .AddJwtBearer("Bearer", options =>
-        {
-            options.Authority = builder.Configuration["Auth:Authority"];
-            options.Audience = builder.Configuration["Auth:Audience"];
-            options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
-        });
-    builder.Services.AddAuthorization(options =>
+    var authority = builder.Configuration["AndyAuth:Authority"] ?? "";
+    if (string.IsNullOrEmpty(authority))
     {
-        options.AddPolicy("Admin", policy => policy.RequireClaim("role", "admin"));
-    });
+        // No authority configured — permissive fallback for local dev
+        builder.Services.AddAuthentication("Bearer")
+            .AddJwtBearer("Bearer", options =>
+            {
+                options.RequireHttpsMetadata = false;
+            });
+        builder.Services.AddAuthorization(options =>
+        {
+            options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+                .RequireAssertion(_ => true)
+                .Build();
+            options.AddPolicy("Admin", policy => policy.RequireClaim("role", "admin"));
+        });
+    }
+    else
+    {
+        builder.Services.AddAuthentication("Bearer")
+            .AddJwtBearer("Bearer", options =>
+            {
+                options.Authority = authority;
+                options.Audience = builder.Configuration["AndyAuth:Audience"];
+                options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+            });
+        builder.Services.AddAuthorization(options =>
+        {
+            options.AddPolicy("Admin", policy => policy.RequireClaim("role", "admin"));
+        });
+    }
+
+    // RBAC client
+    var rbacBaseUrl = builder.Configuration["Rbac:ApiBaseUrl"] ?? "";
+    if (!string.IsNullOrEmpty(rbacBaseUrl))
+    {
+        builder.Services.AddRbacClient(options =>
+        {
+            options.ApiBaseUrl = rbacBaseUrl;
+            options.ApplicationCode = "containers";
+        });
+    }
 
     // Health checks
     builder.Services.AddHealthChecks();
@@ -166,8 +198,8 @@ try
         {
             if (context.User.Identity?.IsAuthenticated != true)
             {
-                var devUserId = app.Configuration["Auth:DevUserId"] ?? "dev-user";
-                var devEmail = app.Configuration["Auth:DevEmail"] ?? "dev@andy.local";
+                var devUserId = app.Configuration["AndyAuth:DevUserId"] ?? "dev-user";
+                var devEmail = app.Configuration["AndyAuth:DevEmail"] ?? "dev@andy.local";
                 var claims = new[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, devUserId),

@@ -3,6 +3,9 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Andy internal packages -->
+    <PackageVersion Include="Andy.Auth" Version="2025.11.17-rc.1" />
+    <PackageVersion Include="Andy.Rbac.Client" Version="1.0.0" />
     <!-- ASP.NET Core -->
     <PackageVersion Include="coverlet.collector" Version="6.0.4">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

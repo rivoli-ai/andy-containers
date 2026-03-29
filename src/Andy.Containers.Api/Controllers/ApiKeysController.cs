@@ -1,5 +1,6 @@
 using Andy.Containers.Api.Services;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -24,6 +25,7 @@ public class ApiKeysController : ControllerBase
         _orgMembership = orgMembership;
     }
 
+    [RequirePermission("settings:write")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateApiKeyDto dto, CancellationToken ct)
     {
@@ -47,6 +49,7 @@ public class ApiKeysController : ControllerBase
         }
     }
 
+    [RequirePermission("settings:read")]
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
@@ -55,6 +58,7 @@ public class ApiKeysController : ControllerBase
         return Ok(keys.Select(ToDto));
     }
 
+    [RequirePermission("settings:read")]
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
@@ -64,6 +68,7 @@ public class ApiKeysController : ControllerBase
         return Ok(ToDto(key));
     }
 
+    [RequirePermission("settings:write")]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateApiKeyDto dto, CancellationToken ct)
     {
@@ -74,6 +79,7 @@ public class ApiKeysController : ControllerBase
         return Ok(ToDto(key));
     }
 
+    [RequirePermission("settings:write")]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
@@ -84,6 +90,7 @@ public class ApiKeysController : ControllerBase
         return NoContent();
     }
 
+    [RequirePermission("settings:write")]
     [HttpPost("{id:guid}/validate")]
     public async Task<IActionResult> Validate(Guid id, CancellationToken ct)
     {
@@ -93,6 +100,7 @@ public class ApiKeysController : ControllerBase
         return Ok(new { isValid = result.IsValid, error = result.Error });
     }
 
+    [RequirePermission("settings:read")]
     [HttpGet("{id:guid}/history")]
     public async Task<IActionResult> GetHistory(Guid id, CancellationToken ct)
     {
@@ -101,6 +109,7 @@ public class ApiKeysController : ControllerBase
         return Ok(history);
     }
 
+    [RequirePermission("settings:read")]
     [HttpGet("/api/organizations/{orgId:guid}/api-keys")]
     public async Task<IActionResult> ListByOrganization(Guid orgId, CancellationToken ct)
     {

@@ -2,6 +2,7 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -40,6 +41,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpGet]
+    [RequirePermission("container:read")]
     public async Task<IActionResult> List(
         [FromQuery] string? ownerId,
         [FromQuery] Guid? organizationId,
@@ -98,6 +100,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [RequirePermission("container:read")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
         try
@@ -114,6 +117,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpPost]
+    [RequirePermission("container:write")]
     public async Task<IActionResult> Create([FromBody] CreateContainerRequest request, CancellationToken ct)
     {
         request.OwnerId = _currentUser.GetUserId();
@@ -140,6 +144,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/start")]
+    [RequirePermission("container:execute")]
     public async Task<IActionResult> Start(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -163,6 +168,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/stop")]
+    [RequirePermission("container:execute")]
     public async Task<IActionResult> Stop(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -189,6 +195,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [RequirePermission("container:delete")]
     public async Task<IActionResult> Destroy(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -199,6 +206,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/exec")]
+    [RequirePermission("container:execute")]
     public async Task<IActionResult> Exec(Guid id, [FromBody] ExecRequest request, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -209,6 +217,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpGet("{id:guid}/connection")]
+    [RequirePermission("container:read")]
     public async Task<IActionResult> GetConnectionInfo(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -219,6 +228,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpPut("{id:guid}/resources")]
+    [RequirePermission("container:execute")]
     public async Task<IActionResult> Resize(Guid id, [FromBody] ResizeRequest request, CancellationToken ct)
     {
         try
@@ -251,6 +261,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpGet("{id:guid}/stats")]
+    [RequirePermission("container:execute")]
     public async Task<IActionResult> GetStats(Guid id, CancellationToken ct)
     {
         try
@@ -268,6 +279,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpGet("{id:guid}/events")]
+    [RequirePermission("container:read")]
     public async Task<IActionResult> GetEvents(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -282,6 +294,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpGet("{id:guid}/repositories")]
+    [RequirePermission("container:read")]
     public async Task<IActionResult> ListRepositories(Guid id, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -299,6 +312,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/repositories")]
+    [RequirePermission("container:write")]
     public async Task<IActionResult> AddRepository(Guid id, [FromBody] AddRepositoryDto dto, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);
@@ -352,6 +366,7 @@ public class ContainersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/repositories/{repoId:guid}/pull")]
+    [RequirePermission("container:execute")]
     public async Task<IActionResult> PullRepository(Guid id, Guid repoId, CancellationToken ct)
     {
         var container = await _containerService.GetContainerAsync(id, ct);

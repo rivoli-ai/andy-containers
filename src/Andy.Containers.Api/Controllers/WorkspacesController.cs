@@ -3,6 +3,7 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,7 @@ public class WorkspacesController : ControllerBase
         _orgMembership = orgMembership;
     }
 
+    [RequirePermission("workspace:read")]
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] string? ownerId,
@@ -57,6 +59,7 @@ public class WorkspacesController : ControllerBase
         return Ok(new { items, totalCount = total });
     }
 
+    [RequirePermission("workspace:read")]
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
@@ -66,6 +69,7 @@ public class WorkspacesController : ControllerBase
         return Ok(ws);
     }
 
+    [RequirePermission("workspace:write")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateWorkspaceDto dto, CancellationToken ct)
     {
@@ -98,6 +102,7 @@ public class WorkspacesController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = workspace.Id }, workspace);
     }
 
+    [RequirePermission("workspace:write")]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateWorkspaceDto dto, CancellationToken ct)
     {
@@ -124,6 +129,7 @@ public class WorkspacesController : ControllerBase
         return Ok(ws);
     }
 
+    [RequirePermission("workspace:delete")]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
