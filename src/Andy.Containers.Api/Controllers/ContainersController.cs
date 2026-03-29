@@ -260,6 +260,76 @@ public class ContainersController : ControllerBase
         }
     }
 
+    [RequirePermission("container:read")]
+    [HttpGet("{id:guid}/screenshot")]
+    public async Task<IActionResult> GetScreenshot(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var container = await _containerService.GetContainerAsync(id, ct);
+            if (!CanAccess(container)) return Forbid();
+
+            if (string.IsNullOrEmpty(container.Metadata))
+                return Ok(new { available = false });
+
+            var metadata = System.Text.Json.JsonSerializer.Deserialize<ContainerMetadata>(
+                container.Metadata,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (metadata?.Screenshot?.AnsiText == null)
+                return Ok(new { available = false });
+
+            return Ok(new
+            {
+                available = true,
+                ansiText = metadata.Screenshot.AnsiText,
+                capturedAt = metadata.Screenshot.CapturedAt,
+                cols = metadata.Screenshot.Cols,
+                rows = metadata.Screenshot.Rows
+            });
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+    }
+
+    [RequirePermission("container:read")]
+    [HttpPost("screenshots")]
+    public async Task<IActionResult> GetScreenshots([FromBody] Guid[] containerIds, CancellationToken ct)
+    {
+        if (containerIds.Length > 20)
+            return BadRequest(new { error = "Maximum 20 container IDs per request" });
+
+        var results = new Dictionary<string, object>();
+        foreach (var id in containerIds)
+        {
+            try
+            {
+                var container = await _containerService.GetContainerAsync(id, ct);
+                if (!CanAccess(container) || string.IsNullOrEmpty(container.Metadata))
+                {
+                    results[id.ToString()] = new { available = false };
+                    continue;
+                }
+                var metadata = System.Text.Json.JsonSerializer.Deserialize<ContainerMetadata>(
+                    container.Metadata,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (metadata?.Screenshot?.AnsiText == null)
+                {
+                    results[id.ToString()] = new { available = false };
+                    continue;
+                }
+                results[id.ToString()] = new
+                {
+                    available = true,
+                    ansiText = metadata.Screenshot.AnsiText,
+                    capturedAt = metadata.Screenshot.CapturedAt,
+                    cols = metadata.Screenshot.Cols,
+                    rows = metadata.Screenshot.Rows
+                };
+            }
+            catch { results[id.ToString()] = new { available = false }; }
+        }
+        return Ok(results);
+    }
+
     [HttpGet("{id:guid}/stats")]
     [RequirePermission("container:execute")]
     public async Task<IActionResult> GetStats(Guid id, CancellationToken ct)

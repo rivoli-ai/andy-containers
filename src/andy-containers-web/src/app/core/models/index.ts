@@ -222,3 +222,11 @@ export interface WorkspaceGitRepo {
   credentialRef?: string;
   targetPath?: string;
 }
+
+export interface ContainerScreenshot {
+  available: boolean;
+  ansiText?: string;
+  capturedAt?: string;
+  cols?: number;
+  rows?: number;
+}

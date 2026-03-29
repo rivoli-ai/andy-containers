@@ -71,6 +71,9 @@ try
     // Container status sync worker — periodically checks running containers against provider
     builder.Services.AddHostedService<ContainerStatusSyncWorker>();
 
+    // Container screenshot capture worker
+    builder.Services.AddHostedService<ContainerScreenshotWorker>();
+
     // Git credential + clone services
     builder.Services.AddDataProtection();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();

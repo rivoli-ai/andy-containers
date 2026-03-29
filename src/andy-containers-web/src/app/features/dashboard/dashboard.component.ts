@@ -5,11 +5,12 @@ import { ContainersApiService } from '../../core/services/api.service';
 import { Container, Template, Provider, Workspace } from '../../core/models';
 import { StatusBadgeComponent } from '../../shared/components/status-badge/status-badge.component';
 import { UptimePipe } from '../../shared/pipes/uptime.pipe';
+import { ContainerThumbnailComponent } from '../../shared/components/container-thumbnail/container-thumbnail.component';
 
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent, UptimePipe],
+  imports: [CommonModule, RouterLink, StatusBadgeComponent, UptimePipe, ContainerThumbnailComponent],
   template: `
     <!-- Loading state -->
     <div *ngIf="loading" class="flex items-center justify-center py-12">
@@ -92,8 +93,13 @@ import { UptimePipe } from '../../shared/pipes/uptime.pipe';
             <tbody class="divide-y divide-surface-200 dark:divide-surface-700">
               <tr *ngFor="let c of recentContainers" class="hover:bg-surface-50 dark:hover:bg-surface-700/50">
                 <td class="px-4 py-3 whitespace-nowrap text-sm">
-                  <a [routerLink]="['/containers', c.id]" class="font-semibold text-primary-600 dark:text-primary-400 hover:underline">{{ c.name }}</a>
-                  <div class="text-xs text-surface-400 dark:text-surface-500 font-mono">{{ c.id | slice:0:8 }}</div>
+                  <div class="flex items-center gap-3">
+                    <app-container-thumbnail [containerId]="c.id" [isRunning]="c.status === 'Running'" size="sm"></app-container-thumbnail>
+                    <div>
+                      <a [routerLink]="['/containers', c.id]" class="font-semibold text-primary-600 dark:text-primary-400 hover:underline">{{ c.name }}</a>
+                      <div class="text-xs text-surface-400 dark:text-surface-500 font-mono">{{ c.id | slice:0:8 }}</div>
+                    </div>
+                  </div>
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap">
                   <app-status-badge [status]="c.status"></app-status-badge>

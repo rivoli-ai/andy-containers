@@ -7,11 +7,12 @@ import { Container, ContainerStats, ContainerEvent, ContainerGitRepository, GitC
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
 import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
+import { ContainerThumbnailComponent } from '../../../shared/components/container-thumbnail/container-thumbnail.component';
 
 @Component({
   selector: 'app-container-detail',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
+  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe, ContainerThumbnailComponent],
   template: `
     <!-- Loading -->
     <div *ngIf="loading" class="flex items-center justify-center py-12">
@@ -205,6 +206,13 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Terminal Preview (only when Running) -->
+        <div *ngIf="container.status === 'Running'" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
+          <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-3">Terminal Preview</h2>
+          <app-container-thumbnail [containerId]="container.id" [isRunning]="true" size="lg"></app-container-thumbnail>
+          <p class="text-xs text-surface-400 mt-2">Auto-refreshes every 30s. Open the terminal for an interactive session.</p>
         </div>
 
         <!-- Resources Card (only when Running) -->

@@ -20,6 +20,7 @@ import {
   PaginatedResult,
   ApiKeyCredential,
   ApiKeyChangeEntry,
+  ContainerScreenshot,
 } from '../models';
 
 @Injectable({ providedIn: 'root' })
@@ -81,6 +82,10 @@ export class ContainersApiService {
 
   getContainerRepositories(id: string): Observable<ContainerGitRepository[]> {
     return this.http.get<ContainerGitRepository[]>(`${this.baseUrl}/containers/${id}/repositories`);
+  }
+
+  getContainerScreenshot(id: string): Observable<ContainerScreenshot> {
+    return this.http.get<ContainerScreenshot>(`${this.baseUrl}/containers/${id}/screenshot`);
   }
 
   // Git Credentials
