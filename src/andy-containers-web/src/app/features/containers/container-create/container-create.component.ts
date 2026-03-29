@@ -55,6 +55,29 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
           <p *ngIf="!hasReachableProvider" class="mt-1 text-xs text-red-600 dark:text-red-400">No reachable providers available. Container creation is disabled.</p>
         </div>
 
+        <!-- Resources -->
+        <div>
+          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">Resources</label>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label for="cpuCores" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">CPU Cores</label>
+              <input id="cpuCores" type="number" [(ngModel)]="resourceCpu" name="cpuCores" min="1" max="8" step="1"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100" />
+            </div>
+            <div>
+              <label for="memoryMb" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Memory (MB)</label>
+              <input id="memoryMb" type="number" [(ngModel)]="resourceMemory" name="memoryMb" min="512" max="16384" step="512"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100" />
+            </div>
+            <div>
+              <label for="diskGb" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Disk (GB)</label>
+              <input id="diskGb" type="number" [(ngModel)]="resourceDisk" name="diskGb" min="5" max="100" step="5"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100" />
+            </div>
+          </div>
+          <p *ngIf="templateResourcesLabel" class="mt-1 text-xs text-surface-400">Template default: {{ templateResourcesLabel }}</p>
+        </div>
+
         <!-- Workspace (optional) -->
         <div>
           <label for="workspace" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Workspace <span class="text-surface-400">(optional)</span></label>
@@ -174,11 +197,23 @@ export class ContainerCreateComponent implements OnInit {
   credentials: GitCredential[] = [];
   workspaceRepos: WorkspaceGitRepo[] = [];
   apiKeys: ApiKeyCredential[] = [];
+  resourceCpu = 2;
+  resourceMemory = 4096;
+  resourceDisk = 20;
   submitting = false;
   error = '';
 
   get hasReachableProvider(): boolean {
     return this.providers.some(p => p.healthStatus !== 'Unreachable');
+  }
+
+  get templateResourcesLabel(): string {
+    const tmpl = this.templates.find(t => t.id === this.selectedTemplateId);
+    if (!tmpl?.defaultResources) return '';
+    try {
+      const r = JSON.parse(tmpl.defaultResources);
+      return `${r.cpuCores} CPU, ${r.memoryMb}MB RAM, ${r.diskGb}GB disk`;
+    } catch { return ''; }
   }
 
   constructor(private api: ContainersApiService, private router: Router, private route: ActivatedRoute) {}
@@ -259,6 +294,15 @@ export class ContainerCreateComponent implements OnInit {
       return;
     }
     const tmpl = this.templates.find(t => t.id === this.selectedTemplateId);
+    // Set resource defaults from template
+    if (tmpl?.defaultResources) {
+      try {
+        const r = JSON.parse(tmpl.defaultResources);
+        this.resourceCpu = r.cpuCores ?? 2;
+        this.resourceMemory = r.memoryMb ?? 4096;
+        this.resourceDisk = r.diskGb ?? 20;
+      } catch {}
+    }
     if (tmpl?.codeAssistant) {
       try {
         this.templateCodeAssistant = JSON.parse(tmpl.codeAssistant);
@@ -297,6 +341,11 @@ export class ContainerCreateComponent implements OnInit {
       name: this.name,
       templateId: this.selectedTemplateId,
       source: 'WebUi',
+      resources: {
+        cpuCores: this.resourceCpu,
+        memoryMb: this.resourceMemory,
+        diskGb: this.resourceDisk,
+      },
     };
     if (this.selectedProviderId) {
       request.providerId = this.selectedProviderId;

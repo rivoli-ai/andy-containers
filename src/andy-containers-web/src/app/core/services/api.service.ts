@@ -67,6 +67,10 @@ export class ContainersApiService {
     return this.http.get<ConnectionInfo>(`${this.baseUrl}/containers/${id}/connection`);
   }
 
+  resizeContainer(id: string, resources: { cpuCores: number; memoryMb: number; diskGb: number }): Observable<Container> {
+    return this.http.put<Container>(`${this.baseUrl}/containers/${id}/resources`, resources);
+  }
+
   getContainerStats(id: string): Observable<ContainerStats> {
     return this.http.get<ContainerStats>(`${this.baseUrl}/containers/${id}/stats`);
   }

@@ -18,6 +18,7 @@ public interface IContainerService
     Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct = default);
     Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct = default);
     Task<ContainerStats> GetContainerStatsAsync(Guid containerId, CancellationToken ct = default);
+    Task ResizeContainerAsync(Guid containerId, ResourceSpec resources, CancellationToken ct = default);
 }
 
 public class CreateContainerRequest

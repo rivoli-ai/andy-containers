@@ -208,6 +208,36 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
           </div>
         </div>
 
+        <!-- Resources Card (only when Running) -->
+        <div *ngIf="container.status === 'Running'" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
+          <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Resources</h2>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">CPU Cores</label>
+              <div class="flex items-center gap-2">
+                <input type="range" [(ngModel)]="resizeCpu" name="resizeCpu" min="1" max="8" step="1"
+                  class="flex-1 h-2 rounded-lg appearance-none bg-surface-200 dark:bg-surface-700 accent-primary-600" />
+                <span class="text-sm font-mono w-8 text-right text-surface-700 dark:text-surface-300">{{ resizeCpu }}</span>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Memory (MB)</label>
+              <div class="flex items-center gap-2">
+                <input type="range" [(ngModel)]="resizeMemory" name="resizeMemory" min="512" max="16384" step="512"
+                  class="flex-1 h-2 rounded-lg appearance-none bg-surface-200 dark:bg-surface-700 accent-primary-600" />
+                <span class="text-sm font-mono w-16 text-right text-surface-700 dark:text-surface-300">{{ resizeMemory }}</span>
+              </div>
+            </div>
+            <div *ngIf="resizeError" class="text-xs text-red-600 dark:text-red-400">{{ resizeError }}</div>
+            <div *ngIf="resizeSuccess" class="text-xs text-green-600 dark:text-green-400">Resources updated.</div>
+            <button (click)="applyResize()" [disabled]="resizing"
+              class="px-3 py-1.5 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50">
+              {{ resizing ? 'Applying...' : 'Apply Changes' }}
+            </button>
+          </div>
+          <p class="mt-2 text-xs text-surface-400">CPU and memory changes apply immediately without restart. Disk cannot be changed at runtime.</p>
+        </div>
+
         <!-- Quick Exec Card (only when Running) -->
         <div *ngIf="container.status === 'Running'" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
           <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Quick Exec</h2>
@@ -354,6 +384,11 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   execCommand = '';
   execResult: ExecResult | null = null;
   execRunning = false;
+  resizeCpu = 2;
+  resizeMemory = 4096;
+  resizing = false;
+  resizeError = '';
+  resizeSuccess = false;
   actionBusy = false;
   actionError = '';
   copiedField = '';
@@ -409,6 +444,15 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
           this.codeAssistantLabel = '';
         }
 
+        // Initialize resize sliders from template defaults
+        if (c.template?.defaultResources) {
+          try {
+            const r = JSON.parse(c.template.defaultResources);
+            this.resizeCpu = r.cpuCores ?? 2;
+            this.resizeMemory = r.memoryMb ?? 4096;
+          } catch {}
+        }
+
         // Check if stuck (>2 min in Creating/Pending)
         if (c.status === 'Creating' || c.status === 'Pending') {
           const created = new Date(c.createdAt);
@@ -459,6 +503,27 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+
+  applyResize(): void {
+    this.resizing = true;
+    this.resizeError = '';
+    this.resizeSuccess = false;
+    this.api.resizeContainer(this.containerId, {
+      cpuCores: this.resizeCpu,
+      memoryMb: this.resizeMemory,
+      diskGb: 20,
+    }).subscribe({
+      next: () => {
+        this.resizing = false;
+        this.resizeSuccess = true;
+        setTimeout(() => { this.resizeSuccess = false; }, 3000);
+      },
+      error: (err) => {
+        this.resizing = false;
+        this.resizeError = err?.error?.error || 'Failed to resize container';
+      },
+    });
   }
 
   runExec(): void {

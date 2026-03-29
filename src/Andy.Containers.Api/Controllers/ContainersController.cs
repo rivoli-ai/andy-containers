@@ -218,6 +218,38 @@ public class ContainersController : ControllerBase
         return Ok(info);
     }
 
+    [HttpPut("{id:guid}/resources")]
+    public async Task<IActionResult> Resize(Guid id, [FromBody] ResizeRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var container = await _containerService.GetContainerAsync(id, ct);
+            if (!CanAccess(container)) return Forbid();
+
+            var resources = new Andy.Containers.Abstractions.ResourceSpec
+            {
+                CpuCores = request.CpuCores,
+                MemoryMb = request.MemoryMb,
+                DiskGb = request.DiskGb
+            };
+            await _containerService.ResizeContainerAsync(id, resources, ct);
+            container = await _containerService.GetContainerAsync(id, ct);
+            return Ok(container);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (NotSupportedException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpGet("{id:guid}/stats")]
     public async Task<IActionResult> GetStats(Guid id, CancellationToken ct)
     {
@@ -368,4 +400,11 @@ public class ExecRequest
 {
     public required string Command { get; set; }
     public int TimeoutSeconds { get; set; } = 30;
+}
+
+public class ResizeRequest
+{
+    public double CpuCores { get; set; } = 2;
+    public int MemoryMb { get; set; } = 4096;
+    public int DiskGb { get; set; } = 20;
 }

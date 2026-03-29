@@ -441,6 +441,25 @@ public class ContainerOrchestrationService : IContainerService
         return await infra.GetContainerStatsAsync(container.ExternalId, ct);
     }
 
+    public async Task ResizeContainerAsync(Guid containerId, ResourceSpec resources, CancellationToken ct)
+    {
+        var container = await GetContainerAsync(containerId, ct);
+        if (container.ExternalId is null)
+            throw new InvalidOperationException("Container has no external ID");
+        if (container.Status != ContainerStatus.Running)
+            throw new InvalidOperationException($"Container is {container.Status}, must be Running to resize");
+
+        var infra = _providerFactory.GetProvider(container.Provider!);
+        await infra.ResizeContainerAsync(container.ExternalId, resources, ct);
+
+        // Update stored allocation
+        container.AllocatedResources = System.Text.Json.JsonSerializer.Serialize(resources);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Container {ContainerId} resized to {CpuCores} CPU, {MemoryMb}MB RAM",
+            containerId, resources.CpuCores, resources.MemoryMb);
+    }
+
     private static ApiKeyProvider MapCodeAssistantToApiKeyProvider(CodeAssistantType tool) => tool switch
     {
         CodeAssistantType.ClaudeCode => ApiKeyProvider.Anthropic,
