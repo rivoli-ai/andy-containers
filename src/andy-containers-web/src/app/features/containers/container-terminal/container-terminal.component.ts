@@ -5,6 +5,7 @@ import { ContainersApiService } from '../../../core/services/api.service';
 import { Container } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
+import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -13,7 +14,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 @Component({
   selector: 'app-container-terminal',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent],
+  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
   template: `
     <div class="terminal-page" [class.fullscreen]="isFullscreen">
       <div class="terminal-header">
@@ -26,6 +27,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
           <span *ngIf="connected" class="badge-connected">Connected</span>
           <span *ngIf="connecting" class="badge-connecting">Connecting...</span>
           <span *ngIf="!connected && !connecting && error" class="badge-error">Disconnected</span>
+          <span *ngIf="connected && container?.startedAt" class="uptime-badge">{{ container?.startedAt | uptime }}</span>
         </div>
         <div class="flex items-center gap-2">
           <app-container-stats-bar [containerId]="containerId" [isRunning]="connected" variant="terminal-overlay"></app-container-stats-bar>
@@ -79,6 +81,11 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
     .badge-connected, .badge-connecting, .badge-error {
       display: inline-flex; align-items: center;
       padding: 2px 8px; border-radius: 4px; font-size: 13px; font-weight: 500;
+    }
+    .uptime-badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: 4px; font-size: 13px; font-weight: 500;
+      color: #8b949e;
     }
     .badge-connected { background: rgba(63,185,80,0.15); color: #3fb950; }
     .badge-connecting { background: rgba(210,153,34,0.15); color: #d29922; }

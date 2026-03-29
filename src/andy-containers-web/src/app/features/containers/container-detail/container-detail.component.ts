@@ -32,6 +32,7 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
         </a>
         <h1 class="text-2xl font-semibold text-surface-900 dark:text-surface-100">{{ container.name }}</h1>
         <app-status-badge [status]="container.status"></app-status-badge>
+        <span *ngIf="container.status === 'Running' && container.startedAt" class="text-sm text-green-600 dark:text-green-400 font-medium">{{ container.startedAt | uptime }}</span>
         <app-container-stats-bar [containerId]="container.id" [isRunning]="container.status === 'Running'"></app-container-stats-bar>
       </div>
 
