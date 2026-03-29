@@ -1,5 +1,6 @@
 import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { Router } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
 
 @Component({
@@ -7,7 +8,8 @@ import { ContainersApiService } from '../../../core/services/api.service';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="thumbnail-wrapper" [style.width.px]="width" [style.height.px]="height">
+    <div class="thumbnail-wrapper" [style.width.px]="width" [style.height.px]="height"
+      [class.clickable]="isRunning" (click)="openTerminal()">
       <!-- Loading -->
       <div *ngIf="loading" class="thumbnail-placeholder">
         <div class="animate-pulse bg-surface-700 rounded w-full h-full"></div>
@@ -24,7 +26,7 @@ import { ContainersApiService } from '../../../core/services/api.service';
       </div>
 
       <!-- Terminal preview -->
-      <div *ngIf="!loading && ansiText" class="thumbnail-terminal" [title]="'Last captured: ' + (capturedAt | date:'medium')">
+      <div *ngIf="!loading && ansiText" class="thumbnail-terminal" [title]="'Click to open terminal'">
         <pre class="thumbnail-text">{{ ansiText }}</pre>
       </div>
     </div>
@@ -36,6 +38,14 @@ import { ContainersApiService } from '../../../core/services/api.service';
       border-radius: 4px;
       border: 1px solid #30363d;
       background: #0d1117;
+    }
+    .thumbnail-wrapper.clickable {
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .thumbnail-wrapper.clickable:hover {
+      border-color: #58a6ff;
+      box-shadow: 0 0 0 1px #58a6ff;
     }
     .thumbnail-placeholder {
       display: flex;
@@ -81,7 +91,13 @@ export class ContainerThumbnailComponent implements OnInit, OnDestroy, OnChanges
     return this.size === 'lg' ? 250 : this.size === 'md' ? 150 : 100;
   }
 
-  constructor(private api: ContainersApiService) {}
+  constructor(private api: ContainersApiService, private router: Router) {}
+
+  openTerminal(): void {
+    if (this.isRunning && this.containerId) {
+      this.router.navigate(['/containers', this.containerId, 'terminal']);
+    }
+  }
 
   ngOnInit(): void {
     this.startPolling();
