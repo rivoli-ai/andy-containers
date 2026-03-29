@@ -239,7 +239,8 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   ngOnInit(): void {
     this.containerId = this.route.snapshot.paramMap.get('id')!;
-    this.currentThemeName = localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
+    this.currentThemeName = localStorage.getItem(`andy.terminalTheme.${this.containerId}`)
+      || localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
     this.api.getContainer(this.containerId).subscribe({
       next: (c) => { this.container = c; },
     });
@@ -321,7 +322,8 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     if (theme && this.terminal) {
       this.terminal.options.theme = theme;
       this.currentThemeName = name;
-      localStorage.setItem('andy.terminalTheme', name);
+      localStorage.setItem(`andy.terminalTheme.${this.containerId}`, name);
+      localStorage.setItem('andy.terminalTheme', name); // also save as default for new containers
       // Update page background to match
       const host = this.terminalContainer?.nativeElement?.closest('.terminal-page') as HTMLElement;
       if (host) host.style.background = theme.background;
