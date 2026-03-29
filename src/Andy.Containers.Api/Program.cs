@@ -92,11 +92,14 @@ try
     builder.Services.AddMemoryCache();
     builder.Services.AddScoped<IOrganizationMembershipService, OrganizationMembershipService>();
     builder.Services.AddScoped<IContainerAuthorizationService, ContainerAuthorizationService>();
-    builder.Services.AddHttpClient("AndyRbac", client =>
+    var orgRbacUrl = builder.Configuration["Rbac:ApiBaseUrl"] ?? "";
+    if (!string.IsNullOrEmpty(orgRbacUrl))
     {
-        var baseUrl = builder.Configuration["Rbac:ApiBaseUrl"] ?? "https://localhost:5300";
-        client.BaseAddress = new Uri(baseUrl);
-    });
+        builder.Services.AddHttpClient("AndyRbac", client =>
+        {
+            client.BaseAddress = new Uri(orgRbacUrl);
+        });
+    }
 
     // MCP
     builder.Services.AddMcpServer()
@@ -144,6 +147,15 @@ try
         {
             options.ApiBaseUrl = rbacBaseUrl;
             options.ApplicationCode = "containers";
+        });
+    }
+    else
+    {
+        // No RBAC server — register a permissive policy provider so [RequirePermission] doesn't fail
+        builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>(sp =>
+        {
+            var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Authorization.AuthorizationOptions>>();
+            return new AllowAllPolicyProvider(options);
         });
     }
 
