@@ -132,15 +132,15 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
               </a>
             </div>
 
-            <!-- CLI exec -->
-            <div class="connect-row">
+            <!-- Docker exec -->
+            <div *ngIf="container.externalId" class="connect-row">
               <span class="connect-dot bg-green-500"></span>
-              <span class="connect-label">CLI</span>
-              <code class="flex-1 text-xs font-mono text-surface-700 dark:text-surface-300 truncate">andy exec {{ container.id | slice:0:8 }} -- /bin/sh</code>
-              <button (click)="copyWithFeedback('andy exec ' + container.id + ' -- /bin/sh', 'cli')" title="Copy"
-                class="copy-btn" [class.copied]="copiedField === 'cli'">
-                <svg *ngIf="copiedField !== 'cli'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-                <svg *ngIf="copiedField === 'cli'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+              <span class="connect-label">Docker</span>
+              <code class="flex-1 text-sm font-mono text-surface-700 dark:text-surface-300 truncate">docker exec -it {{ container.externalId | slice:0:12 }} /bin/sh</code>
+              <button (click)="copyWithFeedback('docker exec -it ' + container.externalId + ' /bin/sh', 'docker')" title="Copy"
+                class="copy-btn" [class.copied]="copiedField === 'docker'">
+                <svg *ngIf="copiedField !== 'docker'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                <svg *ngIf="copiedField === 'docker'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
               </button>
             </div>
 
@@ -148,12 +148,15 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
             <div *ngIf="connectionInfo?.sshEndpoint" class="connect-row">
               <span class="connect-dot bg-green-500"></span>
               <span class="connect-label">SSH</span>
-              <code class="flex-1 text-xs font-mono text-surface-700 dark:text-surface-300 truncate">{{ connectionInfo?.sshEndpoint }}</code>
+              <code class="flex-1 text-sm font-mono text-surface-700 dark:text-surface-300 truncate">{{ connectionInfo?.sshEndpoint }}</code>
               <button (click)="copyWithFeedback(connectionInfo?.sshEndpoint, 'ssh')" title="Copy"
                 class="copy-btn" [class.copied]="copiedField === 'ssh'">
                 <svg *ngIf="copiedField !== 'ssh'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                 <svg *ngIf="copiedField === 'ssh'" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
               </button>
+              <a [href]="getSshUrl()" title="Open in native terminal" class="copy-btn">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              </a>
             </div>
 
             <!-- IDE -->
@@ -500,6 +503,15 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
       next: () => { this.router.navigate(['/containers']); },
       error: () => { this.actionBusy = false; },
     });
+  }
+
+  getSshUrl(): string {
+    // Extract port from SSH endpoint like "ssh root@localhost -p 12345"
+    const ep = this.connectionInfo?.sshEndpoint || '';
+    const portMatch = ep.match(/-p\s+(\d+)/);
+    const port = portMatch ? portMatch[1] : '22';
+    // ssh:// URL scheme opens the native terminal on macOS and most Linux desktops
+    return `ssh://root@localhost:${port}`;
   }
 
   copyWithFeedback(text: string | null | undefined, field: string): void {
