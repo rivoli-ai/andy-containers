@@ -658,7 +658,7 @@ public class GpuCapability
 
 | Group | Base Path | Description |
 |-------|----------|-------------|
-| Containers | `/api/containers` | CRUD + lifecycle management |
+| Containers | `/api/containers` | CRUD + lifecycle + stats + resize |
 | Workspaces | `/api/workspaces` | Workspace management |
 | Templates | `/api/templates` | Template catalog CRUD |
 | Providers | `/api/providers` | Infrastructure provider management |
@@ -693,7 +693,7 @@ AI assistant integration for managing containers from Claude Desktop, Cursor, et
 | **Language** | C# 12 |
 | **Database** | PostgreSQL 16 + EF Core 8.0 |
 | **APIs** | REST, gRPC, MCP |
-| **Web UI** | Blazor Server |
+| **Web UI** | Angular 18 (standalone components, Tailwind CSS) |
 | **CLI** | System.CommandLine + Spectre.Console |
 | **Docker** | Docker.DotNet |
 | **Azure** | Azure.ResourceManager SDK |
@@ -946,8 +946,105 @@ Private repository access is handled via `GitCredential` entities:
 4. Update clone status and timestamps
 5. Failed clones do NOT fail the container -- the container stays Running
 
+## 17. Container Resource Management
+
+### 17.1 Resource Specification
+
+Containers are provisioned with configurable CPU, memory, and disk resources defined in `ResourceSpec`:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| CpuCores | double | 2 | Number of CPU cores |
+| MemoryMb | int | 4096 | Memory limit in MB |
+| DiskGb | int | 20 | Disk allocation in GB |
+
+Resources are set at creation time from template defaults (`DefaultResources` JSONB) and can be overridden by the user. The web UI enforces provider capability limits (e.g., Docker max 8 cores / 16GB RAM / 100GB disk).
+
+### 17.2 Live Resource Resize
+
+Running containers on Docker can have CPU and memory adjusted without restart via `PUT /api/containers/{id}/resources`. The Docker provider calls `UpdateContainerAsync` which applies changes immediately. Disk cannot be changed at runtime.
+
+Providers that don't support live resize (Apple Containers, cloud providers) throw `NotSupportedException`, which the API returns as a 400 Bad Request with an explanatory message.
+
+### 17.3 Resource Monitoring
+
+Real-time resource usage is available via `GET /api/containers/{id}/stats`:
+
+- **CPU**: Calculated from Docker stats API using CPU delta / system delta formula
+- **Memory**: Usage and limit from Docker memory stats
+- **Disk**: Root filesystem size from container inspect
+
+The web UI polls stats at a configurable interval (default 5s, adjustable in Settings > Monitoring, stored in localStorage). Stats are displayed in the container list, detail page header, terminal header, and resize card.
+
+## 18. CLI Tool
+
+### 18.1 Architecture
+
+The CLI (`andy-containers`) is a .NET global tool using System.CommandLine for parsing and Spectre.Console for rich terminal output. It communicates with the API via the `Andy.Containers.Client` HTTP client library.
+
+```
+Andy.Containers.Cli
+├── Auth/               OAuth 2.0 Device Flow + credential storage
+├── Commands/           Command handlers (auth, containers, connect)
+├── Formatting/         Spectre.Console table and bar formatters
+└── ClientFactory       Authenticated HttpClient factory
+
+Andy.Containers.Client
+├── ContainersClient    HTTP API wrapper with typed DTOs
+└── AuthenticatedHttpHandler    Bearer token injection
+```
+
+### 18.2 Authentication
+
+Uses OAuth 2.0 Device Authorization Grant (RFC 8628), the same flow as `gh auth login`:
+
+1. CLI requests a device code from the auth server
+2. User copies a one-time code and signs in via browser
+3. CLI polls for token completion
+4. Token stored in `~/.andy/credentials.json` (Unix file permissions 600)
+
+Fallback: `--token` flag for direct token paste during development.
+
+### 18.3 Terminal Connect
+
+`andy-containers connect <id>` provides native terminal access:
+
+1. Verifies container is Running
+2. If SSH port is mapped: spawns `ssh` as a child process (best native terminal experience)
+3. If no SSH: suggests `docker exec` command and web terminal URL
+
+## 19. Code Assistant Integration
+
+### 19.1 Distro-Agnostic Installation
+
+Code assistants (Claude Code, Codex CLI, Aider, etc.) are installed via the `CodeAssistantInstallService` which generates shell scripts that detect the container's package manager:
+
+- **Alpine**: `apk add nodejs npm` / `apk add python3 py3-pip`
+- **Debian/Ubuntu**: `apt-get install nodejs` via NodeSource / `apt-get install python3-pip`
+- **RHEL/Fedora**: `dnf install nodejs npm` / `dnf install python3-pip`
+
+This ensures code assistants install correctly regardless of the container's base image (Ubuntu, Alpine, etc.).
+
+### 19.2 API Key Injection
+
+When a code assistant is configured, the orchestration service resolves the user's API key from the encrypted key store and injects it as an environment variable (e.g., `ANTHROPIC_API_KEY` for Claude Code).
+
+## 20. SSH and Native Terminal Access
+
+### 20.1 Auto-Exposed SSH
+
+All new containers automatically map port 22 to a dynamic host port. The post-create script installs and starts `sshd` with credentials `root:container`. This enables:
+
+- **Web UI**: "Open in terminal" button using `ssh://` URL scheme (launches Terminal.app on macOS)
+- **CLI**: `andy-containers connect <id>` spawns native SSH session
+- **Manual**: `ssh root@localhost -p <port>` from any terminal
+
+### 20.2 Docker Exec Fallback
+
+For containers without SSH, the Connect card shows the `docker exec -it <id> /bin/sh` command with a copy button.
+
 ---
 
 **Status:** Alpha
 **Version:** 0.1.0-alpha
-**Last Updated:** 2026-03-23
+**Last Updated:** 2026-03-28
