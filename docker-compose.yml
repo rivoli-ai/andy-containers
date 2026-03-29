@@ -26,8 +26,6 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=https://+:8443
-      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
-      - ASPNETCORE_Kestrel__Certificates__Default__Password=devcert
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=postgres
       - AndyAuth__Authority=https://host.docker.internal:5001
       - AndyAuth__Audience=urn:andy-containers-api
@@ -42,7 +40,8 @@ services:
       - "5200:8443"
     volumes:
       - ./certs:/usr/local/share/ca-certificates/custom:ro
-      - ${HOME}/.aspnet/https:/https:ro
+      # Optional: mount a real cert to override the built-in self-signed one
+      # - ${HOME}/.aspnet/https:/https:ro
     depends_on:
       postgres:
         condition: service_healthy
