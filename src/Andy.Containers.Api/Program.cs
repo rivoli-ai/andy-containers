@@ -151,12 +151,8 @@ try
     }
     else
     {
-        // No RBAC server — register a permissive policy provider so [RequirePermission] doesn't fail
-        builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>(sp =>
-        {
-            var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Authorization.AuthorizationOptions>>();
-            return new AllowAllPolicyProvider(options);
-        });
+        throw new InvalidOperationException(
+            "Rbac:ApiBaseUrl is not configured. RBAC is required — set the URL in appsettings.json or appsettings.Development.json.");
     }
 
     // Health checks

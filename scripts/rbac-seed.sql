@@ -35,7 +35,7 @@ AND (
   (rt."Code" = 'container' AND a."Code" IN ('read', 'write', 'delete', 'execute'))
   OR (rt."Code" = 'template' AND a."Code" IN ('read', 'write', 'delete'))
   OR (rt."Code" = 'workspace' AND a."Code" IN ('read', 'write', 'delete'))
-  OR (rt."Code" = 'provider' AND a."Code" IN ('read', 'manage'))
+  OR (rt."Code" = 'provider' AND a."Code" IN ('read', 'admin'))
   OR (rt."Code" = 'settings' AND a."Code" IN ('read', 'write'))
   OR (rt."Code" = 'image' AND a."Code" IN ('read', 'write', 'delete'))
 )

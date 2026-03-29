@@ -61,7 +61,7 @@ public class ProvidersController : ControllerBase
         return provider is null ? NotFound() : Ok(provider);
     }
 
-    [RequirePermission("provider:manage")]
+    [RequirePermission("provider:admin")]
     [HttpPost]
     [Authorize(Policy = "Admin")]
     public async Task<IActionResult> Create([FromBody] InfrastructureProvider provider, CancellationToken ct)
@@ -121,7 +121,7 @@ public class ProvidersController : ControllerBase
         return Ok(estimate);
     }
 
-    [RequirePermission("provider:manage")]
+    [RequirePermission("provider:admin")]
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = "Admin")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
