@@ -20,6 +20,8 @@ services:
     build:
       context: .
       dockerfile: src/Andy.Containers.Api/Dockerfile
+      additional_contexts:
+        certs: ./certs
     container_name: andy-containers-api
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
@@ -27,13 +29,19 @@ services:
       - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
       - ASPNETCORE_Kestrel__Certificates__Default__Password=devcert
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=postgres
-      - Auth__Authority=https://localhost:7001
-      - Auth__Audience=andy-containers
+      - AndyAuth__Authority=https://host.docker.internal:5001
+      - AndyAuth__Audience=urn:andy-containers-api
+      - Rbac__ApiBaseUrl=https://host.docker.internal:7003
+      - Rbac__ApplicationCode=containers
       - Cors__Origins__0=https://localhost:5280
-      - Cors__Origins__1=https://localhost:3000
+      - Cors__Origins__1=https://localhost:4200
+      - Cors__Origins__2=https://localhost:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "5200:8443"
     volumes:
+      - ./certs:/usr/local/share/ca-certificates/custom:ro
       - ${HOME}/.aspnet/https:/https:ro
     depends_on:
       postgres:

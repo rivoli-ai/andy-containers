@@ -18,6 +18,10 @@ public static class DataSeeder
         "echo 'LANG=C.UTF-8' >> /etc/environment; " +
         "echo 'LC_ALL=C.UTF-8' >> /etc/environment; " +
         "export LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
+        // Set SSL env vars for corporate environments (NuGet, dotnet CLI, curl)
+        "echo 'DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER=0' >> /etc/environment; " +
+        "echo 'NUGET_CERT_REVOCATION_MODE=off' >> /etc/environment; " +
+        "echo 'DOTNET_NUGET_SIGNATURE_VERIFICATION=false' >> /etc/environment; " +
         // Install base packages
         "if command -v apt-get >/dev/null 2>&1; then " +
             "export DEBIAN_FRONTEND=noninteractive && " +

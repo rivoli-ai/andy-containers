@@ -1,0 +1,8 @@
+*.crt
+*.pem
+*.cer
+*.pfx
+*.key
+!.gitkeep
+!.gitignore
+!README.md
