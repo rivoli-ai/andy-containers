@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
-COPY src/Andy.Containers.Api/docker-entrypoint.sh /docker-entrypoint.sh
+COPY --from=build /build/src/Andy.Containers.Api/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Keep SSL env vars at runtime for outbound HTTPS calls
