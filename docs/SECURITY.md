@@ -89,7 +89,7 @@ Andy Containers uses Andy RBAC for role-based access control. The `Andy.Rbac.Cli
 ```json
 {
   "Rbac": {
-    "ApiBaseUrl": "https://localhost:5300",
+    "ApiBaseUrl": "https://localhost:7003",
     "ApplicationCode": "containers"
   }
 }
@@ -106,7 +106,7 @@ Application code: `containers`
 | container | read, write, delete, execute | Yes | Container lifecycle, exec, resize |
 | template | read, write, delete | No | Template catalog |
 | workspace | read, write, delete | No | Workspace management |
-| provider | read, manage | No | Infrastructure providers |
+| provider | read, admin | No | Infrastructure providers |
 | settings | read, write | No | API keys, monitoring config |
 | image | read, write, delete | No | Container images |
 
@@ -132,7 +132,7 @@ Application code: `containers`
 | WorkspacesController | Create, Update | `workspace:write` |
 | WorkspacesController | Delete | `workspace:delete` |
 | ProvidersController | List, Get, Health, CostEstimate | `provider:read` |
-| ProvidersController | Create, Delete | `provider:manage` |
+| ProvidersController | Create, Delete | `provider:admin` |
 | ApiKeysController | List, Get, History | `settings:read` |
 | ApiKeysController | Create, Update, Delete, Validate | `settings:write` |
 
@@ -165,7 +165,7 @@ HTTP Request with JWT
 ### 3.1 Prerequisites
 
 - Andy Auth running on `https://localhost:5001`
-- Andy RBAC running on `https://localhost:5300`
+- Andy RBAC running on `https://localhost:7003`
 
 ### 3.2 Andy Auth Setup
 
@@ -185,9 +185,11 @@ Or execute each SQL statement from `scripts/rbac-seed.sql` manually.
 
 Then assign the admin role to your user (see Step 6 in the SQL script for instructions).
 
-### 3.4 Dev Mode (No Auth)
+### 3.4 Required Services
 
-To run without auth servers, ensure `AndyAuth:Authority` is empty in `appsettings.json`. The API will accept all requests with a dev identity (`dev-user`, admin role).
+Both Andy Auth and Andy RBAC must be running. The API will fail to start if `Rbac:ApiBaseUrl` is not configured. There is no dev-mode bypass for RBAC — permissions are always enforced.
+
+The authentication layer has a dev fallback: when `AndyAuth:Authority` is empty, unauthenticated requests get a dev identity (`dev-user`, admin role). However, RBAC still validates permissions against the RBAC server for that identity.
 
 ## 4. API Key Management
 

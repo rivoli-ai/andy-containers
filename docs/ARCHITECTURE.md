@@ -493,7 +493,7 @@ Container operations are protected by RBAC permissions in the format `andy-conta
 | `template:manage` | Update/delete templates |
 | `provider:create` | Register infrastructure providers |
 | `provider:read` | View providers |
-| `provider:manage` | Configure/delete providers |
+| `provider:admin` | Configure/delete providers |
 | `agent:spawn` | Spawn DevPilot agents on containers |
 | `admin:*` | Full administrative access |
 

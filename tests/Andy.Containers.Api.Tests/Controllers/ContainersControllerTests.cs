@@ -210,4 +210,60 @@ public class ContainersControllerTests : IDisposable
         var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
         okResult.Value.Should().Be(execResult);
     }
+
+    [Fact]
+    public async Task Resize_ReturnsOk_WhenContainerIsRunning()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "test", OwnerId = "test-user", Status = ContainerStatus.Running };
+        _mockService
+            .Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockService
+            .Setup(s => s.ResizeContainerAsync(id, It.IsAny<Andy.Containers.Abstractions.ResourceSpec>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var request = new ResizeRequest { CpuCores = 4, MemoryMb = 8192, DiskGb = 40 };
+        var result = await _controller.Resize(id, request, CancellationToken.None);
+
+        var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
+        okResult.Value.Should().Be(container);
+        _mockService.Verify(s => s.ResizeContainerAsync(id, It.IsAny<Andy.Containers.Abstractions.ResourceSpec>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Resize_ReturnsBadRequest_WhenContainerNotRunning()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "test", OwnerId = "test-user", Status = ContainerStatus.Stopped };
+        _mockService
+            .Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockService
+            .Setup(s => s.ResizeContainerAsync(id, It.IsAny<Andy.Containers.Abstractions.ResourceSpec>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Container must be running to resize"));
+
+        var request = new ResizeRequest { CpuCores = 4, MemoryMb = 8192, DiskGb = 40 };
+        var result = await _controller.Resize(id, request, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Resize_ReturnsBadRequest_WhenProviderDoesNotSupportResize()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "test", OwnerId = "test-user", Status = ContainerStatus.Running };
+        _mockService
+            .Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockService
+            .Setup(s => s.ResizeContainerAsync(id, It.IsAny<Andy.Containers.Abstractions.ResourceSpec>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotSupportedException("Provider does not support resize"));
+
+        var request = new ResizeRequest { CpuCores = 4, MemoryMb = 8192, DiskGb = 40 };
+        var result = await _controller.Resize(id, request, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
 }
