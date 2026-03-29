@@ -61,7 +61,7 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
           </thead>
           <tbody class="divide-y divide-surface-200 dark:divide-surface-700">
             <tr *ngFor="let c of containers" class="hover:bg-surface-50 dark:hover:bg-surface-700/50">
-              <td class="px-4 py-3 whitespace-nowrap">
+              <td class="px-4 py-3 whitespace-nowrap text-sm">
                 <a [routerLink]="['/containers', c.id]" class="font-semibold text-primary-600 dark:text-primary-400 hover:underline">{{ c.name }}</a>
                 <div class="text-xs text-surface-400 dark:text-surface-500 font-mono">{{ c.id | slice:0:8 }}</div>
               </td>
@@ -79,12 +79,12 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
                 <span *ngIf="!c.lastActivityAt" class="text-surface-400">--</span>
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">
-                <span *ngIf="c.hostIp" class="font-mono text-xs">{{ c.hostIp }}</span>
+                <span *ngIf="c.hostIp" class="font-mono">{{ c.hostIp }}</span>
                 <span *ngIf="!c.hostIp" class="text-surface-400">--</span>
               </td>
-              <td class="px-4 py-3 whitespace-nowrap">
+              <td class="px-4 py-3 whitespace-nowrap text-sm">
                 <app-container-stats-bar [containerId]="c.id" [isRunning]="c.status === 'Running'" variant="compact"></app-container-stats-bar>
-                <span *ngIf="c.status !== 'Running'" class="text-xs text-surface-400">--</span>
+                <span *ngIf="c.status !== 'Running'" class="text-surface-400">--</span>
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-sm">
                 <a *ngIf="c.ideEndpoint" [href]="c.ideEndpoint" target="_blank" class="text-primary-600 dark:text-primary-400 hover:underline mr-2">IDE</a>
