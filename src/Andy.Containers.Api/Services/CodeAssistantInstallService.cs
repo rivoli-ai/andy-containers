@@ -70,4 +70,6 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
         CodeAssistantType.GeminiCode => "GOOGLE_API_KEY",
         _ => "API_KEY"
     };
+
+    public string GetDefaultBaseUrlEnvVar(CodeAssistantType tool) => "OPENAI_API_BASE";
 }

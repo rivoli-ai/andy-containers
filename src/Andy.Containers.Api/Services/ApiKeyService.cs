@@ -34,7 +34,7 @@ public class ApiKeyService : IApiKeyService
     }
 
     public async Task<ApiKeyCredential> CreateAsync(string ownerId, string label, ApiKeyProvider provider, string apiKey,
-        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, CancellationToken ct = default)
+        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, string? baseUrl = null, CancellationToken ct = default)
     {
         using var activity = ActivitySources.ApiKeys.StartActivity("ApiKey.Create");
         activity?.SetTag("apiKey.provider", provider.ToString());
@@ -57,6 +57,7 @@ public class ApiKeyService : IApiKeyService
             MaskedValue = masked,
             IsValid = validationResult.IsValid,
             LastValidatedAt = DateTime.UtcNow,
+            BaseUrl = baseUrl,
             ChangeHistory = JsonSerializer.Serialize(new List<ApiKeyChangeEntry>
             {
                 new()
@@ -239,6 +240,9 @@ public class ApiKeyService : IApiKeyService
         ApiKeyProvider.OpenAI => "OPENAI_API_KEY",
         ApiKeyProvider.Google => "GOOGLE_API_KEY",
         ApiKeyProvider.Dashscope => "DASHSCOPE_API_KEY",
+        ApiKeyProvider.OpenRouter => "OPENROUTER_API_KEY",
+        ApiKeyProvider.Ollama => "OLLAMA_API_KEY",
+        ApiKeyProvider.OpenAiCompatible => "OPENAI_API_KEY",
         _ => "API_KEY"
     };
 }

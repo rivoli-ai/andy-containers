@@ -19,4 +19,6 @@ public class CodeAssistantConfig
     public CodeAssistantType Tool { get; set; }
     public bool AutoStart { get; set; }
     public string? ApiKeyEnvVar { get; set; }
+    public string? ApiBaseUrl { get; set; }
+    public string? ApiBaseUrlEnvVar { get; set; }
 }

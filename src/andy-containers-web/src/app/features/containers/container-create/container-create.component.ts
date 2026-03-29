@@ -116,6 +116,10 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
               <span class="font-medium">No API key configured.</span> Go to <a routerLink="/settings" class="underline font-medium">Settings</a> to add a {{ getToolProvider(selectedCodeAssistant) }} API key, or the tool won't be able to authenticate.
             </p>
           </div>
+          <div *ngIf="selectedCodeAssistant && getBaseUrlForTool(selectedCodeAssistant)" class="mt-1 text-xs text-surface-500 dark:text-surface-400">
+            Base URL: <code class="font-mono bg-surface-100 dark:bg-surface-800 px-1 rounded">{{ getBaseUrlForTool(selectedCodeAssistant) }}</code>
+            will be injected as <code class="font-mono bg-surface-100 dark:bg-surface-800 px-1 rounded">OPENAI_API_BASE</code>
+          </div>
         </div>
         <div *ngIf="selectedCodeAssistant" class="flex items-center gap-2">
           <input id="excludeTemplateAssistant" type="checkbox" [(ngModel)]="excludeTemplateCodeAssistant" name="excludeTemplateAssistant"
@@ -315,6 +319,12 @@ export class ContainerCreateComponent implements OnInit {
   hasApiKeyForTool(tool: string): boolean {
     const provider = this.getToolProvider(tool);
     return this.apiKeys.some(k => k.provider === provider);
+  }
+
+  getBaseUrlForTool(tool: string): string {
+    const provider = this.getToolProvider(tool);
+    const key = this.apiKeys.find(k => k.provider === provider);
+    return key?.baseUrl || '';
   }
 
   updateTemplateCodeAssistant(): void {

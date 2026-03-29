@@ -34,6 +34,11 @@ public class ApiKeyValidationService : IApiKeyValidationService
                 ApiKeyProvider.Google => await ValidateGoogleAsync(apiKey, ct),
                 ApiKeyProvider.Dashscope => await ValidateDashscopeAsync(apiKey, ct),
                 ApiKeyProvider.Custom => new ApiKeyValidationResult(true),
+                ApiKeyProvider.OpenRouter => await ValidateOpenRouterAsync(apiKey, ct),
+                ApiKeyProvider.Ollama => new ApiKeyValidationResult(true),
+                ApiKeyProvider.OpenAiCompatible => string.IsNullOrEmpty(apiKey)
+                    ? new ApiKeyValidationResult(true)
+                    : new ApiKeyValidationResult(true),
                 _ => new ApiKeyValidationResult(false, $"Unknown provider: {provider}")
             };
 
@@ -108,6 +113,19 @@ public class ApiKeyValidationService : IApiKeyValidationService
         request.Content = new StringContent(
             JsonSerializer.Serialize(new { model = "qwen-turbo", input = new { messages = new[] { new { role = "user", content = "hi" } } } }),
             Encoding.UTF8, "application/json");
+
+        var response = await client.SendAsync(request, ct);
+        if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            return new ApiKeyValidationResult(false, "Invalid API key");
+
+        return new ApiKeyValidationResult(true);
+    }
+
+    private async Task<ApiKeyValidationResult> ValidateOpenRouterAsync(string apiKey, CancellationToken ct)
+    {
+        var client = _httpClientFactory.CreateClient();
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://openrouter.ai/api/v1/models");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         var response = await client.SendAsync(request, ct);
         if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)

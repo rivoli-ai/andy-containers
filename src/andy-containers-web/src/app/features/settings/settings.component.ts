@@ -44,10 +44,15 @@ import { ContainerStatsBarComponent } from '../../shared/components/container-st
                   class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 px-3 py-2 text-sm" />
               </div>
             </div>
-            <div>
+            <div *ngIf="newKey.provider !== 'Ollama'">
               <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">API Key *</label>
               <input type="password" [(ngModel)]="newKey.apiKey" name="apiKey" placeholder="sk-..."
                 class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 px-3 py-2 text-sm font-mono" />
+            </div>
+            <div *ngIf="needsBaseUrl(newKey.provider)">
+              <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Base URL</label>
+              <input type="text" [(ngModel)]="newKey.baseUrl" name="baseUrl" [placeholder]="getDefaultBaseUrl(newKey.provider)"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 font-mono" />
             </div>
             <div>
               <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Environment Variable <span class="text-surface-400">(auto-detected)</span></label>
@@ -60,7 +65,7 @@ import { ContainerStatsBarComponent } from '../../shared/components/container-st
                 class="px-4 py-2 text-sm font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-700 dark:text-surface-300">
                 Cancel
               </button>
-              <button (click)="addKey()" [disabled]="addingKey || !newKey.provider || !newKey.label || !newKey.apiKey"
+              <button (click)="addKey()" [disabled]="addingKey || !newKey.provider || !newKey.label || (!newKey.apiKey && newKey.provider !== 'Ollama')"
                 class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50">
                 {{ addingKey ? 'Validating...' : 'Add & Validate' }}
               </button>
@@ -184,7 +189,7 @@ export class SettingsComponent implements OnInit {
   showAddForm = false;
   addingKey = false;
   addError = '';
-  newKey = { provider: '', label: '', apiKey: '', envVarName: '' };
+  newKey = { provider: '', label: '', apiKey: '', envVarName: '', baseUrl: '' };
 
   editingKey: ApiKeyCredential | null = null;
   editLabel = '';
@@ -227,15 +232,17 @@ export class SettingsComponent implements OnInit {
   addKey(): void {
     this.addingKey = true;
     this.addError = '';
+    const baseUrl = this.newKey.baseUrl || (this.needsBaseUrl(this.newKey.provider) ? this.getDefaultBaseUrl(this.newKey.provider) : '') || undefined;
     this.api.createApiKey({
       label: this.newKey.label,
       provider: this.newKey.provider,
-      apiKey: this.newKey.apiKey,
+      apiKey: this.newKey.apiKey || undefined,
       envVarName: this.newKey.envVarName || undefined,
+      baseUrl,
     }).subscribe({
       next: () => {
         this.showAddForm = false;
-        this.newKey = { provider: '', label: '', apiKey: '', envVarName: '' };
+        this.newKey = { provider: '', label: '', apiKey: '', envVarName: '', baseUrl: '' };
         this.addingKey = false;
         this.loadKeys();
       },
@@ -293,6 +300,19 @@ export class SettingsComponent implements OnInit {
     this.api.getApiKeyHistory(key.id).subscribe({
       next: (h) => { this.history = h; },
     });
+  }
+
+  needsBaseUrl(provider: string): boolean {
+    return ['OpenRouter', 'Ollama', 'OpenAiCompatible'].includes(provider);
+  }
+
+  getDefaultBaseUrl(provider: string): string {
+    switch (provider) {
+      case 'OpenRouter': return 'https://openrouter.ai/api/v1';
+      case 'Ollama': return 'http://host.docker.internal:11434/v1';
+      case 'OpenAiCompatible': return 'https://your-server.com/v1';
+      default: return '';
+    }
   }
 
   getStatusClasses(key: ApiKeyCredential): string[] {

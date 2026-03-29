@@ -16,6 +16,7 @@ public class ApiKeyCredential
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public string? ChangeHistory { get; set; }
+    public string? BaseUrl { get; set; }
 }
 
 public enum ApiKeyProvider
@@ -24,5 +25,8 @@ public enum ApiKeyProvider
     OpenAI,
     Google,
     Dashscope,
-    Custom
+    Custom,
+    OpenRouter,
+    Ollama,
+    OpenAiCompatible
 }

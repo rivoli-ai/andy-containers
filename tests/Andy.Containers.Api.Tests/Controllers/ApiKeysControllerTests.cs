@@ -47,7 +47,7 @@ public class ApiKeysControllerTests
             LastValidatedAt = DateTime.UtcNow
         };
         _mockService.Setup(s => s.CreateAsync("test-user", "my-key", ApiKeyProvider.Anthropic, "sk-test",
-            null, null, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            null, null, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(credential);
 
         var result = await _controller.Create(new CreateApiKeyDto { Label = "my-key", Provider = "Anthropic", ApiKey = "sk-test" }, default);

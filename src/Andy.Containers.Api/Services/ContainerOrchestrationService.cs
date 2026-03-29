@@ -254,6 +254,14 @@ public class ContainerOrchestrationService : IContainerService
                 _logger.LogWarning("No API key found for {Provider} for user {OwnerId}, container will start without it",
                     assistantProvider, container.OwnerId);
             }
+
+            // Inject API base URL if configured
+            if (!string.IsNullOrEmpty(codeAssistant.ApiBaseUrl))
+            {
+                var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
+                envVars ??= new Dictionary<string, string>();
+                envVars[baseUrlEnv] = codeAssistant.ApiBaseUrl;
+            }
         }
 
         // Merge user-specified env vars (don't override API key)
@@ -469,7 +477,7 @@ public class ContainerOrchestrationService : IContainerService
         CodeAssistantType.OpenCode => ApiKeyProvider.OpenAI,
         CodeAssistantType.QwenCoder => ApiKeyProvider.Dashscope,
         CodeAssistantType.GeminiCode => ApiKeyProvider.Google,
-        _ => ApiKeyProvider.Custom
+        _ => ApiKeyProvider.OpenAiCompatible
     };
 
     private static string GetDefaultEnvVar(ApiKeyProvider provider) => provider switch
@@ -478,6 +486,9 @@ public class ContainerOrchestrationService : IContainerService
         ApiKeyProvider.OpenAI => "OPENAI_API_KEY",
         ApiKeyProvider.Google => "GOOGLE_API_KEY",
         ApiKeyProvider.Dashscope => "DASHSCOPE_API_KEY",
+        ApiKeyProvider.OpenRouter => "OPENROUTER_API_KEY",
+        ApiKeyProvider.Ollama => "OLLAMA_API_KEY",
+        ApiKeyProvider.OpenAiCompatible => "OPENAI_API_KEY",
         _ => "API_KEY"
     };
 }

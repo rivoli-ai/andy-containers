@@ -6,4 +6,5 @@ public interface ICodeAssistantInstallService
 {
     string GenerateInstallScript(CodeAssistantConfig config);
     string GetDefaultApiKeyEnvVar(CodeAssistantType tool);
+    string GetDefaultBaseUrlEnvVar(CodeAssistantType tool);
 }

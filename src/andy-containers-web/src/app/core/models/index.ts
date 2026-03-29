@@ -197,6 +197,7 @@ export interface ApiKeyCredential {
   isValid: boolean;
   lastValidatedAt?: string;
   lastUsedAt?: string;
+  baseUrl?: string;
   createdAt: string;
   updatedAt?: string;
 }
@@ -214,6 +215,9 @@ export const API_KEY_PROVIDERS = [
   { value: 'Google', label: 'Google', defaultEnvVar: 'GOOGLE_API_KEY' },
   { value: 'Dashscope', label: 'Dashscope', defaultEnvVar: 'DASHSCOPE_API_KEY' },
   { value: 'Custom', label: 'Custom', defaultEnvVar: 'API_KEY' },
+  { value: 'OpenRouter', label: 'OpenRouter', defaultEnvVar: 'OPENROUTER_API_KEY' },
+  { value: 'Ollama', label: 'Ollama (Local)', defaultEnvVar: '' },
+  { value: 'OpenAiCompatible', label: 'OpenAI Compatible', defaultEnvVar: 'OPENAI_API_KEY' },
 ] as const;
 
 export interface WorkspaceGitRepo {

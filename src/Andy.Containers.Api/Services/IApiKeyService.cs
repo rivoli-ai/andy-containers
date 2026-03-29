@@ -5,7 +5,7 @@ namespace Andy.Containers.Api.Services;
 public interface IApiKeyService
 {
     Task<ApiKeyCredential> CreateAsync(string ownerId, string label, ApiKeyProvider provider, string apiKey,
-        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, CancellationToken ct = default);
+        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, string? baseUrl = null, CancellationToken ct = default);
     Task<ApiKeyCredential?> GetAsync(Guid id, string ownerId, CancellationToken ct = default);
     Task<IReadOnlyList<ApiKeyCredential>> ListAsync(string ownerId, CancellationToken ct = default);
     Task<IReadOnlyList<ApiKeyCredential>> ListByOrganizationAsync(Guid organizationId, CancellationToken ct = default);
