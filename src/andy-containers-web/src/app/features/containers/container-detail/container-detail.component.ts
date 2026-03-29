@@ -58,63 +58,62 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
         <!-- Overview Card -->
         <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
           <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Overview</h2>
-          <dl class="space-y-3">
-            <div class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Name</dt>
-              <dd class="text-sm font-medium text-surface-900 dark:text-surface-100 text-right min-w-0">{{ container.name }}</dd>
-            </div>
-            <div class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Status</dt>
-              <dd><app-status-badge [status]="container.status"></app-status-badge></dd>
-            </div>
-            <div class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">ID</dt>
-              <dd class="text-sm font-mono text-surface-600 dark:text-surface-300 text-right min-w-0 break-all">{{ container.id }}</dd>
-            </div>
-            <div *ngIf="container.externalId" class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">External ID</dt>
-              <dd class="text-sm font-mono text-surface-600 dark:text-surface-300 text-right min-w-0 break-all">{{ container.externalId | slice:0:12 }}</dd>
-            </div>
-            <div class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Owner</dt>
-              <dd class="text-sm text-surface-900 dark:text-surface-100 text-right min-w-0">{{ container.ownerId }}</dd>
-            </div>
-            <div class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Template</dt>
-              <dd class="text-sm text-surface-900 dark:text-surface-100 text-right min-w-0">{{ container.template?.name || container.templateId | slice:0:8 }}</dd>
-            </div>
-            <div *ngIf="container.template?.baseImage" class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Base Image</dt>
-              <dd class="text-xs font-mono text-surface-600 dark:text-surface-300 text-right min-w-0 break-all">{{ container.template?.baseImage }}</dd>
-            </div>
-            <div class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Provider</dt>
-              <dd class="text-sm text-surface-900 dark:text-surface-100 text-right min-w-0">{{ container.provider?.name || container.providerId | slice:0:8 }}</dd>
-            </div>
-            <div class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Created</dt>
-              <dd class="text-sm text-surface-600 dark:text-surface-300 text-right min-w-0">{{ container.createdAt | date:'medium' }}</dd>
-            </div>
-            <div *ngIf="container.creationSource && container.creationSource !== 'Unknown'" class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Source</dt>
-              <dd class="text-sm text-surface-600 dark:text-surface-300 text-right min-w-0">{{ container.creationSource }}</dd>
-            </div>
-            <div *ngIf="codeAssistantLabel" class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Code Assistant</dt>
-              <dd class="text-sm text-surface-600 dark:text-surface-300 text-right min-w-0">{{ codeAssistantLabel }}</dd>
-            </div>
-            <div *ngIf="container.startedAt" class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Started</dt>
-              <dd class="text-sm text-surface-600 dark:text-surface-300 text-right min-w-0">{{ container.startedAt | date:'medium' }}</dd>
-            </div>
-            <div *ngIf="container.status === 'Running' && container.startedAt" class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Uptime</dt>
-              <dd class="text-sm font-medium text-green-600 dark:text-green-400 text-right min-w-0">{{ container.startedAt | uptime }}</dd>
-            </div>
-            <div *ngIf="container.stoppedAt" class="flex justify-between gap-4">
-              <dt class="text-sm text-surface-500 dark:text-surface-400 shrink-0">Stopped</dt>
-              <dd class="text-sm text-surface-600 dark:text-surface-300 text-right min-w-0">{{ container.stoppedAt | date:'medium' }}</dd>
-            </div>
+          <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 items-baseline">
+            <dt class="text-sm text-surface-500 dark:text-surface-400">Name</dt>
+            <dd class="text-sm font-medium text-surface-900 dark:text-surface-100 break-words">{{ container.name }}</dd>
+
+            <dt class="text-sm text-surface-500 dark:text-surface-400">Status</dt>
+            <dd><app-status-badge [status]="container.status"></app-status-badge></dd>
+
+            <dt class="text-sm text-surface-500 dark:text-surface-400">ID</dt>
+            <dd class="text-sm font-mono text-surface-600 dark:text-surface-300 break-all">{{ container.id }}</dd>
+
+            <ng-container *ngIf="container.externalId">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">External ID</dt>
+              <dd class="text-sm font-mono text-surface-600 dark:text-surface-300">{{ container.externalId | slice:0:12 }}</dd>
+            </ng-container>
+
+            <dt class="text-sm text-surface-500 dark:text-surface-400">Owner</dt>
+            <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.ownerId }}</dd>
+
+            <dt class="text-sm text-surface-500 dark:text-surface-400">Template</dt>
+            <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.template?.name || container.templateId | slice:0:8 }}</dd>
+
+            <ng-container *ngIf="container.template?.baseImage">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Base Image</dt>
+              <dd class="text-sm font-mono text-surface-600 dark:text-surface-300 break-all">{{ container.template?.baseImage }}</dd>
+            </ng-container>
+
+            <dt class="text-sm text-surface-500 dark:text-surface-400">Provider</dt>
+            <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.provider?.name || container.providerId | slice:0:8 }}</dd>
+
+            <dt class="text-sm text-surface-500 dark:text-surface-400">Created</dt>
+            <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.createdAt | date:'medium' }}</dd>
+
+            <ng-container *ngIf="container.creationSource && container.creationSource !== 'Unknown'">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Source</dt>
+              <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.creationSource }}</dd>
+            </ng-container>
+
+            <ng-container *ngIf="codeAssistantLabel">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Code Assistant</dt>
+              <dd class="text-sm text-surface-600 dark:text-surface-300">{{ codeAssistantLabel }}</dd>
+            </ng-container>
+
+            <ng-container *ngIf="container.startedAt">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Started</dt>
+              <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.startedAt | date:'medium' }}</dd>
+            </ng-container>
+
+            <ng-container *ngIf="container.status === 'Running' && container.startedAt">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Uptime</dt>
+              <dd class="text-sm font-medium text-green-600 dark:text-green-400">{{ container.startedAt | uptime }}</dd>
+            </ng-container>
+
+            <ng-container *ngIf="container.stoppedAt">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">Stopped</dt>
+              <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.stoppedAt | date:'medium' }}</dd>
+            </ng-container>
           </dl>
         </div>
 
