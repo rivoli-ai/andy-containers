@@ -60,19 +60,25 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
           <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">Resources</label>
           <div class="grid grid-cols-3 gap-3">
             <div>
-              <label for="cpuCores" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">CPU Cores</label>
-              <input id="cpuCores" type="number" [(ngModel)]="resourceCpu" name="cpuCores" min="1" max="8" step="1"
-                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100" />
+              <label for="cpuCores" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">CPU Cores <span class="text-surface-400">(max {{ providerLimits.maxCpu }})</span></label>
+              <input id="cpuCores" type="number" [(ngModel)]="resourceCpu" name="cpuCores" min="1" [max]="providerLimits.maxCpu" step="1"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100"
+                [class.border-red-400]="resourceCpu > providerLimits.maxCpu || resourceCpu < 1" />
+              <p *ngIf="resourceCpu > providerLimits.maxCpu" class="text-xs text-red-500 mt-0.5">Exceeds provider limit</p>
             </div>
             <div>
-              <label for="memoryMb" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Memory (MB)</label>
-              <input id="memoryMb" type="number" [(ngModel)]="resourceMemory" name="memoryMb" min="512" max="16384" step="512"
-                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100" />
+              <label for="memoryMb" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Memory (MB) <span class="text-surface-400">(max {{ providerLimits.maxMemory }})</span></label>
+              <input id="memoryMb" type="number" [(ngModel)]="resourceMemory" name="memoryMb" min="512" [max]="providerLimits.maxMemory" step="512"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100"
+                [class.border-red-400]="resourceMemory > providerLimits.maxMemory || resourceMemory < 512" />
+              <p *ngIf="resourceMemory > providerLimits.maxMemory" class="text-xs text-red-500 mt-0.5">Exceeds provider limit</p>
             </div>
             <div>
-              <label for="diskGb" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Disk (GB)</label>
-              <input id="diskGb" type="number" [(ngModel)]="resourceDisk" name="diskGb" min="5" max="100" step="5"
-                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100" />
+              <label for="diskGb" class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Disk (GB) <span class="text-surface-400">(max {{ providerLimits.maxDisk }})</span></label>
+              <input id="diskGb" type="number" [(ngModel)]="resourceDisk" name="diskGb" min="5" [max]="providerLimits.maxDisk" step="5"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100"
+                [class.border-red-400]="resourceDisk > providerLimits.maxDisk || resourceDisk < 5" />
+              <p *ngIf="resourceDisk > providerLimits.maxDisk" class="text-xs text-red-500 mt-0.5">Exceeds provider limit</p>
             </div>
           </div>
           <p *ngIf="templateResourcesLabel" class="mt-1 text-xs text-surface-400">Template default: {{ templateResourcesLabel }}</p>
@@ -171,7 +177,7 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
             class="px-4 py-2 text-sm font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-700">
             Cancel
           </a>
-          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId || !hasReachableProvider"
+          <button type="submit" [disabled]="submitting || !name || !selectedTemplateId || !hasReachableProvider || !resourcesValid"
             class="px-4 py-2 text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {{ submitting ? 'Creating...' : 'Create Container' }}
           </button>
@@ -205,6 +211,29 @@ export class ContainerCreateComponent implements OnInit {
 
   get hasReachableProvider(): boolean {
     return this.providers.some(p => p.healthStatus !== 'Unreachable');
+  }
+
+  get providerLimits(): { maxCpu: number; maxMemory: number; maxDisk: number } {
+    const selected = this.providers.find(p => p.id === this.selectedProviderId);
+    if (selected?.capabilities) {
+      try {
+        const caps = JSON.parse(selected.capabilities);
+        return {
+          maxCpu: caps.maxCpuCores ?? 8,
+          maxMemory: caps.maxMemoryMb ?? 16384,
+          maxDisk: caps.maxDiskGb ?? 100,
+        };
+      } catch {}
+    }
+    // Default limits (union of all providers)
+    return { maxCpu: 8, maxMemory: 16384, maxDisk: 100 };
+  }
+
+  get resourcesValid(): boolean {
+    const limits = this.providerLimits;
+    return this.resourceCpu >= 1 && this.resourceCpu <= limits.maxCpu
+      && this.resourceMemory >= 512 && this.resourceMemory <= limits.maxMemory
+      && this.resourceDisk >= 5 && this.resourceDisk <= limits.maxDisk;
   }
 
   get templateResourcesLabel(): string {

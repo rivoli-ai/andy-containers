@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Container, ContainerEvent, ContainerGitRepository, GitCloneMetadata, ConnectionInfo, ExecResult, CODE_ASSISTANT_TOOLS } from '../../../core/models';
+import { Container, ContainerStats, ContainerEvent, ContainerGitRepository, GitCloneMetadata, ConnectionInfo, ExecResult, CODE_ASSISTANT_TOOLS } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
 import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
@@ -210,19 +210,50 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
         <!-- Resources Card (only when Running) -->
         <div *ngIf="container.status === 'Running'" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
           <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Resources</h2>
+
+          <!-- Current usage from stats -->
+          <div *ngIf="currentStats" class="grid grid-cols-3 gap-3 mb-4 p-3 rounded-lg bg-surface-50 dark:bg-surface-900">
+            <div class="text-center">
+              <p class="text-xs text-surface-400">CPU Usage</p>
+              <p class="text-sm font-mono font-semibold"
+                [class.text-green-600]="currentStats.cpuPercent <= 50"
+                [class.text-yellow-600]="currentStats.cpuPercent > 50 && currentStats.cpuPercent <= 80"
+                [class.text-red-600]="currentStats.cpuPercent > 80">{{ currentStats.cpuPercent }}%</p>
+            </div>
+            <div class="text-center">
+              <p class="text-xs text-surface-400">Memory</p>
+              <p class="text-sm font-mono font-semibold"
+                [class.text-green-600]="currentStats.memoryPercent <= 50"
+                [class.text-yellow-600]="currentStats.memoryPercent > 50 && currentStats.memoryPercent <= 80"
+                [class.text-red-600]="currentStats.memoryPercent > 80">{{ formatBytes(currentStats.memoryUsageBytes) }} / {{ formatBytes(currentStats.memoryLimitBytes) }}</p>
+            </div>
+            <div class="text-center">
+              <p class="text-xs text-surface-400">Disk</p>
+              <p class="text-sm font-mono font-semibold" *ngIf="currentStats.diskUsageBytes > 0">{{ formatBytes(currentStats.diskUsageBytes) }}</p>
+              <p class="text-sm text-surface-400" *ngIf="currentStats.diskUsageBytes === 0">--</p>
+            </div>
+          </div>
+
+          <!-- Resize sliders -->
           <div class="space-y-3">
             <div>
-              <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">CPU Cores</label>
+              <div class="flex justify-between mb-1">
+                <label class="text-xs text-surface-500 dark:text-surface-400">CPU Cores</label>
+                <span class="text-xs text-surface-400">max {{ resizeLimits.maxCpu }}</span>
+              </div>
               <div class="flex items-center gap-2">
-                <input type="range" [(ngModel)]="resizeCpu" name="resizeCpu" min="1" max="8" step="1"
+                <input type="range" [(ngModel)]="resizeCpu" name="resizeCpu" min="1" [max]="resizeLimits.maxCpu" step="1"
                   class="flex-1 h-2 rounded-lg appearance-none bg-surface-200 dark:bg-surface-700 accent-primary-600" />
                 <span class="text-sm font-mono w-8 text-right text-surface-700 dark:text-surface-300">{{ resizeCpu }}</span>
               </div>
             </div>
             <div>
-              <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Memory (MB)</label>
+              <div class="flex justify-between mb-1">
+                <label class="text-xs text-surface-500 dark:text-surface-400">Memory (MB)</label>
+                <span class="text-xs text-surface-400">max {{ resizeLimits.maxMemory }}</span>
+              </div>
               <div class="flex items-center gap-2">
-                <input type="range" [(ngModel)]="resizeMemory" name="resizeMemory" min="512" max="16384" step="512"
+                <input type="range" [(ngModel)]="resizeMemory" name="resizeMemory" min="512" [max]="resizeLimits.maxMemory" step="512"
                   class="flex-1 h-2 rounded-lg appearance-none bg-surface-200 dark:bg-surface-700 accent-primary-600" />
                 <span class="text-sm font-mono w-16 text-right text-surface-700 dark:text-surface-300">{{ resizeMemory }}</span>
               </div>
@@ -388,6 +419,8 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   resizing = false;
   resizeError = '';
   resizeSuccess = false;
+  currentStats: ContainerStats | null = null;
+  private statsTimer: any = null;
   actionBusy = false;
   actionError = '';
   copiedField = '';
@@ -414,6 +447,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.clearPoll();
     this.clearEventPoll();
+    this.stopStatsPolling();
     if (this.copyTimeout) clearTimeout(this.copyTimeout);
   }
 
@@ -465,6 +499,9 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
 
         if (c.status === 'Running') {
           this.loadConnectionInfo();
+          this.startStatsPolling();
+        } else {
+          this.stopStatsPolling();
         }
 
         if (c.status === 'Pending' || c.status === 'Creating') {
@@ -502,6 +539,42 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+
+  get resizeLimits(): { maxCpu: number; maxMemory: number } {
+    const provider = this.container?.provider as any;
+    if (provider?.capabilities) {
+      try {
+        const caps = JSON.parse(provider.capabilities);
+        return { maxCpu: caps.maxCpuCores ?? 8, maxMemory: caps.maxMemoryMb ?? 16384 };
+      } catch {}
+    }
+    return { maxCpu: 8, maxMemory: 16384 };
+  }
+
+  formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0) + ' ' + units[i];
+  }
+
+  private startStatsPolling(): void {
+    this.stopStatsPolling();
+    if (this.container?.status !== 'Running') return;
+    this.fetchStats();
+    this.statsTimer = setInterval(() => this.fetchStats(), 5000);
+  }
+
+  private stopStatsPolling(): void {
+    if (this.statsTimer) { clearInterval(this.statsTimer); this.statsTimer = null; }
+  }
+
+  private fetchStats(): void {
+    this.api.getContainerStats(this.containerId).subscribe({
+      next: (s) => { this.currentStats = s; },
+      error: () => {},
+    });
   }
 
   applyResize(): void {
@@ -630,12 +703,6 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
     }
   }
 
-  formatBytes(bytes: number): string {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
-    return (bytes / 1073741824).toFixed(1) + ' GB';
-  }
 
   getCloneStatusClasses(status: string): string[] {
     const base = ['inline-flex', 'items-center', 'px-3', 'py-1', 'rounded-sm', 'text-sm', 'font-medium'];
