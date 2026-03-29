@@ -35,7 +35,13 @@ Development container management platform for the Andy ecosystem.
 - **Organization-Scoped RBAC** - JWT claims + RBAC API fallback for org-level permissions with caching
 - **OpenTelemetry** - Distributed tracing and metrics with OTLP or console exporters
 - **Web Terminal** - Browser-based terminal for executing commands in running containers
+- **CLI Tool** - Full-featured command-line tool with `auth login`, `list`, `connect`, `exec`, `stats`, and more
+- **Native Terminal Connect** - SSH into containers from your native terminal via `ssh://` URL scheme or CLI
+- **Live Resource Monitoring** - Real-time CPU, RAM, and disk usage with configurable polling intervals
+- **Dynamic Resource Resize** - Adjust CPU and memory on running containers without restart (Docker)
+- **Container Uptime** - Human-readable uptime display across all container views
 - **Post-Create Scripts** - Template-defined lifecycle scripts for multi-distro package installation and SSH setup
+- **Code Assistant Integration** - Auto-install Claude Code, Codex CLI, Aider, etc. (distro-agnostic: Alpine, Debian, RHEL)
 - **gRPC & REST APIs** - High-performance service-to-service and user-facing APIs
 - **MCP Support** - Model Context Protocol tools for AI assistants (Claude Desktop, Cursor)
 - **YAML-First Config** - All templates, providers, and dependencies defined in YAML files
@@ -115,6 +121,8 @@ Templates are organized hierarchically with visibility scoping:
 | `python-3.12-vscode` | Python 3.12 | VSCode | No |
 | `angular-18-vscode` | Node 20, Angular 18 | VSCode | No |
 | `andy-cli-dev` | .NET 8, Andy CLI | VSCode | No |
+| `dotnet-10-cli` | .NET 10 SDK | VSCode | No |
+| `dotnet-8-alpine` | .NET 8 SDK (Alpine Linux, minimal) | VSCode | No |
 | `agent-sandbox` | .NET 8, Python 3.12, git | None (headless) | No |
 | `agent-sandbox-ui` | .NET 8, Python 3.12, git | Zed + noVNC | Optional |
 
@@ -155,6 +163,9 @@ When upstream versions change, images are automatically rebuilt and a changelog 
 - `POST /api/containers/{id}/stop` - Stop container
 - `POST /api/containers/{id}/exec` - Execute command
 - `GET /api/containers/{id}/connection` - Get IDE/VNC/SSH endpoints
+- `GET /api/containers/{id}/stats` - Get real-time CPU, memory, and disk usage
+- `PUT /api/containers/{id}/resources` - Live resize CPU and memory
+- `GET /api/containers/{id}/events` - Get container lifecycle events
 - `GET /api/containers/{id}/cost-estimate` - Get hourly/monthly cost estimate
 - `DELETE /api/containers/{id}` - Destroy container
 - `GET /api/containers/{id}/repositories` - List cloned git repositories
@@ -204,31 +215,28 @@ When upstream versions change, images are automatically rebuilt and a changelog 
 ## CLI
 
 ```bash
+# Authentication (OAuth 2.0 Device Flow, like gh auth login)
+andy-containers auth login              # Opens browser for sign-in
+andy-containers auth login --token <t>  # Direct token (dev mode)
+andy-containers auth status             # Show current user and token expiry
+andy-containers auth logout
+
 # Container management
-andy-containers create --template full-stack --name my-dev
-andy-containers list
+andy-containers list                                    # Formatted table with status, uptime
+andy-containers create --template dotnet-8-alpine --name my-dev
+andy-containers info <id>                               # Detailed container view
 andy-containers start <id>
 andy-containers stop <id>
-andy-containers exec <id> "dotnet --version"
 andy-containers destroy <id>
+andy-containers exec <id> "dotnet --version"
+andy-containers stats <id>                              # CPU, RAM, disk with visual bars
+andy-containers connect <id>                            # SSH into container (native terminal)
 
-# Workspace management
-andy-containers workspace create --name my-project --git https://github.com/me/repo.git
+# Workspace management (stubs)
 andy-containers workspace list
 
-# Template catalog
+# Template catalog (stubs)
 andy-containers templates list
-andy-containers templates create -f my-template.yaml
-
-# Image management
-andy-containers images list --template full-stack
-andy-containers images build --template full-stack
-andy-containers images diff <from-id> <to-id>
-
-# YAML configuration
-andy-containers config sync ./config/
-andy-containers config validate ./config/
-andy-containers config diff ./config/
 ```
 
 ## Testing
@@ -273,4 +281,4 @@ Apache 2.0
 
 **Status:** Alpha
 **Version:** 0.1.0-alpha
-**Last Updated:** 2026-03-23
+**Last Updated:** 2026-03-28

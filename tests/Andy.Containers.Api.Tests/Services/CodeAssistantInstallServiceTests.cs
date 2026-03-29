@@ -113,4 +113,38 @@ public class CodeAssistantInstallServiceTests
         var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode });
         script.Should().Contain("npm install -g @anthropic-ai/claude-code");
     }
+
+    [Fact]
+    public void GenerateInstallScript_NpmTools_SupportsAlpine()
+    {
+        // The install script should contain apk as a fallback for Alpine Linux
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        foreach (var tool in npmTools)
+        {
+            var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
+            script.Should().Contain("apk", $"{tool} should support Alpine Linux (apk)");
+        }
+    }
+
+    [Fact]
+    public void GenerateInstallScript_NpmTools_SupportsDnf()
+    {
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        foreach (var tool in npmTools)
+        {
+            var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
+            script.Should().Contain("dnf", $"{tool} should support RHEL/Fedora (dnf)");
+        }
+    }
+
+    [Fact]
+    public void GenerateInstallScript_PipTools_SupportsAlpine()
+    {
+        var pipTools = new[] { CodeAssistantType.Aider, CodeAssistantType.QwenCoder };
+        foreach (var tool in pipTools)
+        {
+            var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
+            script.Should().Contain("apk", $"{tool} should support Alpine Linux (apk)");
+        }
+    }
 }

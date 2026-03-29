@@ -144,4 +144,21 @@ public class InfrastructureRoutingServiceTests : IDisposable
         candidates.Should().HaveCount(2);
         candidates.Should().AllSatisfy(c => c.MeetsGpuRequirement.Should().BeTrue());
     }
+
+    [Fact]
+    public async Task GetCandidateProviders_ExcludesUnreachableProviders()
+    {
+        var healthy = new InfrastructureProvider { Code = "healthy", Name = "Healthy", Type = ProviderType.Docker, IsEnabled = true, HealthStatus = ProviderHealth.Healthy };
+        var unreachable = new InfrastructureProvider { Code = "unreachable", Name = "Unreachable", Type = ProviderType.Docker, IsEnabled = true, HealthStatus = ProviderHealth.Unreachable };
+        var degraded = new InfrastructureProvider { Code = "degraded", Name = "Degraded", Type = ProviderType.Docker, IsEnabled = true, HealthStatus = ProviderHealth.Degraded };
+        _db.Providers.AddRange(healthy, unreachable, degraded);
+        await _db.SaveChangesAsync();
+
+        var candidates = await _service.GetCandidateProvidersAsync(CreateSpec(), CancellationToken.None);
+
+        candidates.Should().HaveCount(2);
+        candidates.Should().NotContain(c => c.Provider.Code == "unreachable");
+        candidates.Should().Contain(c => c.Provider.Code == "healthy");
+        candidates.Should().Contain(c => c.Provider.Code == "degraded");
+    }
 }
