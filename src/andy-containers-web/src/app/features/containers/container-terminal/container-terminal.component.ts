@@ -1,5 +1,6 @@
 import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
 import { Container } from '../../../core/models';
@@ -14,7 +15,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 @Component({
   selector: 'app-container-terminal',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
+  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
   template: `
     <div class="terminal-page" [class.fullscreen]="isFullscreen">
       <div class="terminal-header">
@@ -31,6 +32,10 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
         </div>
         <div class="flex items-center gap-2">
           <app-container-stats-bar [containerId]="containerId" [isRunning]="connected" variant="terminal-overlay"></app-container-stats-bar>
+          <span class="header-divider"></span>
+          <select [(ngModel)]="currentThemeName" (ngModelChange)="applyTheme($event)" class="theme-select" title="Terminal theme">
+            <option *ngFor="let t of themeNames" [value]="t">{{ t }}</option>
+          </select>
           <span class="header-divider"></span>
           <button (click)="decreaseFontSize()" class="header-btn" title="Decrease font (Ctrl+-)">A-</button>
           <span class="font-size-label">{{ fontSize }}px</span>
@@ -100,6 +105,13 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
     .header-divider {
       width: 1px; height: 20px; background: #30363d; margin: 0 4px;
     }
+    .theme-select {
+      font-size: 13px; color: #e6edf3; padding: 3px 8px; border-radius: 4px;
+      border: 1px solid #30363d; background: #161b22; cursor: pointer;
+      outline: none;
+    }
+    .theme-select:hover { border-color: #484f58; }
+    .theme-select:focus { border-color: #1f6feb; }
     .font-size-label {
       font-size: 12px; color: #8b949e; min-width: 36px; text-align: center;
     }
@@ -110,6 +122,64 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
   `],
 })
 export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDestroy {
+  static readonly THEMES: Record<string, any> = {
+    'GitHub Dark': {
+      background: '#0d1117', foreground: '#e6edf3', cursor: '#e6edf3', selectionBackground: '#264f78',
+      black: '#0d1117', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
+      blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39d353', white: '#e6edf3',
+      brightBlack: '#484f58', brightRed: '#ffa198', brightGreen: '#56d364', brightYellow: '#e3b341',
+      brightBlue: '#79c0ff', brightMagenta: '#d2a8ff', brightCyan: '#56d364', brightWhite: '#ffffff',
+    },
+    'Dracula': {
+      background: '#282a36', foreground: '#f8f8f2', cursor: '#f8f8f2', selectionBackground: '#44475a',
+      black: '#21222c', red: '#ff5555', green: '#50fa7b', yellow: '#f1fa8c',
+      blue: '#bd93f9', magenta: '#ff79c6', cyan: '#8be9fd', white: '#f8f8f2',
+      brightBlack: '#6272a4', brightRed: '#ff6e6e', brightGreen: '#69ff94', brightYellow: '#ffffa5',
+      brightBlue: '#d6acff', brightMagenta: '#ff92df', brightCyan: '#a4ffff', brightWhite: '#ffffff',
+    },
+    'Monokai': {
+      background: '#272822', foreground: '#f8f8f2', cursor: '#f8f8f2', selectionBackground: '#49483e',
+      black: '#272822', red: '#f92672', green: '#a6e22e', yellow: '#f4bf75',
+      blue: '#66d9ef', magenta: '#ae81ff', cyan: '#a1efe4', white: '#f8f8f2',
+      brightBlack: '#75715e', brightRed: '#f92672', brightGreen: '#a6e22e', brightYellow: '#f4bf75',
+      brightBlue: '#66d9ef', brightMagenta: '#ae81ff', brightCyan: '#a1efe4', brightWhite: '#f9f8f5',
+    },
+    'Solarized Dark': {
+      background: '#002b36', foreground: '#839496', cursor: '#839496', selectionBackground: '#073642',
+      black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900',
+      blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5',
+      brightBlack: '#586e75', brightRed: '#cb4b16', brightGreen: '#586e75', brightYellow: '#657b83',
+      brightBlue: '#839496', brightMagenta: '#6c71c4', brightCyan: '#93a1a1', brightWhite: '#fdf6e3',
+    },
+    'Nord': {
+      background: '#2e3440', foreground: '#d8dee9', cursor: '#d8dee9', selectionBackground: '#434c5e',
+      black: '#3b4252', red: '#bf616a', green: '#a3be8c', yellow: '#ebcb8b',
+      blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0',
+      brightBlack: '#4c566a', brightRed: '#bf616a', brightGreen: '#a3be8c', brightYellow: '#ebcb8b',
+      brightBlue: '#81a1c1', brightMagenta: '#b48ead', brightCyan: '#8fbcbb', brightWhite: '#eceff4',
+    },
+    'One Dark': {
+      background: '#282c34', foreground: '#abb2bf', cursor: '#528bff', selectionBackground: '#3e4451',
+      black: '#282c34', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+      blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
+      brightBlack: '#5c6370', brightRed: '#e06c75', brightGreen: '#98c379', brightYellow: '#e5c07b',
+      brightBlue: '#61afef', brightMagenta: '#c678dd', brightCyan: '#56b6c2', brightWhite: '#ffffff',
+    },
+    'Catppuccin Mocha': {
+      background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc', selectionBackground: '#45475a',
+      black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af',
+      blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
+      brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1', brightYellow: '#f9e2af',
+      brightBlue: '#89b4fa', brightMagenta: '#f5c2e7', brightCyan: '#94e2d5', brightWhite: '#a6adc8',
+    },
+    'Gruvbox Dark': {
+      background: '#282828', foreground: '#ebdbb2', cursor: '#ebdbb2', selectionBackground: '#504945',
+      black: '#282828', red: '#cc241d', green: '#98971a', yellow: '#d79921',
+      blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#a89984',
+      brightBlack: '#928374', brightRed: '#fb4934', brightGreen: '#b8bb26', brightYellow: '#fabd2f',
+      brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
+    },
+  };
   @ViewChild('terminalContainer') terminalContainer!: ElementRef<HTMLDivElement>;
 
   containerId = '';
@@ -119,6 +189,8 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
   error = '';
   isFullscreen = false;
   fontSize = 16;
+  currentThemeName = 'GitHub Dark';
+  themeNames = Object.keys(ContainerTerminalComponent.THEMES);
   private readonly minFontSize = 10;
   private readonly maxFontSize = 28;
   private readonly defaultFontSize = 16;
@@ -136,6 +208,7 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
 
   ngOnInit(): void {
     this.containerId = this.route.snapshot.paramMap.get('id')!;
+    this.currentThemeName = localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
     this.api.getContainer(this.containerId).subscribe({
       next: (c) => { this.container = c; },
     });
@@ -204,6 +277,18 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
     this.applyFontSize();
   }
 
+  applyTheme(name: string): void {
+    const theme = ContainerTerminalComponent.THEMES[name];
+    if (theme && this.terminal) {
+      this.terminal.options.theme = theme;
+      this.currentThemeName = name;
+      localStorage.setItem('andy.terminalTheme', name);
+      // Update page background to match
+      const host = this.terminalContainer?.nativeElement?.closest('.terminal-page') as HTMLElement;
+      if (host) host.style.background = theme.background;
+    }
+  }
+
   resetColors(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       // Send ANSI reset + clear: \ec resets terminal state, \e[0m resets colors,
@@ -222,33 +307,13 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
   private initTerminal(): void {
     this.fitAddon = new FitAddon();
 
+    const theme = ContainerTerminalComponent.THEMES[this.currentThemeName] || ContainerTerminalComponent.THEMES['GitHub Dark'];
     this.terminal = new Terminal({
       cursorBlink: true,
-      fontSize: 16,
+      fontSize: this.fontSize,
       lineHeight: 1.2,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
-      theme: {
-        background: '#0d1117',
-        foreground: '#e6edf3',
-        cursor: '#e6edf3',
-        selectionBackground: '#264f78',
-        black: '#0d1117',
-        red: '#ff7b72',
-        green: '#3fb950',
-        yellow: '#d29922',
-        blue: '#58a6ff',
-        magenta: '#bc8cff',
-        cyan: '#39d353',
-        white: '#e6edf3',
-        brightBlack: '#484f58',
-        brightRed: '#ffa198',
-        brightGreen: '#56d364',
-        brightYellow: '#e3b341',
-        brightBlue: '#79c0ff',
-        brightMagenta: '#d2a8ff',
-        brightCyan: '#56d364',
-        brightWhite: '#ffffff',
-      },
+      theme,
       scrollback: 10000,
       allowProposedApi: true,
     });
