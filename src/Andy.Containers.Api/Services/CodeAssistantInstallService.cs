@@ -45,7 +45,9 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
                 "echo 'Continue extension will be installed via IDE marketplace'",
 
             CodeAssistantType.OpenCode =>
-                $"{InstallNodeJs} && npm install -g open-code",
+                "ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/x86_64/') && " +
+                "curl -fsSL https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz | tar -xzf - -C /usr/local/bin opencode && " +
+                "chmod +x /usr/local/bin/opencode",
 
             CodeAssistantType.QwenCoder =>
                 $"{InstallPip} && (pip install qwen-coder-cli 2>/dev/null || pip3 install qwen-coder-cli)",

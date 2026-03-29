@@ -9,7 +9,7 @@ import { ContainersApiService } from '../../../core/services/api.service';
   imports: [CommonModule],
   template: `
     <div class="thumbnail-wrapper" [style.width.px]="width" [style.height.px]="height"
-      [class.clickable]="isRunning" (click)="openTerminal()">
+      [style.background]="themeBackground" [class.clickable]="isRunning" (click)="openTerminal()">
       <!-- Loading -->
       <div *ngIf="loading" class="thumbnail-placeholder">
         <div class="animate-pulse bg-surface-700 rounded w-full h-full"></div>
@@ -27,7 +27,7 @@ import { ContainersApiService } from '../../../core/services/api.service';
 
       <!-- Terminal preview -->
       <div *ngIf="!loading && ansiText" class="thumbnail-terminal" [title]="'Click to open terminal'">
-        <pre class="thumbnail-text">{{ ansiText }}</pre>
+        <pre class="thumbnail-text" [style.color]="themeForeground">{{ ansiText }}</pre>
       </div>
     </div>
   `,
@@ -89,6 +89,27 @@ export class ContainerThumbnailComponent implements OnInit, OnDestroy, OnChanges
   }
   get height(): number {
     return this.size === 'lg' ? 250 : this.size === 'md' ? 150 : 100;
+  }
+
+  private static readonly THEME_COLORS: Record<string, { bg: string; fg: string }> = {
+    'GitHub Dark': { bg: '#0d1117', fg: '#e6edf3' },
+    'Dracula': { bg: '#282a36', fg: '#f8f8f2' },
+    'Monokai': { bg: '#272822', fg: '#f8f8f2' },
+    'Solarized Dark': { bg: '#002b36', fg: '#839496' },
+    'Nord': { bg: '#2e3440', fg: '#d8dee9' },
+    'One Dark': { bg: '#282c34', fg: '#abb2bf' },
+    'Catppuccin Mocha': { bg: '#1e1e2e', fg: '#cdd6f4' },
+    'Gruvbox Dark': { bg: '#282828', fg: '#ebdbb2' },
+  };
+
+  get themeBackground(): string {
+    const name = localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
+    return ContainerThumbnailComponent.THEME_COLORS[name]?.bg || '#0d1117';
+  }
+
+  get themeForeground(): string {
+    const name = localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
+    return ContainerThumbnailComponent.THEME_COLORS[name]?.fg || '#e6edf3';
   }
 
   constructor(private api: ContainersApiService, private router: Router) {}
