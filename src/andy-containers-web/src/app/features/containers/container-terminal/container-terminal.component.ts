@@ -181,6 +181,49 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       brightBlack: '#928374', brightRed: '#fb4934', brightGreen: '#b8bb26', brightYellow: '#fabd2f',
       brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
     },
+    // Colorful dark themes
+    'Ocean Blue': {
+      background: '#0a1929', foreground: '#b2bac2', cursor: '#5090d3', selectionBackground: '#173a5e',
+      black: '#0a1929', red: '#ff6b6b', green: '#69db7c', yellow: '#ffd43b',
+      blue: '#5090d3', magenta: '#da77f2', cyan: '#66d9e8', white: '#b2bac2',
+      brightBlack: '#2c3e50', brightRed: '#ff8787', brightGreen: '#8ce99a', brightYellow: '#ffe066',
+      brightBlue: '#74c0fc', brightMagenta: '#e599f7', brightCyan: '#99e9f2', brightWhite: '#e7ebee',
+    },
+    'Deep Sea': {
+      background: '#001b2e', foreground: '#a8d8ea', cursor: '#00d2ff', selectionBackground: '#003459',
+      black: '#001b2e', red: '#ff6b6b', green: '#00e676', yellow: '#ffab40',
+      blue: '#00b0ff', magenta: '#e040fb', cyan: '#00e5ff', white: '#a8d8ea',
+      brightBlack: '#003459', brightRed: '#ff8a80', brightGreen: '#69f0ae', brightYellow: '#ffd740',
+      brightBlue: '#40c4ff', brightMagenta: '#ea80fc', brightCyan: '#18ffff', brightWhite: '#cce5f0',
+    },
+    'Forest': {
+      background: '#0b1a0b', foreground: '#b5d6b2', cursor: '#4caf50', selectionBackground: '#1b3a1b',
+      black: '#0b1a0b', red: '#e57373', green: '#81c784', yellow: '#fff176',
+      blue: '#64b5f6', magenta: '#ce93d8', cyan: '#4db6ac', white: '#b5d6b2',
+      brightBlack: '#2e5a2e', brightRed: '#ef9a9a', brightGreen: '#a5d6a7', brightYellow: '#fff59d',
+      brightBlue: '#90caf9', brightMagenta: '#e1bee7', brightCyan: '#80cbc4', brightWhite: '#d5ecd3',
+    },
+    'Aurora': {
+      background: '#0d0f1a', foreground: '#c8d6e5', cursor: '#48dbfb', selectionBackground: '#1a1e36',
+      black: '#0d0f1a', red: '#ee5a5a', green: '#0abde3', yellow: '#feca57',
+      blue: '#48dbfb', magenta: '#ff9ff3', cyan: '#00d2d3', white: '#c8d6e5',
+      brightBlack: '#222f3e', brightRed: '#ff6b6b', brightGreen: '#1dd1a1', brightYellow: '#f368e0',
+      brightBlue: '#54a0ff', brightMagenta: '#ff9ff3', brightCyan: '#00d2d3', brightWhite: '#dfe6e9',
+    },
+    'Midnight Purple': {
+      background: '#13001a', foreground: '#d4b8e0', cursor: '#bb86fc', selectionBackground: '#2d1040',
+      black: '#13001a', red: '#cf6679', green: '#03dac6', yellow: '#ffb74d',
+      blue: '#82b1ff', magenta: '#bb86fc', cyan: '#03dac6', white: '#d4b8e0',
+      brightBlack: '#382050', brightRed: '#f48fb1', brightGreen: '#64ffda', brightYellow: '#ffe082',
+      brightBlue: '#b3d4fc', brightMagenta: '#d4a0ff', brightCyan: '#64ffda', brightWhite: '#ede0f5',
+    },
+    'Cyberpunk': {
+      background: '#0a0a1a', foreground: '#0ff0fc', cursor: '#ff2a6d', selectionBackground: '#1a1a3e',
+      black: '#0a0a1a', red: '#ff2a6d', green: '#05d9e8', yellow: '#f9f002',
+      blue: '#01c1d4', magenta: '#ff6ac1', cyan: '#05d9e8', white: '#d1f7ff',
+      brightBlack: '#262640', brightRed: '#ff5c8a', brightGreen: '#45f0df', brightYellow: '#fff75e',
+      brightBlue: '#36d5e7', brightMagenta: '#ff85cf', brightCyan: '#45f0df', brightWhite: '#eafffe',
+    },
     // Light themes
     'Solarized Light': {
       background: '#fdf6e3', foreground: '#657b83', cursor: '#657b83', selectionBackground: '#eee8d5',
