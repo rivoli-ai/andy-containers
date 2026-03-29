@@ -1,11 +1,11 @@
 export const environment = {
   production: true,
-  apiUrl: 'https://YOUR_PRODUCTION_URL/api',
+  apiUrl: '/api',
   oidc: {
-    authority: 'https://YOUR_OIDC_AUTHORITY',
-    clientId: 'YOUR_CLIENT_ID',
-    redirectUrl: 'https://YOUR_PRODUCTION_URL/callback',
-    postLogoutRedirectUri: 'https://YOUR_PRODUCTION_URL',
-    scope: 'openid profile email roles',
+    authority: 'https://localhost:5001',
+    clientId: 'andy-containers-web',
+    redirectUrl: '/callback',
+    postLogoutRedirectUri: '/',
+    scope: 'openid profile email urn:andy-containers-api offline_access',
   },
 };
