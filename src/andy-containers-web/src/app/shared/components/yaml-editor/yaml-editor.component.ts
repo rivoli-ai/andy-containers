@@ -122,6 +122,7 @@ export class YamlEditorComponent implements AfterViewInit, OnDestroy, OnChanges 
       lintGutter(),
       yaml(),
       oneDark,
+      EditorView.lineWrapping,
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       keymap.of([
         ...defaultKeymap,
