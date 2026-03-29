@@ -218,6 +218,23 @@ public class ContainersController : ControllerBase
         return Ok(info);
     }
 
+    [HttpGet("{id:guid}/stats")]
+    public async Task<IActionResult> GetStats(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var container = await _containerService.GetContainerAsync(id, ct);
+            if (!CanAccess(container)) return Forbid();
+
+            var stats = await _containerService.GetContainerStatsAsync(id, ct);
+            return Ok(stats);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpGet("{id:guid}/events")]
     public async Task<IActionResult> GetEvents(Guid id, CancellationToken ct)
     {

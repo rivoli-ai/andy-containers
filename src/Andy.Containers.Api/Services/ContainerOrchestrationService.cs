@@ -431,6 +431,16 @@ public class ContainerOrchestrationService : IContainerService
         return await infra.GetConnectionInfoAsync(container.ExternalId, ct);
     }
 
+    public async Task<ContainerStats> GetContainerStatsAsync(Guid containerId, CancellationToken ct)
+    {
+        var container = await GetContainerAsync(containerId, ct);
+        if (container.ExternalId is null || container.Status != ContainerStatus.Running)
+            return new ContainerStats();
+
+        var infra = _providerFactory.GetProvider(container.Provider!);
+        return await infra.GetContainerStatsAsync(container.ExternalId, ct);
+    }
+
     private static ApiKeyProvider MapCodeAssistantToApiKeyProvider(CodeAssistantType tool) => tool switch
     {
         CodeAssistantType.ClaudeCode => ApiKeyProvider.Anthropic,

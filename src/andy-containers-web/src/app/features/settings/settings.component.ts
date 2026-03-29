@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ContainersApiService } from '../../core/services/api.service';
 import { ApiKeyCredential, ApiKeyChangeEntry, API_KEY_PROVIDERS } from '../../core/models';
+import { ContainerStatsBarComponent } from '../../shared/components/container-stats-bar/container-stats-bar.component';
 
 @Component({
   selector: 'app-settings',
@@ -144,6 +145,36 @@ import { ApiKeyCredential, ApiKeyChangeEntry, API_KEY_PROVIDERS } from '../../co
           <p class="text-xs mt-1">Add keys to automatically inject them into containers with AI code assistants.</p>
         </div>
       </div>
+
+      <!-- Monitoring Section -->
+      <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800">
+        <div class="p-5 border-b border-surface-200 dark:border-surface-700">
+          <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100">Monitoring</h2>
+          <p class="text-sm text-surface-500 dark:text-surface-400 mt-0.5">Configure container resource monitoring display.</p>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <label for="statsInterval" class="text-sm font-medium text-surface-700 dark:text-surface-300">Stats polling interval</label>
+              <p class="text-xs text-surface-400 mt-0.5">How often to refresh CPU, RAM, and disk usage (in seconds)</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <select id="statsInterval" [(ngModel)]="statsIntervalSeconds" (ngModelChange)="saveStatsInterval()" name="statsInterval"
+                class="rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-1.5 text-sm text-surface-900 dark:text-surface-100">
+                <option [ngValue]="1">1s</option>
+                <option [ngValue]="2">2s</option>
+                <option [ngValue]="3">3s</option>
+                <option [ngValue]="5">5s</option>
+                <option [ngValue]="10">10s</option>
+                <option [ngValue]="15">15s</option>
+                <option [ngValue]="30">30s</option>
+                <option [ngValue]="60">60s</option>
+              </select>
+              <span *ngIf="statsSaved" class="text-xs text-green-600 dark:text-green-400">Saved</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   `,
 })
@@ -165,10 +196,21 @@ export class SettingsComponent implements OnInit {
 
   confirmDeleteKey: ApiKeyCredential | null = null;
 
+  statsIntervalSeconds = ContainerStatsBarComponent.getPollingInterval() / 1000;
+  statsSaved = false;
+  private statsSavedTimer: any = null;
+
   constructor(private api: ContainersApiService) {}
 
   ngOnInit(): void {
     this.loadKeys();
+  }
+
+  saveStatsInterval(): void {
+    ContainerStatsBarComponent.setPollingInterval(this.statsIntervalSeconds * 1000);
+    this.statsSaved = true;
+    clearTimeout(this.statsSavedTimer);
+    this.statsSavedTimer = setTimeout(() => { this.statsSaved = false; }, 2000);
   }
 
   loadKeys(): void {

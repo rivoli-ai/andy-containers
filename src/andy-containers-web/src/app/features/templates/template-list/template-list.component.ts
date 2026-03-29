@@ -59,7 +59,8 @@ import { Template } from '../../../core/models';
           </div>
           <div *ngIf="t.tags && t.tags.length > 0" class="flex flex-wrap gap-1 mt-3">
             <span *ngFor="let tag of t.tags"
-              class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-100 text-surface-600 dark:bg-surface-700 dark:text-surface-300">
+              class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+              [ngClass]="getTagClasses(tag)">
               {{ tag }}
             </span>
           </div>
@@ -81,6 +82,36 @@ export class TemplateListComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadTemplates();
+  }
+
+  private static readonly TAG_COLORS: Record<string, string> = {
+    // Languages & SDKs
+    'dotnet':     'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+    'dotnet-10':  'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+    'python':     'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
+    'node':       'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+    'angular':    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+
+    // Distros
+    'alpine':     'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
+    'ubuntu':     'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+
+    // Categories
+    'full-stack': 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
+    'minimal':    'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
+    'ai':         'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+    'agent':      'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+    'devpilot':   'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+    'vnc':        'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
+    'ui':         'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
+    'andy-cli':   'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  };
+
+  private static readonly DEFAULT_TAG = 'bg-surface-100 text-surface-600 dark:bg-surface-700 dark:text-surface-300';
+
+  getTagClasses(tag: string): string {
+    return (this.constructor as typeof TemplateListComponent).TAG_COLORS[tag]
+      ?? (this.constructor as typeof TemplateListComponent).DEFAULT_TAG;
   }
 
   loadTemplates(): void {

@@ -4,11 +4,12 @@ import { RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
 import { Container } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
+import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
 
 @Component({
   selector: 'app-container-list',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent],
+  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent],
   template: `
     <div class="space-y-6">
       <!-- Header -->
@@ -51,6 +52,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Created</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Last Activity</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Host</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Resources</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Endpoints</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-surface-500 dark:text-surface-400 uppercase tracking-wider">Actions</th>
             </tr>
@@ -73,6 +75,10 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
               <td class="px-4 py-3 whitespace-nowrap text-sm text-surface-600 dark:text-surface-300">
                 <span *ngIf="c.hostIp" class="font-mono text-xs">{{ c.hostIp }}</span>
                 <span *ngIf="!c.hostIp" class="text-surface-400">--</span>
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                <app-container-stats-bar [containerId]="c.id" [isRunning]="c.status === 'Running'" variant="compact"></app-container-stats-bar>
+                <span *ngIf="c.status !== 'Running'" class="text-xs text-surface-400">--</span>
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-sm">
                 <a *ngIf="c.ideEndpoint" [href]="c.ideEndpoint" target="_blank" class="text-primary-600 dark:text-primary-400 hover:underline mr-2">IDE</a>
@@ -100,7 +106,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
               </td>
             </tr>
             <tr *ngIf="containers.length === 0">
-              <td colspan="8" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">No containers found</td>
+              <td colspan="9" class="px-4 py-8 text-center text-surface-400 dark:text-surface-500">No containers found</td>
             </tr>
           </tbody>
         </table>

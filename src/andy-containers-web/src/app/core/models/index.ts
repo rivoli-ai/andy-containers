@@ -117,6 +117,17 @@ export interface ProviderHealthResult {
   error?: string;
 }
 
+export interface ContainerStats {
+  cpuPercent: number;
+  memoryUsageBytes: number;
+  memoryLimitBytes: number;
+  memoryPercent: number;
+  diskUsageBytes: number;
+  diskLimitBytes: number;
+  diskPercent: number;
+  timestamp: string;
+}
+
 export interface CostEstimate {
   hourlyCostUsd: number;
   monthlyCostUsd: number;

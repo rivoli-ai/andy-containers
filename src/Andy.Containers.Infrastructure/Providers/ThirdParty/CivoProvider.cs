@@ -176,6 +176,11 @@ public class CivoProvider : IInfrastructureProvider
         };
     }
 
+    public Task<ContainerStats> GetContainerStatsAsync(string externalId, CancellationToken ct)
+    {
+        return Task.FromResult(new ContainerStats());
+    }
+
     public Task<ExecResult> ExecAsync(string externalId, string command, CancellationToken ct)
     {
         return ExecAsync(externalId, command, TimeSpan.FromSeconds(30), ct);

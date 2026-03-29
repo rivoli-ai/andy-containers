@@ -185,6 +185,11 @@ public class AppleContainerProvider : IInfrastructureProvider
         };
     }
 
+    public Task<ContainerStats> GetContainerStatsAsync(string externalId, CancellationToken ct)
+    {
+        return Task.FromResult(new ContainerStats());
+    }
+
     public async Task<ExecResult> ExecAsync(string externalId, string command, CancellationToken ct)
     {
         return await ExecAsync(externalId, command, TimeSpan.FromSeconds(30), ct);

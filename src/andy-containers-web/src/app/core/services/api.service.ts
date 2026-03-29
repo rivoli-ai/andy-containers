@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import {
   Container,
+  ContainerStats,
   Template,
   TemplateDefinition,
   ValidationResult,
@@ -64,6 +65,10 @@ export class ContainersApiService {
 
   getConnectionInfo(id: string): Observable<ConnectionInfo> {
     return this.http.get<ConnectionInfo>(`${this.baseUrl}/containers/${id}/connection`);
+  }
+
+  getContainerStats(id: string): Observable<ContainerStats> {
+    return this.http.get<ContainerStats>(`${this.baseUrl}/containers/${id}/stats`);
   }
 
   getContainerEvents(id: string): Observable<ContainerEvent[]> {

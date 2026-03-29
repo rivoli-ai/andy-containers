@@ -265,6 +265,54 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
         };
     }
 
+    public async Task<ContainerStats> GetContainerStatsAsync(string externalId, CancellationToken ct)
+    {
+        var inspect = await _client.Containers.InspectContainerAsync(externalId, ct);
+
+        // Get a single stats snapshot (stream: false)
+        var statsResponse = new ContainerStatsResponse();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(5));
+
+        await _client.Containers.GetContainerStatsAsync(externalId,
+            new ContainerStatsParameters { Stream = false },
+            new Progress<ContainerStatsResponse>(s => statsResponse = s),
+            cts.Token);
+
+        // CPU %
+        double cpuPercent = 0;
+        if (statsResponse.CPUStats?.CPUUsage != null && statsResponse.PreCPUStats?.CPUUsage != null)
+        {
+            var cpuDelta = (double)(statsResponse.CPUStats.CPUUsage.TotalUsage - statsResponse.PreCPUStats.CPUUsage.TotalUsage);
+            var systemDelta = (double)(statsResponse.CPUStats.SystemUsage - statsResponse.PreCPUStats.SystemUsage);
+            var numCpus = statsResponse.CPUStats.OnlineCPUs > 0
+                ? statsResponse.CPUStats.OnlineCPUs
+                : (uint)(statsResponse.CPUStats.CPUUsage.PercpuUsage?.Count ?? 1);
+            if (systemDelta > 0 && cpuDelta >= 0)
+                cpuPercent = cpuDelta / systemDelta * numCpus * 100.0;
+        }
+
+        // Memory
+        long memUsage = (long)(statsResponse.MemoryStats?.Usage ?? 0);
+        long memLimit = (long)(statsResponse.MemoryStats?.Limit ?? 0);
+        double memPercent = memLimit > 0 ? (double)memUsage / memLimit * 100.0 : 0;
+
+        // Disk: use container's SizeRootFs from inspect if available
+        long diskUsage = inspect.SizeRootFs ?? 0;
+        long diskLimit = 0;
+
+        return new ContainerStats
+        {
+            CpuPercent = Math.Round(cpuPercent, 1),
+            MemoryUsageBytes = memUsage,
+            MemoryLimitBytes = memLimit,
+            MemoryPercent = Math.Round(memPercent, 1),
+            DiskUsageBytes = diskUsage,
+            DiskLimitBytes = diskLimit,
+            DiskPercent = diskLimit > 0 ? Math.Round((double)diskUsage / diskLimit * 100.0, 1) : 0,
+        };
+    }
+
     public async Task<ExecResult> ExecAsync(string externalId, string command, CancellationToken ct)
     {
         return await ExecAsync(externalId, command, TimeSpan.FromSeconds(30), ct);

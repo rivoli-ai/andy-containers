@@ -27,6 +27,9 @@ public interface IInfrastructureProvider
     // Connectivity
     Task<ConnectionInfo> GetConnectionInfoAsync(string externalId, CancellationToken ct = default);
 
+    // Monitoring
+    Task<ContainerStats> GetContainerStatsAsync(string externalId, CancellationToken ct = default);
+
     // Execution
     Task<ExecResult> ExecAsync(string externalId, string command, CancellationToken ct = default);
     Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct = default);
@@ -127,4 +130,16 @@ public class ExecResult
     public int ExitCode { get; set; }
     public string? StdOut { get; set; }
     public string? StdErr { get; set; }
+}
+
+public class ContainerStats
+{
+    public double CpuPercent { get; set; }
+    public long MemoryUsageBytes { get; set; }
+    public long MemoryLimitBytes { get; set; }
+    public double MemoryPercent { get; set; }
+    public long DiskUsageBytes { get; set; }
+    public long DiskLimitBytes { get; set; }
+    public double DiskPercent { get; set; }
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 }

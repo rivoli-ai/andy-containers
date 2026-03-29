@@ -4,6 +4,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
 import { Container } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
+import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -12,7 +13,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 @Component({
   selector: 'app-container-terminal',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent],
+  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent],
   template: `
     <div class="terminal-page" [class.fullscreen]="isFullscreen">
       <div class="terminal-header">
@@ -27,6 +28,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
           <span *ngIf="!connected && !connecting && error" class="badge-error">Disconnected</span>
         </div>
         <div class="flex items-center gap-2">
+          <app-container-stats-bar [containerId]="containerId" [isRunning]="connected" variant="terminal-overlay"></app-container-stats-bar>
+          <span class="header-divider"></span>
           <button (click)="decreaseFontSize()" class="header-btn" title="Decrease font (Ctrl+-)">A-</button>
           <span class="font-size-label">{{ fontSize }}px</span>
           <button (click)="increaseFontSize()" class="header-btn" title="Increase font (Ctrl+=)">A+</button>
@@ -87,6 +90,9 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
     }
     .header-btn:hover { color: #e6edf3; border-color: #484f58; }
     .header-btn.active { color: #58a6ff; border-color: #1f6feb; background: rgba(31,111,235,0.1); }
+    .header-divider {
+      width: 1px; height: 20px; background: #30363d; margin: 0 4px;
+    }
     .font-size-label {
       font-size: 12px; color: #8b949e; min-width: 36px; text-align: center;
     }
