@@ -323,7 +323,6 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       this.terminal.options.theme = theme;
       this.currentThemeName = name;
       localStorage.setItem(`andy.terminalTheme.${this.containerId}`, name);
-      localStorage.setItem('andy.terminalTheme', name); // also save as default for new containers
       // Update page background to match
       const host = this.terminalContainer?.nativeElement?.closest('.terminal-page') as HTMLElement;
       if (host) host.style.background = theme.background;

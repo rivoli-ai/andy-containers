@@ -107,12 +107,14 @@ export class ContainerThumbnailComponent implements OnInit, OnDestroy, OnChanges
   };
 
   get themeBackground(): string {
-    const name = localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
+    const name = localStorage.getItem(`andy.terminalTheme.${this.containerId}`)
+      || localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
     return ContainerThumbnailComponent.THEME_COLORS[name]?.bg || '#0d1117';
   }
 
   get themeForeground(): string {
-    const name = localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
+    const name = localStorage.getItem(`andy.terminalTheme.${this.containerId}`)
+      || localStorage.getItem('andy.terminalTheme') || 'GitHub Dark';
     return ContainerThumbnailComponent.THEME_COLORS[name]?.fg || '#e6edf3';
   }
 
