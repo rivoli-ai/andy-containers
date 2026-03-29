@@ -100,6 +100,10 @@ export class ContainerThumbnailComponent implements OnInit, OnDestroy, OnChanges
     'One Dark': { bg: '#282c34', fg: '#abb2bf' },
     'Catppuccin Mocha': { bg: '#1e1e2e', fg: '#cdd6f4' },
     'Gruvbox Dark': { bg: '#282828', fg: '#ebdbb2' },
+    'Solarized Light': { bg: '#fdf6e3', fg: '#657b83' },
+    'GitHub Light': { bg: '#ffffff', fg: '#24292f' },
+    'Catppuccin Latte': { bg: '#eff1f5', fg: '#4c4f69' },
+    'One Light': { bg: '#fafafa', fg: '#383a42' },
   };
 
   get themeBackground(): string {
