@@ -59,7 +59,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
         <!-- Overview Card -->
         <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
           <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Overview</h2>
-          <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 items-baseline">
+          <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 items-baseline">
             <dt class="text-sm text-surface-500 dark:text-surface-400">Name</dt>
             <dd class="text-sm font-medium text-surface-900 dark:text-surface-100 break-words">{{ container.name }}</dd>
 
@@ -78,7 +78,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
             <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.ownerId }}</dd>
 
             <dt class="text-sm text-surface-500 dark:text-surface-400">Template</dt>
-            <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.template?.name || container.templateId | slice:0:8 }}</dd>
+            <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.template?.name || container.templateId | slice:0:8 }} <span *ngIf="container.template?.code" class="text-xs font-mono text-surface-400">({{ container.template?.code }})</span></dd>
 
             <ng-container *ngIf="container.template?.baseImage">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Base Image</dt>
@@ -86,7 +86,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
             </ng-container>
 
             <dt class="text-sm text-surface-500 dark:text-surface-400">Provider</dt>
-            <dd class="text-sm text-surface-900 dark:text-surface-100">{{ container.provider?.name || container.providerId | slice:0:8 }}</dd>
+            <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.provider?.name || container.providerId | slice:0:8 }}</dd>
 
             <dt class="text-sm text-surface-500 dark:text-surface-400">Created</dt>
             <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.createdAt | date:'medium' }}</dd>
