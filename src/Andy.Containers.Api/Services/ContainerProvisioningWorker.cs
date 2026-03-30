@@ -158,9 +158,15 @@ public class ContainerProvisioningWorker : BackgroundService
                     // Set env vars via export commands — values are not logged
                     var exportCommands = string.Join(" && ",
                         job.EnvironmentVariables.Select(kv => $"export {kv.Key}='{kv.Value.Replace("'", "'\\''")}'"));
-                    // Write to /etc/environment for persistence across sessions
+                    // Write to /etc/environment, .bashrc, and .profile for persistence across all session types
                     var persistCmd = string.Join(" && ",
-                        job.EnvironmentVariables.Select(kv => $"echo '{kv.Key}={kv.Value.Replace("'", "'\\''")}'>> /etc/environment"));
+                        job.EnvironmentVariables.Select(kv =>
+                        {
+                            var escaped = kv.Value.Replace("'", "'\\''");
+                            return $"echo '{kv.Key}={escaped}' >> /etc/environment && " +
+                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.bashrc && " +
+                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.profile";
+                        }));
                     await containerService.ExecAsync(job.ContainerId, $"{exportCommands} && {persistCmd}", stoppingToken);
                     _logger.LogInformation("Injected {Count} environment variable(s) into container {ContainerId}",
                         job.EnvironmentVariables.Count, job.ContainerId);

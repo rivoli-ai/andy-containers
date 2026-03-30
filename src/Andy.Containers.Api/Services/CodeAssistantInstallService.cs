@@ -48,8 +48,14 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
                 "ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/x86_64/') && " +
                 "curl -fsSL https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz | tar -xzf - -C /usr/local/bin opencode && " +
                 "chmod +x /usr/local/bin/opencode && " +
-                // Create .opencode.json config with OpenAI provider
-                "mkdir -p /root && printf '{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\"}},\"agents\":{\"coder\":{\"model\":\"gpt-4o\",\"maxTokens\":5000},\"task\":{\"model\":\"gpt-4o\",\"maxTokens\":5000},\"title\":{\"model\":\"gpt-4o\",\"maxTokens\":80}}}' > /root/.opencode.json",
+                // Create a wrapper that writes config before launching (OpenCode overwrites on first run)
+                "mv /usr/local/bin/opencode /usr/local/bin/opencode-bin && " +
+                "printf '#!/bin/sh\\n" +
+                "CONFIG=\"$HOME/.opencode.json\"\\n" +
+                "MODEL=\"${LLM_MODEL:-gpt-4o}\"\\n" +
+                "printf \\'\\'{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\"}},\"agents\":{\"coder\":{\"model\":\"%s\",\"maxTokens\":5000},\"task\":{\"model\":\"%s\",\"maxTokens\":5000},\"title\":{\"model\":\"%s\",\"maxTokens\":80}}}\\'\\'  \"$MODEL\" \"$MODEL\" \"$MODEL\" > \"$CONFIG\"\\n" +
+                "exec /usr/local/bin/opencode-bin \"$@\"\\n' > /usr/local/bin/opencode && " +
+                "chmod +x /usr/local/bin/opencode",
 
             CodeAssistantType.QwenCoder =>
                 $"{InstallPip} && (pip install qwen-coder-cli 2>/dev/null || pip3 install qwen-coder-cli)",
