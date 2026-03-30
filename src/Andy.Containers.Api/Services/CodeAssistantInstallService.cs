@@ -47,7 +47,9 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
             CodeAssistantType.OpenCode =>
                 "ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/x86_64/') && " +
                 "curl -fsSL https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz | tar -xzf - -C /usr/local/bin opencode && " +
-                "chmod +x /usr/local/bin/opencode",
+                "chmod +x /usr/local/bin/opencode && " +
+                // Create default config with OpenAI provider using env vars
+                "mkdir -p /root && printf '{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\",\"model\":\"gpt-4o\"}},\"agent\":{\"default\":\"coder\",\"coder\":{\"provider\":\"openai\",\"model\":\"gpt-4o\"}}}' > /root/opencode.json",
 
             CodeAssistantType.QwenCoder =>
                 $"{InstallPip} && (pip install qwen-coder-cli 2>/dev/null || pip3 install qwen-coder-cli)",
