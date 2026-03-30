@@ -21,4 +21,6 @@ public class CodeAssistantConfig
     public string? ApiKeyEnvVar { get; set; }
     public string? ApiBaseUrl { get; set; }
     public string? ApiBaseUrlEnvVar { get; set; }
+    public string? ModelName { get; set; }
+    public string? ModelEnvVar { get; set; }
 }

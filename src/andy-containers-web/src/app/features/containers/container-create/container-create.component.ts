@@ -120,6 +120,23 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
             Base URL: <code class="font-mono bg-surface-100 dark:bg-surface-800 px-1 rounded">{{ getBaseUrlForTool(selectedCodeAssistant) }}</code>
             will be injected as <code class="font-mono bg-surface-100 dark:bg-surface-800 px-1 rounded">OPENAI_API_BASE</code>
           </div>
+
+          <!-- Model selection (when supported) -->
+          <div *ngIf="selectedCodeAssistant && getToolSupportsModel(selectedCodeAssistant)" class="mt-2">
+            <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Model</label>
+            <input type="text" [(ngModel)]="selectedModel" name="codeAssistantModel"
+              [placeholder]="getToolDefaultModel(selectedCodeAssistant)"
+              class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 font-mono" />
+            <p class="text-xs text-surface-400 mt-0.5">Injected as <code class="font-mono bg-surface-100 dark:bg-surface-800 px-1 rounded">{{ getToolModelEnvVar(selectedCodeAssistant) }}</code></p>
+          </div>
+
+          <!-- Base URL override (when supported) -->
+          <div *ngIf="selectedCodeAssistant && getToolSupportsBaseUrl(selectedCodeAssistant)" class="mt-2">
+            <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Base URL <span class="text-surface-400">(optional)</span></label>
+            <input type="text" [(ngModel)]="selectedBaseUrl" name="codeAssistantBaseUrl"
+              placeholder="https://api.openai.com/v1"
+              class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 font-mono" />
+          </div>
         </div>
         <div *ngIf="selectedCodeAssistant" class="flex items-center gap-2">
           <input id="excludeTemplateAssistant" type="checkbox" [(ngModel)]="excludeTemplateCodeAssistant" name="excludeTemplateAssistant"
@@ -197,6 +214,8 @@ export class ContainerCreateComponent implements OnInit {
   selectedWorkspaceId = '';
   repos: { url: string; branch: string; targetPath: string; credentialRef: string }[] = [];
   selectedCodeAssistant = '';
+  selectedModel = '';
+  selectedBaseUrl = '';
   excludeTemplateCodeAssistant = false;
   templateCodeAssistant: CodeAssistantConfig | null = null;
   codeAssistantTools = CODE_ASSISTANT_TOOLS;
@@ -301,6 +320,8 @@ export class ContainerCreateComponent implements OnInit {
   onCodeAssistantChange(): void {
     if (this.selectedCodeAssistant) {
       this.excludeTemplateCodeAssistant = true;
+      this.selectedModel = '';
+      this.selectedBaseUrl = '';
     }
   }
 
@@ -325,6 +346,22 @@ export class ContainerCreateComponent implements OnInit {
     const provider = this.getToolProvider(tool);
     const key = this.apiKeys.find(k => k.provider === provider);
     return key?.baseUrl || '';
+  }
+
+  getToolSupportsModel(tool: string): boolean {
+    return (this.codeAssistantTools.find(t => t.value === tool) as any)?.supportsModel ?? false;
+  }
+
+  getToolSupportsBaseUrl(tool: string): boolean {
+    return (this.codeAssistantTools.find(t => t.value === tool) as any)?.supportsBaseUrl ?? false;
+  }
+
+  getToolDefaultModel(tool: string): string {
+    return (this.codeAssistantTools.find(t => t.value === tool) as any)?.defaultModel ?? 'gpt-4o';
+  }
+
+  getToolModelEnvVar(tool: string): string {
+    return (this.codeAssistantTools.find(t => t.value === tool) as any)?.modelEnvVar ?? 'LLM_MODEL';
   }
 
   updateTemplateCodeAssistant(): void {
@@ -405,6 +442,12 @@ export class ContainerCreateComponent implements OnInit {
         autoStart: false,
         apiKeyEnvVar: tool?.apiKeyEnv,
       };
+      if (this.selectedModel) {
+        request.codeAssistant.modelName = this.selectedModel;
+      }
+      if (this.selectedBaseUrl) {
+        request.codeAssistant.apiBaseUrl = this.selectedBaseUrl;
+      }
       request.excludeTemplateCodeAssistant = this.excludeTemplateCodeAssistant;
     }
 

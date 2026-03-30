@@ -36,9 +36,25 @@ public sealed class ContainersClient
         return (await r.Content.ReadFromJsonAsync<ContainerDto>(_json, ct))!;
     }
 
-    public async Task<ContainerDto> CreateContainerAsync(string name, string templateCode, string? providerCode = null, CancellationToken ct = default)
+    public async Task<ContainerDto> CreateContainerAsync(string name, string templateCode,
+        string? providerCode = null, string? codeAssistant = null,
+        string? model = null, string? baseUrl = null, CancellationToken ct = default)
     {
-        var r = await _http.PostAsJsonAsync("api/containers", new { name, templateCode, providerCode, source = "Cli" }, _json, ct);
+        var payload = new Dictionary<string, object?>
+        {
+            ["name"] = name,
+            ["templateCode"] = templateCode,
+            ["source"] = "Cli"
+        };
+        if (providerCode is not null) payload["providerCode"] = providerCode;
+        if (codeAssistant is not null)
+        {
+            var assistant = new Dictionary<string, object?> { ["tool"] = codeAssistant };
+            if (model is not null) assistant["modelName"] = model;
+            if (baseUrl is not null) assistant["apiBaseUrl"] = baseUrl;
+            payload["codeAssistant"] = assistant;
+        }
+        var r = await _http.PostAsJsonAsync("api/containers", payload, _json, ct);
         await EnsureSuccessAsync(r, ct);
         return (await r.Content.ReadFromJsonAsync<ContainerDto>(_json, ct))!;
     }

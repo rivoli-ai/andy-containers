@@ -48,13 +48,20 @@ export interface CodeAssistantConfig {
 }
 
 export const CODE_ASSISTANT_TOOLS = [
-  { value: 'ClaudeCode', label: 'Claude Code', apiKeyEnv: 'ANTHROPIC_API_KEY', apiKeyProvider: 'Anthropic' },
-  { value: 'CodexCli', label: 'Codex CLI', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI' },
-  { value: 'Aider', label: 'Aider', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI' },
-  { value: 'Continue', label: 'Continue', apiKeyEnv: 'CONTINUE_API_KEY', apiKeyProvider: 'Custom' },
-  { value: 'OpenCode', label: 'Open Code', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI' },
-  { value: 'QwenCoder', label: 'Qwen Coder', apiKeyEnv: 'DASHSCOPE_API_KEY', apiKeyProvider: 'Dashscope' },
-  { value: 'GeminiCode', label: 'Gemini Code', apiKeyEnv: 'GOOGLE_API_KEY', apiKeyProvider: 'Google' },
+  { value: 'ClaudeCode', label: 'Claude Code', apiKeyEnv: 'ANTHROPIC_API_KEY', apiKeyProvider: 'Anthropic',
+    supportsModel: false, supportsBaseUrl: false },
+  { value: 'CodexCli', label: 'Codex CLI', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI',
+    supportsModel: true, supportsBaseUrl: true, modelEnvVar: 'OPENAI_MODEL', defaultModel: 'gpt-4o' },
+  { value: 'Aider', label: 'Aider', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI',
+    supportsModel: true, supportsBaseUrl: true, modelEnvVar: 'AIDER_MODEL', defaultModel: 'gpt-4o' },
+  { value: 'Continue', label: 'Continue', apiKeyEnv: 'CONTINUE_API_KEY', apiKeyProvider: 'Custom',
+    supportsModel: false, supportsBaseUrl: false },
+  { value: 'OpenCode', label: 'Open Code', apiKeyEnv: 'OPENAI_API_KEY', apiKeyProvider: 'OpenAI',
+    supportsModel: true, supportsBaseUrl: true, modelEnvVar: 'LLM_MODEL', defaultModel: 'gpt-4o' },
+  { value: 'QwenCoder', label: 'Qwen Coder', apiKeyEnv: 'DASHSCOPE_API_KEY', apiKeyProvider: 'Dashscope',
+    supportsModel: true, supportsBaseUrl: true, modelEnvVar: 'LLM_MODEL', defaultModel: 'qwen-coder-turbo' },
+  { value: 'GeminiCode', label: 'Gemini Code', apiKeyEnv: 'GOOGLE_API_KEY', apiKeyProvider: 'Google',
+    supportsModel: true, supportsBaseUrl: true, modelEnvVar: 'LLM_MODEL', defaultModel: 'gemini-2.0-flash' },
 ] as const;
 
 export interface Provider {

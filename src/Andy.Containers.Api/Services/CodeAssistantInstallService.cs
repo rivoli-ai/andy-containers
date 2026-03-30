@@ -76,4 +76,12 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
     };
 
     public string GetDefaultBaseUrlEnvVar(CodeAssistantType tool) => "OPENAI_API_BASE";
+
+    public string GetDefaultModelEnvVar(CodeAssistantType tool) => tool switch
+    {
+        CodeAssistantType.Aider => "AIDER_MODEL",
+        CodeAssistantType.OpenCode => "LLM_MODEL",
+        CodeAssistantType.CodexCli => "OPENAI_MODEL",
+        _ => "LLM_MODEL"
+    };
 }

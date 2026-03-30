@@ -107,10 +107,16 @@ public static class ContainerCommands
         var nameOpt = new Option<string>("--name", "Container name") { IsRequired = true };
         var templateOpt = new Option<string>("--template", "Template code") { IsRequired = true };
         var providerOpt = new Option<string?>("--provider", "Provider code");
+        var assistantOpt = new Option<string?>("--code-assistant", "Code assistant (ClaudeCode, Aider, OpenCode, etc.)");
+        var modelOpt = new Option<string?>("--model", "LLM model name (e.g., gpt-4o)");
+        var baseUrlOpt = new Option<string?>("--base-url", "API base URL");
         cmd.AddOption(nameOpt);
         cmd.AddOption(templateOpt);
         cmd.AddOption(providerOpt);
-        cmd.SetHandler(async (string name, string template, string? provider) =>
+        cmd.AddOption(assistantOpt);
+        cmd.AddOption(modelOpt);
+        cmd.AddOption(baseUrlOpt);
+        cmd.SetHandler(async (string name, string template, string? provider, string? codeAssistant, string? model, string? baseUrl) =>
         {
             var client = ClientFactory.Create();
             ContainersClient.ContainerDto container = null!;
@@ -118,13 +124,13 @@ public static class ContainerCommands
                 .Spinner(Spinner.Known.Dots)
                 .StartAsync($"Creating container [bold]{Markup.Escape(name)}[/]...", async _ =>
                 {
-                    container = await client.CreateContainerAsync(name, template, provider);
+                    container = await client.CreateContainerAsync(name, template, provider, codeAssistant, model, baseUrl);
                 });
             AnsiConsole.MarkupLine($"[green]Container created.[/]");
             AnsiConsole.MarkupLine($"  ID:     [bold]{container.Id}[/]");
             AnsiConsole.MarkupLine($"  Name:   [bold]{Markup.Escape(container.Name)}[/]");
             AnsiConsole.MarkupLine($"  Status: {container.Status}");
-        }, nameOpt, templateOpt, providerOpt);
+        }, nameOpt, templateOpt, providerOpt, assistantOpt, modelOpt, baseUrlOpt);
         return cmd;
     }
 

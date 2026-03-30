@@ -258,11 +258,13 @@ public class ContainerOrchestrationService : IContainerService
                     _logger.LogInformation("Injecting base URL {Url} as {EnvVar}", baseUrl, baseUrlEnv);
                 }
 
-                // Inject model name from credential
-                if (!string.IsNullOrEmpty(resolvedCred.ModelName))
+                // Inject model name from credential (code assistant config overrides credential)
+                var modelName = codeAssistant.ModelName ?? resolvedCred.ModelName;
+                if (!string.IsNullOrEmpty(modelName))
                 {
-                    envVars["LLM_MODEL"] = resolvedCred.ModelName;
-                    _logger.LogInformation("Injecting model {Model} as LLM_MODEL", resolvedCred.ModelName);
+                    var modelEnv = codeAssistant.ModelEnvVar ?? GetDefaultModelEnvVar(codeAssistant.Tool);
+                    envVars[modelEnv] = modelName;
+                    _logger.LogInformation("Injecting model {Model} as {EnvVar}", modelName, modelEnv);
                 }
             }
             else
@@ -276,6 +278,14 @@ public class ContainerOrchestrationService : IContainerService
                     var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
                     envVars ??= new Dictionary<string, string>();
                     envVars[baseUrlEnv] = codeAssistant.ApiBaseUrl;
+                }
+
+                // Inject LLM model name if configured
+                if (!string.IsNullOrEmpty(codeAssistant.ModelName))
+                {
+                    var modelEnv = codeAssistant.ModelEnvVar ?? GetDefaultModelEnvVar(codeAssistant.Tool);
+                    envVars ??= new Dictionary<string, string>();
+                    envVars[modelEnv] = codeAssistant.ModelName;
                 }
             }
         }
@@ -494,6 +504,14 @@ public class ContainerOrchestrationService : IContainerService
         CodeAssistantType.QwenCoder => ApiKeyProvider.Dashscope,
         CodeAssistantType.GeminiCode => ApiKeyProvider.Google,
         _ => ApiKeyProvider.OpenAiCompatible
+    };
+
+    private static string GetDefaultModelEnvVar(CodeAssistantType tool) => tool switch
+    {
+        CodeAssistantType.Aider => "AIDER_MODEL",
+        CodeAssistantType.OpenCode => "LLM_MODEL",
+        CodeAssistantType.CodexCli => "OPENAI_MODEL",
+        _ => "LLM_MODEL"
     };
 
     private static string GetDefaultEnvVar(ApiKeyProvider provider) => provider switch

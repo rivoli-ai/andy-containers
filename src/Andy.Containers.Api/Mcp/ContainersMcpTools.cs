@@ -405,6 +405,42 @@ public class ContainersMcpTools
 
         return new McpImageInfo(image.Id, image.Tag, image.ContentHash, image.BuildNumber, image.BuildStatus.ToString(), image.BuiltOffline, image.Changelog ?? "", image.CreatedAt);
     }
+    [McpServerTool, Description("Create a new development container")]
+    public async Task<string> CreateContainer(
+        [Description("Container name")] string name,
+        [Description("Template code (e.g., dotnet-8-alpine, full-stack)")] string templateCode,
+        [Description("Provider code (optional, auto-selects if omitted)")] string? providerCode = null,
+        [Description("Code assistant tool (ClaudeCode, Aider, OpenCode, CodexCli, etc.)")] string? codeAssistant = null,
+        [Description("LLM model name (e.g., gpt-4o, claude-sonnet-4-20250514)")] string? model = null,
+        [Description("API base URL (e.g., https://openrouter.ai/api/v1)")] string? baseUrl = null)
+    {
+        var userId = _currentUser.GetUserId();
+        var request = new CreateContainerRequest
+        {
+            Name = name,
+            TemplateCode = templateCode,
+            ProviderCode = providerCode,
+            OwnerId = userId,
+            Source = CreationSource.Mcp,
+        };
+
+        if (!string.IsNullOrEmpty(codeAssistant))
+        {
+            if (Enum.TryParse<CodeAssistantType>(codeAssistant, true, out var toolType))
+            {
+                request.CodeAssistant = new CodeAssistantConfig
+                {
+                    Tool = toolType,
+                    ModelName = model,
+                    ApiBaseUrl = baseUrl,
+                };
+            }
+        }
+
+        var container = await _containerService.CreateContainerAsync(request, CancellationToken.None);
+        return $"Container '{container.Name}' created (ID: {container.Id}, Status: {container.Status})";
+    }
+
     [McpServerTool, Description("Store an API key for an AI code assistant provider. The key is validated immediately and encrypted at rest.")]
     public async Task<McpApiKeyInfo?> StoreApiKey(
         [Description("Provider: Anthropic, OpenAI, Google, Dashscope, Custom")] string provider,
