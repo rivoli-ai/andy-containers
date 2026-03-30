@@ -56,18 +56,17 @@ import { ContainerStatsBarComponent } from '../../shared/components/container-st
             </div>
             <div>
               <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Model Name <span class="text-surface-400">(optional, injected as LLM_MODEL)</span></label>
-              <select [(ngModel)]="newKey.modelName" name="modelName"
-                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 px-3 py-2 text-sm">
-                <option value="">Default (provider default)</option>
-                <option value="gpt-5">gpt-5</option>
-                <option value="gpt-5-mini">gpt-5-mini</option>
-                <option value="gpt-4o">gpt-4o</option>
-                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-                <option value="claude-haiku-4-5">claude-haiku-4-5</option>
-                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-                <option value="qwen-coder-plus">qwen-coder-plus</option>
-              </select>
+              <div class="flex gap-2">
+                <input type="text" [(ngModel)]="newKey.modelName" name="modelName" placeholder="e.g., gpt-4o-mini or custom model"
+                  class="flex-1 rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 px-3 py-2 text-sm font-mono" />
+              </div>
+              <div class="flex gap-1.5 mt-1.5 flex-wrap">
+                <button *ngFor="let m of modelPresets" (click)="newKey.modelName = m" type="button"
+                  class="px-2 py-0.5 text-xs rounded border border-surface-300 dark:border-surface-600 text-surface-600 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700"
+                  [class.bg-primary-50]="newKey.modelName === m" [class.border-primary-300]="newKey.modelName === m">
+                  {{ m }}
+                </button>
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Environment Variable <span class="text-surface-400">(auto-detected)</span></label>
@@ -205,6 +204,7 @@ export class SettingsComponent implements OnInit {
   showAddForm = false;
   addingKey = false;
   addError = '';
+  modelPresets = ['gpt-5', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'gemini-2.5-pro', 'qwen-coder-plus'];
   newKey = { provider: '', label: '', apiKey: '', envVarName: '', baseUrl: '', modelName: '' };
 
   editingKey: ApiKeyCredential | null = null;

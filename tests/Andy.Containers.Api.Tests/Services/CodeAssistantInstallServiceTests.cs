@@ -14,7 +14,7 @@ public class CodeAssistantInstallServiceTests
     [InlineData(CodeAssistantType.CodexCli, "@openai/codex")]
     [InlineData(CodeAssistantType.Aider, "aider-chat")]
     [InlineData(CodeAssistantType.Continue, "Continue extension")]
-    [InlineData(CodeAssistantType.OpenCode, "open-code")]
+    [InlineData(CodeAssistantType.OpenCode, "opencode")]
     [InlineData(CodeAssistantType.QwenCoder, "qwen-coder-cli")]
     [InlineData(CodeAssistantType.GeminiCode, "gemini-code")]
     public void GenerateInstallScript_ReturnsScriptContainingPackageName(CodeAssistantType tool, string expectedFragment)
@@ -28,7 +28,7 @@ public class CodeAssistantInstallServiceTests
     [InlineData(CodeAssistantType.ClaudeCode, "npm install")]
     [InlineData(CodeAssistantType.CodexCli, "npm install")]
     [InlineData(CodeAssistantType.Aider, "pip install")]
-    [InlineData(CodeAssistantType.OpenCode, "npm install")]
+    [InlineData(CodeAssistantType.OpenCode, "curl")]
     [InlineData(CodeAssistantType.QwenCoder, "pip install")]
     [InlineData(CodeAssistantType.GeminiCode, "npm install")]
     public void GenerateInstallScript_UsesCorrectPackageManager(CodeAssistantType tool, string expectedManager)
@@ -54,7 +54,7 @@ public class CodeAssistantInstallServiceTests
     [Fact]
     public void GenerateInstallScript_NpmToolsHaveFallbackNodeInstall()
     {
-        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.GeminiCode };
         foreach (var tool in npmTools)
         {
             var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
@@ -78,7 +78,7 @@ public class CodeAssistantInstallServiceTests
     {
         // The script should check for npm first, install Node if missing, THEN install the package.
         // Previously the script tried npm first and fell back, which failed silently.
-        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.GeminiCode };
         foreach (var tool in npmTools)
         {
             var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
@@ -98,7 +98,7 @@ public class CodeAssistantInstallServiceTests
     public void GenerateInstallScript_NpmTools_SetDebianFrontend()
     {
         // Ensure DEBIAN_FRONTEND=noninteractive is set to prevent apt-get prompts
-        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.GeminiCode };
         foreach (var tool in npmTools)
         {
             var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
@@ -118,7 +118,7 @@ public class CodeAssistantInstallServiceTests
     public void GenerateInstallScript_NpmTools_SupportsAlpine()
     {
         // The install script should contain apk as a fallback for Alpine Linux
-        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.GeminiCode };
         foreach (var tool in npmTools)
         {
             var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
@@ -129,7 +129,7 @@ public class CodeAssistantInstallServiceTests
     [Fact]
     public void GenerateInstallScript_NpmTools_SupportsDnf()
     {
-        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.OpenCode, CodeAssistantType.GeminiCode };
+        var npmTools = new[] { CodeAssistantType.ClaudeCode, CodeAssistantType.CodexCli, CodeAssistantType.GeminiCode };
         foreach (var tool in npmTools)
         {
             var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = tool });
