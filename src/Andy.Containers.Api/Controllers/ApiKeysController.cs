@@ -39,7 +39,7 @@ public class ApiKeysController : ControllerBase
         {
             var credential = await _apiKeyService.CreateAsync(
                 userId, dto.Label, provider, dto.ApiKey,
-                dto.EnvVarName, dto.OrganizationId, ip, dto.BaseUrl, ct);
+                dto.EnvVarName, dto.OrganizationId, ip, dto.BaseUrl, dto.ModelName, ct);
 
             return CreatedAtAction(nameof(Get), new { id = credential.Id }, ToDto(credential));
         }
@@ -127,7 +127,7 @@ public class ApiKeysController : ControllerBase
     private static ApiKeyDto ToDto(ApiKeyCredential k) => new(
         k.Id, k.Label, k.Provider.ToString(), k.EnvVarName,
         k.MaskedValue ?? "****", k.IsValid,
-        k.LastValidatedAt, k.LastUsedAt, k.CreatedAt, k.UpdatedAt, k.BaseUrl);
+        k.LastValidatedAt, k.LastUsedAt, k.CreatedAt, k.UpdatedAt, k.BaseUrl, k.ModelName);
 }
 
 public record CreateApiKeyDto
@@ -138,6 +138,7 @@ public record CreateApiKeyDto
     public string? EnvVarName { get; init; }
     public Guid? OrganizationId { get; init; }
     public string? BaseUrl { get; init; }
+    public string? ModelName { get; init; }
 }
 
 public record UpdateApiKeyDto
@@ -145,10 +146,11 @@ public record UpdateApiKeyDto
     public string? Label { get; init; }
     public string? ApiKey { get; init; }
     public string? BaseUrl { get; init; }
+    public string? ModelName { get; init; }
 }
 
 public record ApiKeyDto(
     Guid Id, string Label, string Provider, string EnvVarName,
     string MaskedValue, bool IsValid,
     DateTime? LastValidatedAt, DateTime? LastUsedAt,
-    DateTime CreatedAt, DateTime? UpdatedAt, string? BaseUrl);
+    DateTime CreatedAt, DateTime? UpdatedAt, string? BaseUrl, string? ModelName);

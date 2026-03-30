@@ -198,6 +198,7 @@ export interface ApiKeyCredential {
   lastValidatedAt?: string;
   lastUsedAt?: string;
   baseUrl?: string;
+  modelName?: string;
   createdAt: string;
   updatedAt?: string;
 }

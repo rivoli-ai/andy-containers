@@ -55,6 +55,21 @@ import { ContainerStatsBarComponent } from '../../shared/components/container-st
                 class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 font-mono" />
             </div>
             <div>
+              <label class="block text-xs text-surface-500 dark:text-surface-400 mb-1">Model Name <span class="text-surface-400">(optional, injected as LLM_MODEL)</span></label>
+              <select [(ngModel)]="newKey.modelName" name="modelName"
+                class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 px-3 py-2 text-sm">
+                <option value="">Default (provider default)</option>
+                <option value="gpt-5">gpt-5</option>
+                <option value="gpt-5-mini">gpt-5-mini</option>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+                <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                <option value="qwen-coder-plus">qwen-coder-plus</option>
+              </select>
+            </div>
+            <div>
               <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Environment Variable <span class="text-surface-400">(auto-detected)</span></label>
               <input type="text" [(ngModel)]="newKey.envVarName" name="envVarName"
                 class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-800 px-3 py-2 text-sm font-mono" />
@@ -89,6 +104,7 @@ import { ContainerStatsBarComponent } from '../../shared/components/container-st
                     <span>{{ key.provider }}</span>
                     <span class="font-mono">{{ key.envVarName }}</span>
                     <span class="font-mono text-surface-400">{{ key.maskedValue }}</span>
+                    <span *ngIf="key.modelName" class="font-mono text-primary-500">{{ key.modelName }}</span>
                   </div>
                   <div class="flex items-center gap-3 mt-0.5 text-xs text-surface-400">
                     <span *ngIf="key.lastValidatedAt">Validated: {{ key.lastValidatedAt | date:'short' }}</span>
@@ -189,7 +205,7 @@ export class SettingsComponent implements OnInit {
   showAddForm = false;
   addingKey = false;
   addError = '';
-  newKey = { provider: '', label: '', apiKey: '', envVarName: '', baseUrl: '' };
+  newKey = { provider: '', label: '', apiKey: '', envVarName: '', baseUrl: '', modelName: '' };
 
   editingKey: ApiKeyCredential | null = null;
   editLabel = '';
@@ -239,10 +255,11 @@ export class SettingsComponent implements OnInit {
       apiKey: this.newKey.apiKey || undefined,
       envVarName: this.newKey.envVarName || undefined,
       baseUrl,
+      modelName: this.newKey.modelName || undefined,
     }).subscribe({
       next: () => {
         this.showAddForm = false;
-        this.newKey = { provider: '', label: '', apiKey: '', envVarName: '', baseUrl: '' };
+        this.newKey = { provider: '', label: '', apiKey: '', envVarName: '', baseUrl: '', modelName: '' };
         this.addingKey = false;
         this.loadKeys();
       },

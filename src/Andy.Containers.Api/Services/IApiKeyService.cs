@@ -5,7 +5,7 @@ namespace Andy.Containers.Api.Services;
 public interface IApiKeyService
 {
     Task<ApiKeyCredential> CreateAsync(string ownerId, string label, ApiKeyProvider provider, string apiKey,
-        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, string? baseUrl = null, CancellationToken ct = default);
+        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, string? baseUrl = null, string? modelName = null, CancellationToken ct = default);
     Task<ApiKeyCredential?> GetAsync(Guid id, string ownerId, CancellationToken ct = default);
     Task<IReadOnlyList<ApiKeyCredential>> ListAsync(string ownerId, CancellationToken ct = default);
     Task<IReadOnlyList<ApiKeyCredential>> ListByOrganizationAsync(Guid organizationId, CancellationToken ct = default);
@@ -15,7 +15,15 @@ public interface IApiKeyService
     Task<ApiKeyValidationResult> ValidateExistingAsync(Guid id, string ownerId,
         string? ipAddress = null, CancellationToken ct = default);
     Task<string?> ResolveKeyAsync(string ownerId, ApiKeyProvider provider, CancellationToken ct = default);
+    Task<ResolvedApiKey?> ResolveCredentialAsync(string ownerId, ApiKeyProvider provider, CancellationToken ct = default);
     Task<IReadOnlyList<ApiKeyChangeEntry>> GetHistoryAsync(Guid id, string ownerId, CancellationToken ct = default);
+}
+
+public class ResolvedApiKey
+{
+    public required string ApiKey { get; set; }
+    public string? BaseUrl { get; set; }
+    public string? ModelName { get; set; }
 }
 
 public class ApiKeyChangeEntry

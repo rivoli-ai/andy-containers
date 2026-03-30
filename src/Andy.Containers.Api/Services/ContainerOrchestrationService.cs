@@ -241,26 +241,42 @@ public class ContainerOrchestrationService : IContainerService
         if (codeAssistant is not null)
         {
             var assistantProvider = MapCodeAssistantToApiKeyProvider(codeAssistant.Tool);
-            var apiKey = await _apiKeyService.ResolveKeyAsync(container.OwnerId, assistantProvider, ct);
-            if (apiKey is not null)
+            var resolvedCred = await _apiKeyService.ResolveCredentialAsync(container.OwnerId, assistantProvider, ct);
+            if (resolvedCred is not null)
             {
                 var envVarName = codeAssistant.ApiKeyEnvVar ?? GetDefaultEnvVar(assistantProvider);
-                envVars = new Dictionary<string, string> { [envVarName] = apiKey };
+                envVars = new Dictionary<string, string> { [envVarName] = resolvedCred.ApiKey };
                 _logger.LogInformation("Resolved API key for {Provider}, will inject as {EnvVar}",
                     assistantProvider, envVarName);
+
+                // Inject base URL from credential (overrides code assistant config)
+                var baseUrl = resolvedCred.BaseUrl ?? codeAssistant.ApiBaseUrl;
+                if (!string.IsNullOrEmpty(baseUrl))
+                {
+                    var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
+                    envVars[baseUrlEnv] = baseUrl;
+                    _logger.LogInformation("Injecting base URL {Url} as {EnvVar}", baseUrl, baseUrlEnv);
+                }
+
+                // Inject model name from credential
+                if (!string.IsNullOrEmpty(resolvedCred.ModelName))
+                {
+                    envVars["LLM_MODEL"] = resolvedCred.ModelName;
+                    _logger.LogInformation("Injecting model {Model} as LLM_MODEL", resolvedCred.ModelName);
+                }
             }
             else
             {
                 _logger.LogWarning("No API key found for {Provider} for user {OwnerId}, container will start without it",
                     assistantProvider, container.OwnerId);
-            }
 
-            // Inject API base URL if configured
-            if (!string.IsNullOrEmpty(codeAssistant.ApiBaseUrl))
-            {
-                var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
-                envVars ??= new Dictionary<string, string>();
-                envVars[baseUrlEnv] = codeAssistant.ApiBaseUrl;
+                // Still inject base URL from code assistant config if set
+                if (!string.IsNullOrEmpty(codeAssistant.ApiBaseUrl))
+                {
+                    var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
+                    envVars ??= new Dictionary<string, string>();
+                    envVars[baseUrlEnv] = codeAssistant.ApiBaseUrl;
+                }
             }
         }
 

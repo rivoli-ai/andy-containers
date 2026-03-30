@@ -17,6 +17,7 @@ public class ApiKeyCredential
     public DateTime? UpdatedAt { get; set; }
     public string? ChangeHistory { get; set; }
     public string? BaseUrl { get; set; }
+    public string? ModelName { get; set; }
 }
 
 public enum ApiKeyProvider

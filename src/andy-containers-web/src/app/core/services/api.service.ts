@@ -181,11 +181,11 @@ export class ContainersApiService {
     return this.http.get<ApiKeyCredential[]>(`${this.baseUrl}/api-keys`);
   }
 
-  createApiKey(data: { label: string; provider: string; apiKey?: string; envVarName?: string; baseUrl?: string }): Observable<ApiKeyCredential> {
+  createApiKey(data: { label: string; provider: string; apiKey?: string; envVarName?: string; baseUrl?: string; modelName?: string }): Observable<ApiKeyCredential> {
     return this.http.post<ApiKeyCredential>(`${this.baseUrl}/api-keys`, data);
   }
 
-  updateApiKey(id: string, data: { label?: string; apiKey?: string }): Observable<ApiKeyCredential> {
+  updateApiKey(id: string, data: { label?: string; apiKey?: string; modelName?: string }): Observable<ApiKeyCredential> {
     return this.http.put<ApiKeyCredential>(`${this.baseUrl}/api-keys/${id}`, data);
   }
 

@@ -34,7 +34,7 @@ public class ApiKeyService : IApiKeyService
     }
 
     public async Task<ApiKeyCredential> CreateAsync(string ownerId, string label, ApiKeyProvider provider, string apiKey,
-        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, string? baseUrl = null, CancellationToken ct = default)
+        string? envVarName = null, Guid? organizationId = null, string? ipAddress = null, string? baseUrl = null, string? modelName = null, CancellationToken ct = default)
     {
         using var activity = ActivitySources.ApiKeys.StartActivity("ApiKey.Create");
         activity?.SetTag("apiKey.provider", provider.ToString());
@@ -58,6 +58,7 @@ public class ApiKeyService : IApiKeyService
             IsValid = validationResult.IsValid,
             LastValidatedAt = DateTime.UtcNow,
             BaseUrl = baseUrl,
+            ModelName = modelName,
             ChangeHistory = JsonSerializer.Serialize(new List<ApiKeyChangeEntry>
             {
                 new()
@@ -193,6 +194,28 @@ public class ApiKeyService : IApiKeyService
 
         Meters.ApiKeysInjected.Add(1, new KeyValuePair<string, object?>("provider", provider.ToString()));
         return _protector.Unprotect(credential.EncryptedValue);
+    }
+
+    public async Task<ResolvedApiKey?> ResolveCredentialAsync(string ownerId, ApiKeyProvider provider, CancellationToken ct = default)
+    {
+        var credential = await _db.ApiKeyCredentials
+            .Where(k => k.OwnerId == ownerId && k.Provider == provider)
+            .OrderByDescending(k => k.IsValid)
+            .ThenByDescending(k => k.LastValidatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (credential is null) return null;
+
+        credential.LastUsedAt = DateTime.UtcNow;
+        AppendHistory(credential, "used", null, "Resolved with credential details");
+        await _db.SaveChangesAsync(ct);
+
+        return new ResolvedApiKey
+        {
+            ApiKey = _protector.Unprotect(credential.EncryptedValue),
+            BaseUrl = credential.BaseUrl,
+            ModelName = credential.ModelName
+        };
     }
 
     public async Task<IReadOnlyList<ApiKeyChangeEntry>> GetHistoryAsync(Guid id, string ownerId, CancellationToken ct = default)
