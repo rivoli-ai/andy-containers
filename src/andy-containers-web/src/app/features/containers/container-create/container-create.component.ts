@@ -28,18 +28,22 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
         <div>
           <label for="name" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Name *</label>
           <input id="name" type="text" [(ngModel)]="name" name="name" required
-            class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            class="w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-100"
+            [class.border-red-400]="submitted && !name" [class.border-surface-300]="!submitted || name" [class.dark:border-surface-600]="!submitted || name" [class.dark:border-red-400]="submitted && !name"
             placeholder="my-container" />
+          <p *ngIf="submitted && !name" class="text-xs text-red-500 mt-1">Name is required</p>
         </div>
 
         <!-- Template -->
         <div>
           <label for="template" class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Template *</label>
           <select id="template" [(ngModel)]="selectedTemplateId" name="template" required (ngModelChange)="updateTemplateCodeAssistant()"
-            class="w-full rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-3 py-2 text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            class="w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-100"
+            [class.border-red-400]="submitted && !selectedTemplateId" [class.border-surface-300]="!submitted || selectedTemplateId" [class.dark:border-surface-600]="!submitted || selectedTemplateId" [class.dark:border-red-400]="submitted && !selectedTemplateId">
             <option value="">Select a template...</option>
             <option *ngFor="let t of templates" [value]="t.id">{{ t.name }} ({{ t.code }})</option>
           </select>
+          <p *ngIf="submitted && !selectedTemplateId" class="text-xs text-red-500 mt-1">Template is required</p>
         </div>
 
         <!-- Provider (optional) -->
@@ -229,6 +233,7 @@ export class ContainerCreateComponent implements OnInit {
   resourceCpu = 2;
   resourceMemory = 4096;
   resourceDisk = 20;
+  submitted = false;
   submitting = false;
   error = '';
 
@@ -391,6 +396,7 @@ export class ContainerCreateComponent implements OnInit {
   }
 
   onSubmit(): void {
+    this.submitted = true;
     if (!this.name || !this.selectedTemplateId) return;
     this.submitting = true;
     this.error = '';
