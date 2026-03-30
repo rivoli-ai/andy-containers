@@ -25,7 +25,7 @@ services:
     container_name: andy-containers-api
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=https://+:8443
+      - ASPNETCORE_URLS=https://+:8443;http://+:8080
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=postgres
       - AndyAuth__Authority=https://host.docker.internal:5001
       - AndyAuth__Audience=urn:andy-containers-api
@@ -38,6 +38,7 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "5200:8443"
+      - "5201:8080"
     volumes:
       - ./certs:/usr/local/share/ca-certificates/custom:ro
       # Optional: mount a real cert to override the built-in self-signed one
