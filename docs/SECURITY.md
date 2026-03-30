@@ -193,11 +193,91 @@ The authentication layer has a dev fallback: when `AndyAuth:Authority` is empty,
 
 ## 4. API Key Management
 
-Users can store API keys for AI code assistants (Anthropic, OpenAI, etc.) via the Settings page. Keys are encrypted using ASP.NET Core Data Protection and injected into containers as environment variables at runtime.
+### 4.1 Per-User API Keys
 
-## 5. Container Access Control
+Users store API keys for AI code assistants (Anthropic, OpenAI, OpenRouter, Ollama, custom OpenAI-compatible) via the Settings page. Keys are encrypted using ASP.NET Core Data Protection API.
+
+### 4.2 Supported Providers
+
+| Provider | API Key | Base URL | Notes |
+|----------|---------|----------|-------|
+| Anthropic | ANTHROPIC_API_KEY | - | Claude models |
+| OpenAI | OPENAI_API_KEY | - | GPT models |
+| Google | GOOGLE_API_KEY | - | Gemini models |
+| Dashscope | DASHSCOPE_API_KEY | - | Qwen models |
+| OpenRouter | OPENROUTER_API_KEY | https://openrouter.ai/api/v1 | Multi-model proxy |
+| Ollama | (none) | http://host.docker.internal:11434/v1 | Local LLM, no key |
+| OpenAI Compatible | OPENAI_API_KEY | Custom | vLLM, LiteLLM, Azure OpenAI |
+
+### 4.3 Key Storage and Injection
+
+- Keys encrypted at rest with ASP.NET Core Data Protection (`IDataProtector`)
+- Displayed masked in UI: `****...XXXX` (last 4 characters)
+- All changes logged in audit trail (creation, update, validation, usage, deletion)
+- Injected into containers as environment variables during provisioning
+- Also written to `~/.bashrc` and `~/.profile` for terminal session persistence
+
+## 5. MCP Security
+
+### 5.1 MCP Endpoint
+
+The MCP server is mounted at `/mcp` with HTTP Streamable transport:
+
+```csharp
+builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly();
+app.MapMcp("/mcp").RequireAuthorization();
+```
+
+All MCP tools require authentication via the same JWT Bearer flow as REST endpoints. Each tool has `[RequirePermission]` attributes matching the REST API permissions.
+
+### 5.2 Available MCP Tools
+
+- Container management: list, get, create, start, stop, destroy, exec
+- Template catalog: browse, get details
+- Provider management: list, health check
+- API key management: store, list, validate, delete
+- Git credential and repository operations
+- Image operations: list, diff, manifest
+
+## 6. Container Access Control
 
 In addition to RBAC permissions, containers enforce ownership:
 - Non-admin users can only see/manage their own containers
 - Organization membership is checked for org-scoped operations
 - Template/image visibility respects catalog scope (Global > Organization > Team > User)
+- SSH access uses `root:container` credentials (dev only)
+
+## 7. Certificate Management
+
+### 7.1 Corporate Certificates
+
+The `certs/` directory at the repo root holds corporate root CA certificates:
+- **Build time**: Copied into Docker images and trusted via `update-ca-certificates`
+- **Runtime**: Mounted as a volume and trusted on container startup via entrypoint script
+- Self-signed dev cert generated automatically in Docker builds (no host setup needed)
+
+### 7.2 SSL Environment Variables
+
+All Docker images set these for corporate proxy/SSL compatibility:
+- `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`
+- `DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER=0`
+- `NUGET_CERT_REVOCATION_MODE=off`
+- `DOTNET_NUGET_SIGNATURE_VERIFICATION=false`
+
+## 8. Security Checklist
+
+### Development
+- [ ] Andy Auth running on https://localhost:5001
+- [ ] Andy RBAC running on https://localhost:7003
+- [ ] RBAC seed script executed (`scripts/rbac-seed.sql`)
+- [ ] User assigned admin role in RBAC database
+- [ ] Corporate certs placed in `certs/` (if behind proxy)
+
+### Production
+- [ ] Real TLS certificates (not self-signed)
+- [ ] `AndyAuth:Authority` set to production auth server
+- [ ] `Rbac:ApiBaseUrl` set to production RBAC server
+- [ ] API keys encrypted with production-grade Data Protection keys
+- [ ] CORS origins restricted to production domains
+- [ ] SSH credentials changed from default `root:container`
+- [ ] Container expiry policies configured

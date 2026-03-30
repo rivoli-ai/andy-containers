@@ -46,12 +46,13 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
 
             CodeAssistantType.OpenCode =>
                 "ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/x86_64/') && " +
-                "cd /tmp && curl -fsSL -o opencode.tar.gz https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz && " +
-                "tar xzf opencode.tar.gz && mv opencode /usr/local/bin/opencode-bin && chmod +x /usr/local/bin/opencode-bin && rm -f opencode.tar.gz LICENSE README.md && " +
-                // Create wrapper that writes config before each launch
-                "printf '#!/bin/sh\\nMODEL=\"${LLM_MODEL:-gpt-4o}\"\\n" +
-                "printf \\'\\'{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\"}},\"agents\":{\"coder\":{\"model\":\"%%s\",\"maxTokens\":5000},\"task\":{\"model\":\"%%s\",\"maxTokens\":5000},\"title\":{\"model\":\"%%s\",\"maxTokens\":80}}}\\'\\'  \"$MODEL\" \"$MODEL\" \"$MODEL\" > \"$HOME/.opencode.json\"\\n" +
-                "exec /usr/local/bin/opencode-bin \"$@\"\\n' > /usr/local/bin/opencode && " +
+                "cd /tmp && curl -fsSL -o oc.tar.gz https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz && " +
+                "tar xzf oc.tar.gz && mv opencode /usr/local/bin/opencode-bin && chmod +x /usr/local/bin/opencode-bin && rm -f oc.tar.gz LICENSE README.md && " +
+                // Simple wrapper: write config then exec the real binary
+                "echo '#!/bin/sh' > /usr/local/bin/opencode && " +
+                "echo 'M=${LLM_MODEL:-gpt-4o}' >> /usr/local/bin/opencode && " +
+                @"echo 'echo ""{\""providers\"":{\""openai\"":{\""apiKey\"":\""env:OPENAI_API_KEY\""}},\""agents\"":{\""coder\"":{\""model\"":\""$M\"",\""maxTokens\"":5000},\""task\"":{\""model\"":\""$M\"",\""maxTokens\"":5000},\""title\"":{\""model\"":\""$M\"",\""maxTokens\"":80}}}"" > $HOME/.opencode.json' >> /usr/local/bin/opencode && " +
+                "echo 'exec /usr/local/bin/opencode-bin \"$@\"' >> /usr/local/bin/opencode && " +
                 "chmod +x /usr/local/bin/opencode",
 
             CodeAssistantType.QwenCoder =>
