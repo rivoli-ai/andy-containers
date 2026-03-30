@@ -46,14 +46,11 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
 
             CodeAssistantType.OpenCode =>
                 "ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/x86_64/') && " +
-                "curl -fsSL https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz | tar -xzf - -C /usr/local/bin opencode && " +
-                "chmod +x /usr/local/bin/opencode && " +
-                // Create a wrapper that writes config before launching (OpenCode overwrites on first run)
-                "mv /usr/local/bin/opencode /usr/local/bin/opencode-bin && " +
-                "printf '#!/bin/sh\\n" +
-                "CONFIG=\"$HOME/.opencode.json\"\\n" +
-                "MODEL=\"${LLM_MODEL:-gpt-4o}\"\\n" +
-                "printf \\'\\'{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\"}},\"agents\":{\"coder\":{\"model\":\"%s\",\"maxTokens\":5000},\"task\":{\"model\":\"%s\",\"maxTokens\":5000},\"title\":{\"model\":\"%s\",\"maxTokens\":80}}}\\'\\'  \"$MODEL\" \"$MODEL\" \"$MODEL\" > \"$CONFIG\"\\n" +
+                "cd /tmp && curl -fsSL -o opencode.tar.gz https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz && " +
+                "tar xzf opencode.tar.gz && mv opencode /usr/local/bin/opencode-bin && chmod +x /usr/local/bin/opencode-bin && rm -f opencode.tar.gz LICENSE README.md && " +
+                // Create wrapper that writes config before each launch
+                "printf '#!/bin/sh\\nMODEL=\"${LLM_MODEL:-gpt-4o}\"\\n" +
+                "printf \\'\\'{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\"}},\"agents\":{\"coder\":{\"model\":\"%%s\",\"maxTokens\":5000},\"task\":{\"model\":\"%%s\",\"maxTokens\":5000},\"title\":{\"model\":\"%%s\",\"maxTokens\":80}}}\\'\\'  \"$MODEL\" \"$MODEL\" \"$MODEL\" > \"$HOME/.opencode.json\"\\n" +
                 "exec /usr/local/bin/opencode-bin \"$@\"\\n' > /usr/local/bin/opencode && " +
                 "chmod +x /usr/local/bin/opencode",
 
