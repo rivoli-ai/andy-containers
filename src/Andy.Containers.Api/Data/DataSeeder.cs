@@ -153,6 +153,8 @@ public static class DataSeeder
         var andyCliId = Guid.Parse("00000002-0001-0001-0001-000000000006");
         var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
         var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
+        var dotnetDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000009");
+        var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
 
         db.Templates.AddRange(
             new ContainerTemplate
@@ -235,17 +237,38 @@ public static class DataSeeder
                 IsPublished = true, Tags = ["dotnet", "alpine", "minimal"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
                 Scripts = DotnetAlpineScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = dotnetDesktopId, Code = "dotnet-8-desktop", Name = ".NET 8 Desktop (VNC)",
+                Description = ".NET 8 SDK with XFCE4 remote desktop, code-server IDE, and VNC access",
+                Version = "1.0.0", BaseImage = "andy-containers-desktop-dotnet:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
+                IsPublished = true, Tags = ["dotnet", "desktop", "vnc"],
+                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
+                Scripts = ScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = pythonDesktopId, Code = "python-3.12-desktop", Name = "Python 3.12 Desktop (VNC)",
+                Description = "Python 3.12 with XFCE4 remote desktop, code-server IDE, and VNC access",
+                Version = "1.0.0", BaseImage = "andy-containers-desktop-python:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
+                IsPublished = true, Tags = ["python", "desktop", "vnc"],
+                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
+                Scripts = ScriptsJson
             }
         );
 
         // Seed dependencies for all templates
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId);
 
         await db.SaveChangesAsync();
     }
 
     private static void SeedDependencySpecs(ContainersDbContext db,
-        Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id, Guid dotnetAlpineId)
+        Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id, Guid dotnetAlpineId,
+        Guid dotnetDesktopId, Guid pythonDesktopId)
     {
         db.DependencySpecs.AddRange(
             // Full Stack: dotnet + python + node + angular + git + code-server
@@ -298,7 +321,22 @@ public static class DataSeeder
             new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
             new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 },
             new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.OsPackage, Name = "build-base", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 },
-            new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.OsPackage, Name = "bash", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 5 }
+            new DependencySpec { TemplateId = dotnetAlpineId, Type = DependencyType.OsPackage, Name = "bash", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 5 },
+
+            // .NET 8 Desktop: dotnet-sdk + git + code-server + xfce4 + tigervnc
+            new DependencySpec { TemplateId = dotnetDesktopId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = dotnetDesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
+            new DependencySpec { TemplateId = dotnetDesktopId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 },
+            new DependencySpec { TemplateId = dotnetDesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 },
+            new DependencySpec { TemplateId = dotnetDesktopId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 5 },
+
+            // Python 3.12 Desktop: python + pip + git + code-server + xfce4 + tigervnc
+            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.Runtime, Name = "python", VersionConstraint = ">=3.12,<4.0", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 1 },
+            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.Tool, Name = "pip", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
+            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 3 },
+            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 },
+            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 5 },
+            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 6 }
         );
     }
 
@@ -310,6 +348,8 @@ public static class DataSeeder
     {
         var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
         var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
+        var dotnetDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000009");
+        var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
 
         // Check which new templates are missing
         var newTemplates = new Dictionary<Guid, ContainerTemplate>
@@ -333,6 +373,26 @@ public static class DataSeeder
                 IsPublished = true, Tags = ["dotnet", "alpine", "minimal"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
                 Scripts = DotnetAlpineScriptsJson
+            },
+            [dotnetDesktopId] = new ContainerTemplate
+            {
+                Id = dotnetDesktopId, Code = "dotnet-8-desktop", Name = ".NET 8 Desktop (VNC)",
+                Description = ".NET 8 SDK with XFCE4 remote desktop, code-server IDE, and VNC access",
+                Version = "1.0.0", BaseImage = "andy-containers-desktop-dotnet:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
+                IsPublished = true, Tags = ["dotnet", "desktop", "vnc"],
+                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
+                Scripts = ScriptsJson
+            },
+            [pythonDesktopId] = new ContainerTemplate
+            {
+                Id = pythonDesktopId, Code = "python-3.12-desktop", Name = "Python 3.12 Desktop (VNC)",
+                Description = "Python 3.12 with XFCE4 remote desktop, code-server IDE, and VNC access",
+                Version = "1.0.0", BaseImage = "andy-containers-desktop-python:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
+                IsPublished = true, Tags = ["python", "desktop", "vnc"],
+                DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
+                Scripts = ScriptsJson
             }
         };
 
@@ -365,6 +425,8 @@ public static class DataSeeder
             Guid.Parse("00000002-0001-0001-0001-000000000006"),
             Guid.Parse("00000002-0001-0001-0001-000000000007"),
             Guid.Parse("00000002-0001-0001-0001-000000000008"),
+            Guid.Parse("00000002-0001-0001-0001-000000000009"),
+            Guid.Parse("00000002-0001-0001-0001-000000000010"),
         };
 
         var templates = await db.Templates
@@ -381,6 +443,8 @@ public static class DataSeeder
             ["andy-cli-dev"] = ScriptsJson,
             ["dotnet-10-cli"] = Dotnet10ScriptsJson,
             ["dotnet-8-alpine"] = DotnetAlpineScriptsJson,
+            ["dotnet-8-desktop"] = ScriptsJson,
+            ["python-3.12-desktop"] = ScriptsJson,
         };
 
         var updated = false;
@@ -412,8 +476,10 @@ public static class DataSeeder
         var andyCliId = Guid.Parse("00000002-0001-0001-0001-000000000006");
         var dotnet10Id = Guid.Parse("00000002-0001-0001-0001-000000000007");
         var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
+        var dotnetDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000009");
+        var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
 
-        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId };
+        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId };
 
         // Find which seed templates have no dependency specs at all
         var templatesWithDeps = await db.DependencySpecs
@@ -428,7 +494,7 @@ public static class DataSeeder
 
         // Only seed deps for templates that have none — use a temporary context
         // to avoid duplicating the full-stack deps that may already exist
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId);
 
         // Remove specs for templates that already had them (we just re-added everything)
         var duplicates = db.ChangeTracker.Entries<DependencySpec>()
