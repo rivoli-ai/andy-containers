@@ -27,8 +27,8 @@ RUN ssh-keygen -A && \
     echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
     echo 'root:container' | chpasswd
 
-# Startup script
-RUN printf '#!/bin/bash\nmkdir -p /run/dbus\ndbus-daemon --system --fork 2>/dev/null\n/usr/sbin/sshd\nvncserver :1 -geometry 1280x720 -depth 24 -localhost no &\nsleep 2\nwebsockify --web /usr/share/novnc 6080 localhost:5901 &\nexec sleep infinity\n' > /start.sh && chmod +x /start.sh
+# Startup script (Alpine vncserver uses simpler syntax)
+RUN printf '#!/bin/sh\nexport HOME=/root USER=root\nmkdir -p /run/dbus\ndbus-daemon --system --fork 2>/dev/null\n/usr/sbin/sshd 2>/dev/null\nvncserver :1 2>/dev/null &\nsleep 3\nwebsockify --web /usr/share/novnc 6080 localhost:5901 &\nexec sleep infinity\n' > /start.sh && chmod +x /start.sh
 
 EXPOSE 6080 22
 
