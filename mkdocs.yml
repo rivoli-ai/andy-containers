@@ -1,0 +1,56 @@
+site_name: Andy Containers
+site_description: Development container management platform for the Andy ecosystem
+site_url: https://rivoli-ai.github.io/andy-containers/
+repo_url: https://github.com/rivoli-ai/andy-containers
+repo_name: rivoli-ai/andy-containers
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started.md
+    - Docker Setup: docker-setup.md
+  - Architecture: ARCHITECTURE.md
+  - Security: SECURITY.md
+  - Implementation: implementation.md
+  - Requirements: requirements.md
+  - Configuration:
+    - YAML Templates: YAML-CONFIGURATION.md
+    - CLI Reference: cli-reference.md
+  - API:
+    - REST Endpoints: api-reference.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true

@@ -69,3 +69,4 @@ appsettings.*.json
 *.pem
 appsettings.Development.json
 appsettings.Local.json
+site/
