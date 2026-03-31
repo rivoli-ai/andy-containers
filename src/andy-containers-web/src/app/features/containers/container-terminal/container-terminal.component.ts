@@ -43,6 +43,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
           <span class="font-size-label">{{ fontSize }}px</span>
           <button (click)="increaseFontSize()" class="header-btn" title="Increase font (Ctrl+=)">A+</button>
           <button *ngIf="connected" (click)="resetColors()" class="header-btn" title="Reset terminal colors">Reset</button>
+          <button *ngIf="connected" (click)="disconnect()" class="header-btn" title="Disconnect session">Disconnect</button>
           <button *ngIf="!connected && !connecting" (click)="connect()" class="header-btn">Reconnect</button>
           <button (click)="toggleFullscreen()" class="header-btn"
                   [title]="isFullscreen ? 'Exit full screen (Esc)' : 'Full screen (F11)'">
@@ -369,6 +370,15 @@ export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDest
       // Update page background to match
       const host = this.terminalContainer?.nativeElement?.closest('.terminal-page') as HTMLElement;
       if (host) host.style.background = theme.background;
+    }
+  }
+
+  disconnect(): void {
+    if (this.ws) {
+      this.ws.close(1000, 'User disconnected');
+      this.ws = null;
+      this.connected = false;
+      this.terminal?.writeln('\r\n\x1b[33mDisconnected.\x1b[0m');
     }
   }
 

@@ -200,9 +200,13 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
             <div *ngIf="connectionInfo?.portMappings" class="mt-3">
               <h4 class="text-xs font-medium text-surface-500 dark:text-surface-400 uppercase mb-2">Port Mappings</h4>
               <div *ngFor="let entry of portMappingEntries" class="connect-row">
-                <span class="connect-dot bg-gray-400"></span>
-                <span class="connect-label">{{ entry[0] }}</span>
-                <code class="flex-1 text-xs font-mono text-surface-700 dark:text-surface-300">{{ entry[1] }}</code>
+                <span class="connect-dot bg-green-500"></span>
+                <span class="connect-label">{{ getPortLabel(entry[0]) }}</span>
+                <a [href]="'http://localhost:' + entry[1]" target="_blank"
+                  class="flex-1 text-sm text-primary-600 dark:text-primary-400 hover:underline font-mono">
+                  localhost:{{ entry[1] }}
+                </a>
+                <span class="text-xs text-surface-400">:{{ entry[0] }}</span>
               </div>
             </div>
           </div>
@@ -653,6 +657,16 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
       next: () => { this.router.navigate(['/containers']); },
       error: () => { this.actionBusy = false; },
     });
+  }
+
+  getPortLabel(containerPort: string): string {
+    const labels: Record<string, string> = {
+      '22': 'SSH', '80': 'HTTP', '443': 'HTTPS', '3000': 'Dev Server',
+      '4200': 'Angular', '5000': '.NET', '5173': 'Vite', '5432': 'Postgres',
+      '6080': 'VNC', '8080': 'IDE', '8443': 'API', '8888': 'Jupyter',
+      '3306': 'MySQL', '6379': 'Redis', '27017': 'MongoDB',
+    };
+    return labels[containerPort] || `Port ${containerPort}`;
   }
 
   getSshUrl(): string {
