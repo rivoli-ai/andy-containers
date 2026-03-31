@@ -147,4 +147,81 @@ public class CodeAssistantInstallServiceTests
             script.Should().Contain("apk", $"{tool} should support Alpine Linux (apk)");
         }
     }
+
+    [Theory]
+    [InlineData(CodeAssistantType.Aider, "AIDER_MODEL")]
+    [InlineData(CodeAssistantType.OpenCode, "LLM_MODEL")]
+    [InlineData(CodeAssistantType.CodexCli, "OPENAI_MODEL")]
+    [InlineData(CodeAssistantType.ClaudeCode, "LLM_MODEL")]
+    [InlineData(CodeAssistantType.Continue, "LLM_MODEL")]
+    [InlineData(CodeAssistantType.QwenCoder, "LLM_MODEL")]
+    [InlineData(CodeAssistantType.GeminiCode, "LLM_MODEL")]
+    public void GetDefaultModelEnvVar_ReturnsCorrectVariable(CodeAssistantType tool, string expectedVar)
+    {
+        _service.GetDefaultModelEnvVar(tool).Should().Be(expectedVar);
+    }
+
+    [Fact]
+    public void GetDefaultModelEnvVar_UnknownTool_ReturnsFallback()
+    {
+        _service.GetDefaultModelEnvVar((CodeAssistantType)999).Should().Be("LLM_MODEL");
+    }
+
+    [Fact]
+    public void GetDefaultApiKeyEnvVar_UnknownTool_ReturnsFallback()
+    {
+        _service.GetDefaultApiKeyEnvVar((CodeAssistantType)999).Should().Be("API_KEY");
+    }
+
+    [Fact]
+    public void GetDefaultBaseUrlEnvVar_ReturnsOpenAiApiBase()
+    {
+        // All tool types return the same base URL env var
+        foreach (var tool in Enum.GetValues<CodeAssistantType>())
+        {
+            _service.GetDefaultBaseUrlEnvVar(tool).Should().Be("OPENAI_API_BASE");
+        }
+    }
+
+    [Fact]
+    public void GenerateInstallScript_OpenCode_ContainsOpencodeBin()
+    {
+        var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = CodeAssistantType.OpenCode });
+        script.Should().Contain("opencode-bin",
+            "OpenCode install script should use opencode-bin as the binary name to avoid conflict with the wrapper");
+    }
+
+    [Fact]
+    public void GenerateInstallScript_OpenCode_CreatesWrapper()
+    {
+        var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = CodeAssistantType.OpenCode });
+        script.Should().Contain("/usr/local/bin/opencode",
+            "OpenCode should install a wrapper script");
+        script.Should().Contain("exec /usr/local/bin/opencode-bin",
+            "The wrapper should exec the real binary");
+    }
+
+    [Fact]
+    public void GenerateInstallScript_OpenCode_DownloadsFromGithub()
+    {
+        var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = CodeAssistantType.OpenCode });
+        script.Should().Contain("github.com/opencode-ai/opencode");
+        script.Should().Contain("curl");
+    }
+
+    [Fact]
+    public void GenerateInstallScript_OpenCode_HandlesArchitectureDetection()
+    {
+        var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = CodeAssistantType.OpenCode });
+        script.Should().Contain("uname -m");
+        script.Should().Contain("aarch64");
+        script.Should().Contain("x86_64");
+    }
+
+    [Fact]
+    public void GenerateInstallScript_UnknownTool_ReturnsEchoMessage()
+    {
+        var script = _service.GenerateInstallScript(new CodeAssistantConfig { Tool = (CodeAssistantType)999 });
+        script.Should().Contain("Unknown code assistant type");
+    }
 }

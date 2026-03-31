@@ -96,4 +96,63 @@ describe('formatDuration', () => {
   it('should format multiple years', () => {
     expect(formatDuration(800 * 24 * 60 * 60 * 1000)).toBe('2y 2mo');
   });
+
+  // Edge cases
+  it('should format sub-second durations as 0s', () => {
+    expect(formatDuration(500)).toBe('0s');
+    expect(formatDuration(999)).toBe('0s');
+  });
+
+  it('should format exactly 1 second', () => {
+    expect(formatDuration(1000)).toBe('1s');
+  });
+
+  it('should format exactly 59 seconds without rolling to minutes', () => {
+    expect(formatDuration(59 * 1000)).toBe('59s');
+  });
+
+  it('should format exactly 1 minute', () => {
+    expect(formatDuration(60 * 1000)).toBe('1m');
+  });
+
+  it('should format exactly 1 hour', () => {
+    expect(formatDuration(60 * 60 * 1000)).toBe('1h');
+  });
+
+  it('should format exactly 1 day', () => {
+    expect(formatDuration(24 * 60 * 60 * 1000)).toBe('1d');
+  });
+
+  it('should format exactly 30 days as 1 month', () => {
+    expect(formatDuration(30 * 24 * 60 * 60 * 1000)).toBe('1mo');
+  });
+
+  it('should format exactly 365 days as 1 year with no remaining months', () => {
+    expect(formatDuration(365 * 24 * 60 * 60 * 1000)).toBe('1y');
+  });
+
+  it('should format 1 millisecond as 0s', () => {
+    expect(formatDuration(1)).toBe('0s');
+  });
+
+  it('should handle large durations (10 years)', () => {
+    const tenYears = 10 * 365 * 24 * 60 * 60 * 1000;
+    expect(formatDuration(tenYears)).toBe('10y');
+  });
+
+  it('should format 29 days as days not months', () => {
+    expect(formatDuration(29 * 24 * 60 * 60 * 1000)).toBe('29d');
+  });
+
+  it('should format hours without minutes when exact', () => {
+    expect(formatDuration(3 * 60 * 60 * 1000)).toBe('3h');
+  });
+
+  it('should format days without hours when exact', () => {
+    expect(formatDuration(5 * 24 * 60 * 60 * 1000)).toBe('5d');
+  });
+
+  it('should format months without days when exact', () => {
+    expect(formatDuration(90 * 24 * 60 * 60 * 1000)).toBe('3mo');
+  });
 });
