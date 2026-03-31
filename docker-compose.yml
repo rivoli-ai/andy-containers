@@ -63,5 +63,18 @@ services:
     ports:
       - "4200:80"
 
+  # Pre-built desktop images (used as base images for VNC templates)
+  desktop-dotnet:
+    build:
+      context: ./images/desktop-dotnet
+    image: andy-desktop-dotnet:latest
+    profiles: [build-images]
+
+  desktop-python:
+    build:
+      context: ./images/desktop-python
+    image: andy-desktop-python:latest
+    profiles: [build-images]
+
 volumes:
   postgres_data:
