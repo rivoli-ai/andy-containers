@@ -490,9 +490,16 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
     return (this.container?.template as any)?.guiType === 'vnc';
   }
 
+  private _cachedVncUrl: string = '';
+  private _cachedSanitizedVncUrl: SafeResourceUrl | null = null;
+
   get sanitizedVncUrl(): SafeResourceUrl {
     const url = this.connectionInfo?.vncEndpoint || this.container?.vncEndpoint || '';
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    if (url !== this._cachedVncUrl || !this._cachedSanitizedVncUrl) {
+      this._cachedVncUrl = url;
+      this._cachedSanitizedVncUrl = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    }
+    return this._cachedSanitizedVncUrl;
   }
 
   loadContainer(): void {
