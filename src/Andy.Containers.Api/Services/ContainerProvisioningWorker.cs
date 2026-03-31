@@ -98,8 +98,10 @@ public class ContainerProvisioningWorker : BackgroundService
                 Name = job.ContainerName,
                 Resources = job.Resources ?? new ResourceSpec(),
                 Gpu = job.Gpu,
-                // Always expose SSH (port 22) with a dynamic host port so users
-                // can connect from their native terminal app via ssh://
+                // VNC desktop images use /start.sh which starts VNC+websockify+SSH
+                Command = string.Equals(job.GuiType, "vnc", StringComparison.OrdinalIgnoreCase)
+                    ? "/start.sh" : null,
+                // Always expose SSH (port 22) with a dynamic host port
                 PortMappings = portMappings
             };
 
