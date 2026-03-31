@@ -91,12 +91,19 @@ public static class DataSeeder
             "echo 'export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false' >> /root/.bashrc" });
 
     // Desktop VNC install (XFCE4 + TigerVNC + noVNC + websockify)
+    // Uses nohup + disown so processes survive after the exec session ends
     private const string DesktopInstall =
         "apt-get install -y -qq xfce4 xfce4-terminal dbus-x11 tigervnc-standalone-server tigervnc-common novnc websockify >/dev/null 2>&1 && " +
         "mkdir -p /root/.vnc && echo 'container' | vncpasswd -f > /root/.vnc/passwd && chmod 600 /root/.vnc/passwd && " +
         "ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html && " +
-        "vncserver :1 -geometry 1280x720 -depth 24 -localhost no 2>/dev/null && " +
-        "nohup websockify --web /usr/share/novnc 6080 localhost:5901 >/dev/null 2>&1 &";
+        // Write a startup script that can be re-run to restart VNC
+        "printf '#!/bin/bash\\nvncserver -kill :1 2>/dev/null; vncserver :1 -geometry 1280x720 -depth 24 -localhost no 2>/dev/null; " +
+        "nohup websockify --web /usr/share/novnc 6080 localhost:5901 >/dev/null 2>&1 &\\n' > /usr/local/bin/start-vnc && chmod +x /usr/local/bin/start-vnc && " +
+        // Start VNC now with nohup+disown so it survives the exec session
+        "nohup vncserver :1 -geometry 1280x720 -depth 24 -localhost no >/dev/null 2>&1 & disown && " +
+        "sleep 2 && nohup websockify --web /usr/share/novnc 6080 localhost:5901 >/dev/null 2>&1 & disown && " +
+        // Also add to .bashrc so VNC restarts if the container is restarted
+        "echo '[ ! -f /tmp/.X1-lock ] && /usr/local/bin/start-vnc >/dev/null 2>&1' >> /root/.bashrc";
 
     private static string DotnetDesktopScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
