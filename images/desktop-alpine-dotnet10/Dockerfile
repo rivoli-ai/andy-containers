@@ -4,7 +4,7 @@ FROM alpine:3.20
 RUN apk add --no-cache \
     xfce4 xfce4-terminal dbus dbus-x11 \
     tigervnc novnc websockify \
-    ca-certificates curl wget git openssh tmux dtach bash sudo \
+    ca-certificates curl wget git openssh openssl tmux dtach bash sudo \
     && mkdir -p /run/dbus
 
 # .NET 10 via install script (not in Alpine repos yet)
