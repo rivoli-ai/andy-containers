@@ -480,6 +480,71 @@ public class ContainersMcpTools
         var result = await _apiKeyService.ValidateExistingAsync(id, userId);
         return new McpApiKeyValidationInfo(result.IsValid, result.Error);
     }
+
+    // ── Container Service Discovery ──────────────────────────────────────
+
+    [McpServerTool, Description("List exposed services/ports for a running container, including clickable URLs")]
+    public async Task<List<McpContainerService>> ListContainerServices(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return [];
+        var container = await _containerService.GetContainerAsync(id);
+        if (container.Status != ContainerStatus.Running || container.ExternalId is null) return [];
+
+        var connInfo = await _containerService.GetConnectionInfoAsync(id);
+        var services = new List<McpContainerService>();
+
+        if (connInfo.PortMappings is not null)
+        {
+            foreach (var (containerPort, hostPort) in connInfo.PortMappings)
+            {
+                var label = containerPort switch
+                {
+                    22 => "SSH", 80 => "HTTP", 443 => "HTTPS", 3000 => "Dev Server",
+                    3306 => "MySQL", 4200 => "Angular", 5000 => ".NET API",
+                    5432 => "PostgreSQL", 5173 => "Vite", 6080 => "VNC",
+                    6379 => "Redis", 8080 => "IDE/API", 8888 => "Jupyter",
+                    27017 => "MongoDB", _ => $"Port {containerPort}"
+                };
+                services.Add(new McpContainerService(label, containerPort, hostPort, $"http://localhost:{hostPort}"));
+            }
+        }
+        return services;
+    }
+
+    [McpServerTool, Description("Check if a service is responding inside a running container by probing a port")]
+    public async Task<string> CheckContainerServiceHealth(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("Container port to check (e.g., 5432 for Postgres, 3000 for Node)")] int port)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return "Invalid container ID";
+        var container = await _containerService.GetContainerAsync(id);
+        if (container.Status != ContainerStatus.Running) return $"Container is {container.Status}";
+
+        var result = await _containerService.ExecAsync(id, $"(echo > /dev/tcp/localhost/{port}) 2>/dev/null && echo 'OPEN' || echo 'CLOSED'");
+        return result.StdOut?.Trim() ?? "UNKNOWN";
+    }
+
+    [McpServerTool, Description("Execute an HTTP request against a service running inside a container")]
+    public async Task<string> HttpRequestToContainer(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("URL path (e.g., /api/health, /)")] string path,
+        [Description("Container port (e.g., 3000, 8080)")] int port = 8080,
+        [Description("HTTP method")] string method = "GET")
+    {
+        if (!Guid.TryParse(containerId, out var id)) return "Invalid container ID";
+        var result = await _containerService.ExecAsync(id, $"curl -s -X {method} http://localhost:{port}{path} 2>&1 | head -100");
+        return result.StdOut ?? result.StdErr ?? "No response";
+    }
+
+    [McpServerTool, Description("Get container resource usage (CPU, memory, disk)")]
+    public async Task<McpContainerStats?> GetContainerStats(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return null;
+        var stats = await _containerService.GetContainerStatsAsync(id);
+        return new McpContainerStats(stats.CpuPercent, stats.MemoryUsageBytes, stats.MemoryLimitBytes, stats.MemoryPercent, stats.DiskUsageBytes);
+    }
 }
 
 public record McpApiKeyInfo(Guid Id, string Label, string Provider, string EnvVarName, string MaskedValue, bool IsValid, DateTime? LastValidatedAt, DateTime? LastUsedAt, DateTime CreatedAt);
@@ -497,3 +562,5 @@ public record McpInstalledToolInfo(string Name, string Version, string Type, boo
 public record McpImageDiffInfo(bool BaseImageChanged, string? OsVersionChanged, bool ArchitectureChanged, List<McpToolChange> ToolChanges, int PackagesAdded, int PackagesRemoved, int PackagesUpgraded, int PackagesDowngraded, string? SizeChange, string? Warning);
 public record McpToolChange(string Name, string ChangeType, string? PreviousVersion, string? NewVersion, string? Severity);
 public record McpOrgResourceSummary(Guid OrganizationId, int TemplateCount, int ImageCount, int ContainerCount, int ProviderCount);
+public record McpContainerService(string Label, int ContainerPort, int HostPort, string Url);
+public record McpContainerStats(double CpuPercent, long MemoryUsageBytes, long MemoryLimitBytes, double MemoryPercent, long DiskUsageBytes);
