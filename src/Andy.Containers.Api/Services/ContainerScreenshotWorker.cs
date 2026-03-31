@@ -72,7 +72,6 @@ public class ContainerScreenshotWorker : BackgroundService
 
             var containers = await db.Containers
                 .Include(c => c.Provider)
-                .Include(c => c.Template)
                 .Where(c => c.ExternalId != null && c.Status == ContainerStatus.Running)
                 .Take(MaxContainersPerCycle)
                 .ToListAsync(ct);
@@ -92,8 +91,11 @@ public class ContainerScreenshotWorker : BackgroundService
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     timeoutCts.CancelAfter(ExecTimeout);
 
-                    // VNC containers don't have tmux sessions — capture placeholder
-                    var isVnc = container.Template?.GuiType == "vnc";
+                    // Check if VNC template
+                    var template = container.TemplateId != Guid.Empty
+                        ? await db.Templates.FindAsync([container.TemplateId], ct)
+                        : null;
+                    var isVnc = template?.GuiType == "vnc";
                     var captureCmd = isVnc
                         ? "echo '[VNC Desktop - connect via noVNC on port 6080]'"
                         : "tmux capture-pane -p -t web -S -40 2>/dev/null || echo '[No active terminal session]'";

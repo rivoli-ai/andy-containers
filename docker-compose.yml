@@ -66,25 +66,37 @@ services:
   # Desktop images built automatically — used as base images for VNC templates
   # These don't run as services; they just build the images for container provisioning
   desktop-dotnet:
-    build: { context: ./images/desktop-dotnet }
+    build:
+      context: ./images/desktop-dotnet
+      additional_contexts:
+        scripts: ./scripts/container
     image: andy-desktop-dotnet:latest
     profiles: [images]
     entrypoint: ["true"]
 
   desktop-python:
-    build: { context: ./images/desktop-python }
+    build:
+      context: ./images/desktop-python
+      additional_contexts:
+        scripts: ./scripts/container
     image: andy-desktop-python:latest
     profiles: [images]
     entrypoint: ["true"]
 
   desktop-alpine-dotnet8:
-    build: { context: ./images/desktop-alpine-dotnet8 }
+    build:
+      context: ./images/desktop-alpine-dotnet8
+      additional_contexts:
+        scripts: ./scripts/container
     image: andy-desktop-alpine-dotnet8:latest
     profiles: [images]
     entrypoint: ["true"]
 
   desktop-alpine-dotnet10:
-    build: { context: ./images/desktop-alpine-dotnet10 }
+    build:
+      context: ./images/desktop-alpine-dotnet10
+      additional_contexts:
+        scripts: ./scripts/container
     image: andy-desktop-alpine-dotnet10:latest
     profiles: [images]
     entrypoint: ["true"]

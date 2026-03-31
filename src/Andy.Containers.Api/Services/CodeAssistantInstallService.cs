@@ -45,14 +45,18 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
                 "echo 'Continue extension will be installed via IDE marketplace'",
 
             CodeAssistantType.OpenCode =>
+                // Download and run the install script inline (same logic as scripts/container/install-opencode.sh)
                 "ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/x86_64/') && " +
                 "cd /tmp && curl -fsSL -o oc.tar.gz https://github.com/opencode-ai/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz && " +
                 "tar xzf oc.tar.gz && mv opencode /usr/local/bin/opencode-bin && chmod +x /usr/local/bin/opencode-bin && rm -f oc.tar.gz LICENSE README.md && " +
-                // Simple wrapper: write config then exec the real binary
-                "echo '#!/bin/sh' > /usr/local/bin/opencode && " +
-                "echo 'M=${LLM_MODEL:-gpt-4o}' >> /usr/local/bin/opencode && " +
-                @"echo 'echo ""{\""providers\"":{\""openai\"":{\""apiKey\"":\""env:OPENAI_API_KEY\""}},\""agents\"":{\""coder\"":{\""model\"":\""$M\"",\""maxTokens\"":5000},\""task\"":{\""model\"":\""$M\"",\""maxTokens\"":5000},\""title\"":{\""model\"":\""$M\"",\""maxTokens\"":80}}}"" > $HOME/.opencode.json' >> /usr/local/bin/opencode && " +
-                "echo 'exec /usr/local/bin/opencode-bin \"$@\"' >> /usr/local/bin/opencode && " +
+                "cat > /usr/local/bin/opencode << 'OCWRAP'\n" +
+                "#!/bin/sh\n" +
+                "M=${LLM_MODEL:-gpt-4o}\n" +
+                "cat > $HOME/.opencode.json << OCCONF\n" +
+                "{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\"}},\"agents\":{\"coder\":{\"model\":\"$M\",\"maxTokens\":5000},\"task\":{\"model\":\"$M\",\"maxTokens\":5000},\"title\":{\"model\":\"$M\",\"maxTokens\":80}}}\n" +
+                "OCCONF\n" +
+                "exec /usr/local/bin/opencode-bin \"$@\"\n" +
+                "OCWRAP\n" +
                 "chmod +x /usr/local/bin/opencode",
 
             CodeAssistantType.QwenCoder =>
