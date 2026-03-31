@@ -172,7 +172,8 @@ public class ContainerProvisioningWorker : BackgroundService
                             var escaped = kv.Value.Replace("'", "'\\''");
                             return $"echo '{kv.Key}={escaped}' >> /etc/environment && " +
                                    $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.bashrc && " +
-                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.profile";
+                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.profile && " +
+                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile";
                         }));
                     await containerService.ExecAsync(job.ContainerId, $"{exportCommands} && {persistCmd}", stoppingToken);
                     _logger.LogInformation("Injected {Count} environment variable(s) into container {ContainerId}",
