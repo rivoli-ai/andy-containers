@@ -61,6 +61,18 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
             CodeAssistantType.GeminiCode =>
                 $"{InstallNodeJs} && npm install -g gemini-code",
 
+            CodeAssistantType.GitHubCopilot =>
+                // gh CLI installed by PostCreateScript; just add the copilot extension
+                "command -v gh >/dev/null 2>&1 && gh extension install github/gh-copilot || echo 'gh CLI not found, install it first'",
+
+            CodeAssistantType.AmazonQ =>
+                // Amazon Q CLI installed via npm
+                $"{InstallNodeJs} && npm install -g @aws/amazon-q-developer-cli",
+
+            CodeAssistantType.Cline =>
+                // Cline is a VS Code extension, install via code-server if available
+                "command -v code-server >/dev/null 2>&1 && code-server --install-extension saoudrizwan.claude-dev || echo 'Cline requires code-server IDE'",
+
             _ => "echo 'Unknown code assistant type'"
         };
 
@@ -76,6 +88,9 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
         CodeAssistantType.OpenCode => "OPENAI_API_KEY",
         CodeAssistantType.QwenCoder => "DASHSCOPE_API_KEY",
         CodeAssistantType.GeminiCode => "GOOGLE_API_KEY",
+        CodeAssistantType.GitHubCopilot => "GITHUB_TOKEN",
+        CodeAssistantType.AmazonQ => "AWS_ACCESS_KEY_ID",
+        CodeAssistantType.Cline => "ANTHROPIC_API_KEY",
         _ => "API_KEY"
     };
 

@@ -11,7 +11,10 @@ public enum CodeAssistantType
     Continue,
     OpenCode,
     QwenCoder,
-    GeminiCode
+    GeminiCode,
+    GitHubCopilot,
+    AmazonQ,
+    Cline
 }
 
 public class CodeAssistantConfig

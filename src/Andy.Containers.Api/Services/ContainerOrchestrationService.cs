@@ -503,6 +503,9 @@ public class ContainerOrchestrationService : IContainerService
         CodeAssistantType.OpenCode => ApiKeyProvider.OpenAI,
         CodeAssistantType.QwenCoder => ApiKeyProvider.Dashscope,
         CodeAssistantType.GeminiCode => ApiKeyProvider.Google,
+        CodeAssistantType.GitHubCopilot => ApiKeyProvider.Custom,
+        CodeAssistantType.AmazonQ => ApiKeyProvider.Custom,
+        CodeAssistantType.Cline => ApiKeyProvider.Anthropic,
         _ => ApiKeyProvider.OpenAiCompatible
     };
 

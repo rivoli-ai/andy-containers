@@ -62,6 +62,12 @@ export const CODE_ASSISTANT_TOOLS = [
     supportsModel: true, supportsBaseUrl: true, modelEnvVar: 'LLM_MODEL', defaultModel: 'qwen-coder-turbo' },
   { value: 'GeminiCode', label: 'Gemini Code', apiKeyEnv: 'GOOGLE_API_KEY', apiKeyProvider: 'Google',
     supportsModel: true, supportsBaseUrl: true, modelEnvVar: 'LLM_MODEL', defaultModel: 'gemini-2.0-flash' },
+  { value: 'GitHubCopilot', label: 'GitHub Copilot', apiKeyEnv: 'GITHUB_TOKEN', apiKeyProvider: 'Custom',
+    supportsModel: false, supportsBaseUrl: false },
+  { value: 'AmazonQ', label: 'Amazon Q', apiKeyEnv: 'AWS_ACCESS_KEY_ID', apiKeyProvider: 'Custom',
+    supportsModel: false, supportsBaseUrl: false },
+  { value: 'Cline', label: 'Cline', apiKeyEnv: 'ANTHROPIC_API_KEY', apiKeyProvider: 'Anthropic',
+    supportsModel: true, supportsBaseUrl: false, modelEnvVar: 'LLM_MODEL', defaultModel: 'claude-sonnet-4-20250514' },
 ] as const;
 
 export interface Provider {
