@@ -57,11 +57,14 @@ import { Template } from '../../../core/models';
               <span class="font-medium text-surface-700 dark:text-surface-300">{{ t.catalogScope }}</span>
             </div>
           </div>
-          <div *ngIf="t.tags && t.tags.length > 0" class="flex flex-wrap gap-1 mt-3">
+          <div *ngIf="t.tags && t.tags.length > 0 || t.guiType === 'vnc'" class="flex flex-wrap gap-1 mt-3">
             <span *ngFor="let tag of t.tags"
               class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
               [ngClass]="getTagClasses(tag)">
               {{ tag }}
+            </span>
+            <span *ngIf="t.guiType === 'vnc'" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 ml-1">
+              VNC Desktop
             </span>
           </div>
         </a>

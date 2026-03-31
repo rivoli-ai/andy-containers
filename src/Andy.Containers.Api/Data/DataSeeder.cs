@@ -170,7 +170,7 @@ public static class DataSeeder
                 Id = agentSandboxId, Code = "agent-sandbox-ui", Name = "Agent Sandbox with UI",
                 Description = "DevPilot AI agent environment with remote desktop and IDE",
                 Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.Both, GpuPreferred = true,
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.Both, GuiType = "vnc", GpuPreferred = true,
                 IsPublished = true, Tags = ["agent", "devpilot", "ui", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = FullStackScriptsJson,

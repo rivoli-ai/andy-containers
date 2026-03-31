@@ -39,6 +39,7 @@ export interface Template {
   isPublished: boolean;
   scripts?: string;
   codeAssistant?: string;
+  guiType?: string; // "none" or "vnc"
 }
 
 export interface CodeAssistantConfig {

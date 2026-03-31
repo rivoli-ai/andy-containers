@@ -2,6 +2,7 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { ContainersApiService } from '../../../core/services/api.service';
 import { Container, ContainerStats, ContainerEvent, ContainerGitRepository, GitCloneMetadata, ConnectionInfo, ExecResult, CODE_ASSISTANT_TOOLS } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
@@ -184,6 +185,15 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
               </a>
             </div>
 
+            <!-- Embedded VNC Viewer (for GUI templates) -->
+            <div *ngIf="isVncTemplate && (connectionInfo?.vncEndpoint || container.vncEndpoint)" class="mt-4 rounded-lg overflow-hidden border border-surface-200 dark:border-surface-700">
+              <div class="flex items-center justify-between px-3 py-2 bg-surface-50 dark:bg-surface-900">
+                <span class="text-xs font-medium text-surface-500">Remote Desktop</span>
+                <a [href]="connectionInfo?.vncEndpoint || container.vncEndpoint" target="_blank" class="text-xs text-primary-600 hover:underline">Open in new tab</a>
+              </div>
+              <iframe [src]="sanitizedVncUrl" class="w-full" style="height: 500px; border: none;"></iframe>
+            </div>
+
             <!-- IP Address -->
             <div *ngIf="connectionInfo?.ipAddress || container.hostIp" class="connect-row">
               <span class="connect-dot bg-green-500"></span>
@@ -212,8 +222,8 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
           </div>
         </div>
 
-        <!-- Terminal Preview (only when Running) -->
-        <div *ngIf="container.status === 'Running'" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
+        <!-- Terminal Preview (only when Running and not VNC) -->
+        <div *ngIf="container.status === 'Running' && !isVncTemplate" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
           <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-3">Terminal Preview</h2>
           <app-container-thumbnail [containerId]="container.id" [isRunning]="true" size="lg"></app-container-thumbnail>
           <p class="text-xs text-surface-400 mt-2">Auto-refreshes every 30s. Open the terminal for an interactive session.</p>
@@ -449,6 +459,7 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
     private api: ContainersApiService,
     private route: ActivatedRoute,
     private router: Router,
+    private sanitizer: DomSanitizer,
   ) {}
 
   ngOnInit(): void {
@@ -466,6 +477,15 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
   get portMappingEntries(): [string, string][] {
     if (!this.connectionInfo?.portMappings) return [];
     return Object.entries(this.connectionInfo.portMappings);
+  }
+
+  get isVncTemplate(): boolean {
+    return (this.container?.template as any)?.guiType === 'vnc';
+  }
+
+  get sanitizedVncUrl(): SafeResourceUrl {
+    const url = this.connectionInfo?.vncEndpoint || this.container?.vncEndpoint || '';
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   loadContainer(): void {

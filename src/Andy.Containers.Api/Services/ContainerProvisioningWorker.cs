@@ -87,6 +87,11 @@ public class ContainerProvisioningWorker : BackgroundService
                 throw new InvalidOperationException($"Provider {job.ProviderId} not found");
 
             var infra = _providerFactory.GetProvider(provider);
+            var portMappings = new Dictionary<int, int> { [22] = 0 };
+            // Expose noVNC websocket port for templates with VNC desktop
+            if (string.Equals(job.GuiType, "vnc", StringComparison.OrdinalIgnoreCase))
+                portMappings[6080] = 0;
+
             var spec = new ContainerSpec
             {
                 ImageReference = job.TemplateBaseImage,
@@ -95,7 +100,7 @@ public class ContainerProvisioningWorker : BackgroundService
                 Gpu = job.Gpu,
                 // Always expose SSH (port 22) with a dynamic host port so users
                 // can connect from their native terminal app via ssh://
-                PortMappings = new Dictionary<int, int> { [22] = 0 }
+                PortMappings = portMappings
             };
 
             // Use a timeout so we don't hang forever

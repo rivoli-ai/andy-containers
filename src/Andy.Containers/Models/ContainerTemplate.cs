@@ -14,6 +14,7 @@ public class ContainerTemplate
     public string? OwnerId { get; set; }
     public string? Toolchains { get; set; }
     public IdeType IdeType { get; set; } = IdeType.CodeServer;
+    public string GuiType { get; set; } = "none"; // "none" or "vnc"
     public string? DefaultResources { get; set; }
     public bool GpuRequired { get; set; }
     public bool GpuPreferred { get; set; }

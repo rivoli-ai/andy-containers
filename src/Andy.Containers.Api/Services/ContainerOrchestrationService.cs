@@ -311,7 +311,8 @@ public class ContainerOrchestrationService : IContainerService
             HasGitRepositories: hasGitRepos,
             PostCreateScripts: postCreateScripts,
             CodeAssistant: codeAssistant,
-            EnvironmentVariables: envVars);
+            EnvironmentVariables: envVars,
+            GuiType: template.GuiType);
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",
