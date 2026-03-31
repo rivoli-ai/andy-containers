@@ -454,13 +454,25 @@ public static class DataSeeder
             ["python-3.12-desktop"] = DesktopScriptsJson,
         };
 
+        // Also fix base images for desktop templates (they may have been seeded with ubuntu:24.04)
+        var imagesByCode = new Dictionary<string, string>
+        {
+            ["dotnet-8-desktop"] = "andy-desktop-dotnet:latest",
+            ["python-3.12-desktop"] = "andy-desktop-python:latest",
+        };
+
         var updated = false;
         foreach (var template in templates)
         {
-            var expected = scriptsByCode.GetValueOrDefault(template.Code, ScriptsJson);
-            if (template.Scripts != expected)
+            var expectedScript = scriptsByCode.GetValueOrDefault(template.Code, ScriptsJson);
+            if (template.Scripts != expectedScript)
             {
-                template.Scripts = expected;
+                template.Scripts = expectedScript;
+                updated = true;
+            }
+            if (imagesByCode.TryGetValue(template.Code, out var expectedImage) && template.BaseImage != expectedImage)
+            {
+                template.BaseImage = expectedImage;
                 updated = true;
             }
         }
