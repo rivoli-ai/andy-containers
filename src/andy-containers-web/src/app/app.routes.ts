@@ -17,4 +17,5 @@ export const routes: Routes = [
   { path: 'workspaces/create', loadComponent: () => import('./features/workspaces/workspace-create/workspace-create.component').then(m => m.WorkspaceCreateComponent), canActivate: [authGuard] },
   { path: 'workspaces/:id', loadComponent: () => import('./features/workspaces/workspace-detail/workspace-detail.component').then(m => m.WorkspaceDetailComponent), canActivate: [authGuard] },
   { path: 'settings', loadComponent: () => import('./features/settings/settings.component').then(m => m.SettingsComponent), canActivate: [authGuard] },
+  { path: 'docs', loadComponent: () => import('./features/docs/docs.component').then(m => m.DocsComponent), canActivate: [authGuard] },
 ];
