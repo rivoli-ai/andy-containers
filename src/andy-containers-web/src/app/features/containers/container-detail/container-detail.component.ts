@@ -189,9 +189,14 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
             <div *ngIf="isVncTemplate && (connectionInfo?.vncEndpoint || container.vncEndpoint)" class="mt-4 rounded-lg overflow-hidden border border-surface-200 dark:border-surface-700">
               <div class="flex items-center justify-between px-3 py-2 bg-surface-50 dark:bg-surface-900">
                 <span class="text-xs font-medium text-surface-500">Remote Desktop</span>
-                <a [href]="connectionInfo?.vncEndpoint || container.vncEndpoint" target="_blank" class="text-xs text-primary-600 hover:underline">Open in new tab</a>
+                <div class="flex items-center gap-2">
+                  <a [href]="connectionInfo?.vncEndpoint || container.vncEndpoint" target="_blank" class="text-xs text-primary-600 hover:underline">Open in new tab</a>
+                  <button (click)="vncFullscreen = !vncFullscreen" class="text-xs text-surface-400 hover:text-surface-600">
+                    {{ vncFullscreen ? 'Exit fullscreen' : 'Fullscreen' }}
+                  </button>
+                </div>
               </div>
-              <iframe [src]="sanitizedVncUrl" class="w-full" style="height: 500px; border: none;"></iframe>
+              <iframe [src]="sanitizedVncUrl" class="w-full" [style.height]="vncFullscreen ? 'calc(100vh - 200px)' : '600px'" style="border: none;"></iframe>
             </div>
 
             <!-- IP Address -->
@@ -478,6 +483,8 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
     if (!this.connectionInfo?.portMappings) return [];
     return Object.entries(this.connectionInfo.portMappings);
   }
+
+  vncFullscreen = false;
 
   get isVncTemplate(): boolean {
     return (this.container?.template as any)?.guiType === 'vnc';
