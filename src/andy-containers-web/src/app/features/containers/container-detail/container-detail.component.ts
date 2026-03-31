@@ -60,7 +60,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
         <!-- Overview Card -->
         <div class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
           <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Overview</h2>
-          <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 items-baseline">
+          <dl class="grid grid-cols-[100px_1fr] gap-x-3 gap-y-2 items-baseline">
             <dt class="text-sm text-surface-500 dark:text-surface-400">Name</dt>
             <dd class="text-sm font-medium text-surface-900 dark:text-surface-100 break-words">{{ container.name }}</dd>
 

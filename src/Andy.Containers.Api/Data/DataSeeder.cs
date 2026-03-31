@@ -91,10 +91,15 @@ public static class DataSeeder
             "echo 'export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false' >> /root/.bashrc" });
 
     // Desktop templates use pre-built images with VNC already installed.
-    // PostCreateScript just starts VNC + websockify (everything is pre-installed in the image).
+    // PostCreateScript ensures dbus + xstartup + VNC + websockify are running.
     private static string DesktopScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
-            "nohup vncserver :1 -geometry 1280x720 -depth 24 -localhost no >/dev/null 2>&1 & disown && " +
+            // Ensure dbus is running (required by XFCE4)
+            "mkdir -p /run/dbus && (dbus-daemon --system --fork 2>/dev/null || true) && " +
+            // Create xstartup if missing (pre-built images have it, but just in case)
+            "mkdir -p /root/.vnc && printf '#!/bin/sh\\nunset SESSION_MANAGER\\nunset DBUS_SESSION_BUS_ADDRESS\\nexec startxfce4\\n' > /root/.vnc/xstartup && chmod +x /root/.vnc/xstartup && " +
+            // Start VNC and websockify
+            "vncserver -kill :1 2>/dev/null; nohup vncserver :1 -geometry 1280x720 -depth 24 -localhost no >/dev/null 2>&1 & disown && " +
             "sleep 2 && nohup websockify --web /usr/share/novnc 6080 localhost:5901 >/dev/null 2>&1 & disown" });
 
     private static string FullStackScriptsJson { get; } = JsonSerializer.Serialize(
