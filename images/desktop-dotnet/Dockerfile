@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Desktop environment + VNC + noVNC
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
     xfce4 xfce4-terminal dbus-x11 \
     tigervnc-standalone-server tigervnc-common \
     novnc websockify \
