@@ -261,7 +261,7 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             IpAddress = inspect.NetworkSettings?.IPAddress,
             PortMappings = ports,
             IdeEndpoint = ports.TryGetValue(8080, out var idePort) ? $"https://localhost:{idePort}" : null,
-            VncEndpoint = ports.TryGetValue(6080, out var vncPort) ? $"http://localhost:{vncPort}" : null,
+            VncEndpoint = ports.TryGetValue(6080, out var vncPort) ? $"https://localhost:{vncPort}" : null,
             SshEndpoint = ports.TryGetValue(22, out var sshPort) ? $"ssh root@localhost -p {sshPort}" : null
         };
     }

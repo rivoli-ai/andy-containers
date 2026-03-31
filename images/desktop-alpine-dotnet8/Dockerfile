@@ -27,8 +27,14 @@ RUN ssh-keygen -A && \
     echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
     echo 'root:container' | chpasswd
 
+# Self-signed cert for noVNC HTTPS
+RUN mkdir -p /etc/novnc/ssl && \
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout /etc/novnc/ssl/key.pem -out /etc/novnc/ssl/cert.pem \
+      -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null
+
 # Startup script (Alpine vncserver uses simpler syntax)
-RUN printf '#!/bin/sh\nexport HOME=/root USER=root\nmkdir -p /run/dbus\ndbus-daemon --system --fork 2>/dev/null\n/usr/sbin/sshd 2>/dev/null\nvncserver :1 2>/dev/null &\nsleep 3\nwebsockify --web /usr/share/novnc 6080 localhost:5901 &\nexec sleep infinity\n' > /start.sh && chmod +x /start.sh
+RUN printf '#!/bin/sh\nexport HOME=/root USER=root\nmkdir -p /run/dbus\ndbus-daemon --system --fork 2>/dev/null\n/usr/sbin/sshd 2>/dev/null\nvncserver :1 2>/dev/null &\nsleep 3\nwebsockify --cert /etc/novnc/ssl/cert.pem --key /etc/novnc/ssl/key.pem --web /usr/share/novnc 6080 localhost:5901 &\nexec sleep infinity\n' > /start.sh && chmod +x /start.sh
 
 EXPOSE 6080 22
 
