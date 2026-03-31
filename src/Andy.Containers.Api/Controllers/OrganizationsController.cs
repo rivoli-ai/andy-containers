@@ -27,6 +27,182 @@ public class OrganizationsController : ControllerBase
         _orgMembership = orgMembership;
     }
 
+    // ── Organization CRUD ──────────────────────────────────────────
+
+    [HttpGet]
+    public async Task<IActionResult> ListOrganizations(CancellationToken ct)
+    {
+        var userId = _currentUser.GetUserId();
+
+        if (_currentUser.IsAdmin())
+        {
+            var all = await _db.Organizations
+                .OrderBy(o => o.Name)
+                .ToListAsync(ct);
+            return Ok(all);
+        }
+
+        var orgIds = await _orgMembership.GetUserOrganizationsAsync(userId, ct);
+        var orgs = await _db.Organizations
+            .Where(o => orgIds.Contains(o.Id))
+            .OrderBy(o => o.Name)
+            .ToListAsync(ct);
+        return Ok(orgs);
+    }
+
+    [HttpGet("{orgId:guid}")]
+    public async Task<IActionResult> GetOrganization(Guid orgId, CancellationToken ct)
+    {
+        if (!_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (!isMember) return Forbid();
+        }
+
+        var org = await _db.Organizations.FirstOrDefaultAsync(o => o.Id == orgId, ct);
+        if (org is null) return NotFound();
+        return Ok(org);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateOrganization(
+        [FromBody] CreateOrganizationRequest request, CancellationToken ct)
+    {
+        var org = new Organization
+        {
+            Name = request.Name,
+            Description = request.Description,
+            OwnerId = _currentUser.GetUserId()
+        };
+
+        _db.Organizations.Add(org);
+        await _db.SaveChangesAsync(ct);
+        return CreatedAtAction(nameof(GetOrganization), new { orgId = org.Id }, org);
+    }
+
+    [HttpPut("{orgId:guid}")]
+    public async Task<IActionResult> UpdateOrganization(
+        Guid orgId, [FromBody] UpdateOrganizationRequest request, CancellationToken ct)
+    {
+        if (!_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (!isMember) return Forbid();
+
+            var role = await _orgMembership.GetRoleAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (role != OrgRoles.Admin) return Forbid();
+        }
+
+        var org = await _db.Organizations.FirstOrDefaultAsync(o => o.Id == orgId, ct);
+        if (org is null) return NotFound();
+
+        org.Name = request.Name ?? org.Name;
+        org.Description = request.Description ?? org.Description;
+        org.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(org);
+    }
+
+    [HttpDelete("{orgId:guid}")]
+    public async Task<IActionResult> DeleteOrganization(Guid orgId, CancellationToken ct)
+    {
+        if (!_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (!isMember) return Forbid();
+
+            var role = await _orgMembership.GetRoleAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (role != OrgRoles.Admin) return Forbid();
+        }
+
+        var org = await _db.Organizations.FirstOrDefaultAsync(o => o.Id == orgId, ct);
+        if (org is null) return NotFound();
+
+        _db.Organizations.Remove(org);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    // ── Team CRUD ────────────────────────────────────────────────
+
+    [HttpGet("{orgId:guid}/teams")]
+    public async Task<IActionResult> ListTeams(Guid orgId, CancellationToken ct)
+    {
+        if (!_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (!isMember) return Forbid();
+        }
+
+        var teams = await _db.Teams
+            .Where(t => t.OrganizationId == orgId)
+            .OrderBy(t => t.Name)
+            .ToListAsync(ct);
+        return Ok(teams);
+    }
+
+    [HttpPost("{orgId:guid}/teams")]
+    public async Task<IActionResult> CreateTeam(
+        Guid orgId, [FromBody] CreateTeamRequest request, CancellationToken ct)
+    {
+        if (!_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (!isMember) return Forbid();
+
+            var role = await _orgMembership.GetRoleAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (role != OrgRoles.Admin) return Forbid();
+        }
+
+        var orgExists = await _db.Organizations.AnyAsync(o => o.Id == orgId, ct);
+        if (!orgExists) return NotFound();
+
+        var team = new Team
+        {
+            OrganizationId = orgId,
+            Name = request.Name,
+            Description = request.Description
+        };
+
+        _db.Teams.Add(team);
+        await _db.SaveChangesAsync(ct);
+        return Created($"api/organizations/{orgId}/teams/{team.Id}", team);
+    }
+
+    [HttpDelete("{orgId:guid}/teams/{teamId:guid}")]
+    public async Task<IActionResult> DeleteTeam(Guid orgId, Guid teamId, CancellationToken ct)
+    {
+        if (!_currentUser.IsAdmin())
+        {
+            var isMember = await _orgMembership.IsMemberAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (!isMember) return Forbid();
+
+            var role = await _orgMembership.GetRoleAsync(
+                _currentUser.GetUserId(), orgId, ct);
+            if (role != OrgRoles.Admin) return Forbid();
+        }
+
+        var team = await _db.Teams.FirstOrDefaultAsync(
+            t => t.Id == teamId && t.OrganizationId == orgId, ct);
+        if (team is null) return NotFound();
+
+        _db.Teams.Remove(team);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    // ── Resource endpoints ───────────────────────────────────────
+
     [RequirePermission("image:read")]
     [HttpGet("{orgId:guid}/images")]
     public async Task<IActionResult> ListImages(Guid orgId, CancellationToken ct)
@@ -122,3 +298,7 @@ public class OrganizationsController : ControllerBase
         return Ok(providers);
     }
 }
+
+public record CreateOrganizationRequest(string Name, string? Description = null);
+public record UpdateOrganizationRequest(string? Name = null, string? Description = null);
+public record CreateTeamRequest(string Name, string? Description = null);

@@ -248,3 +248,20 @@ export interface ContainerScreenshot {
   cols?: number;
   rows?: number;
 }
+
+export interface Organization {
+  id: string;
+  name: string;
+  description?: string;
+  ownerId: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface Team {
+  id: string;
+  organizationId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+}

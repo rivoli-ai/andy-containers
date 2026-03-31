@@ -21,6 +21,8 @@ import {
   ApiKeyCredential,
   ApiKeyChangeEntry,
   ContainerScreenshot,
+  Organization,
+  Team,
 } from '../models';
 
 @Injectable({ providedIn: 'root' })
@@ -199,5 +201,35 @@ export class ContainersApiService {
 
   getApiKeyHistory(id: string): Observable<ApiKeyChangeEntry[]> {
     return this.http.get<ApiKeyChangeEntry[]>(`${this.baseUrl}/api-keys/${id}/history`);
+  }
+
+  // Organizations
+  getOrganizations(): Observable<Organization[]> {
+    return this.http.get<Organization[]>(`${this.baseUrl}/organizations`);
+  }
+
+  getOrganization(id: string): Observable<Organization> {
+    return this.http.get<Organization>(`${this.baseUrl}/organizations/${id}`);
+  }
+
+  createOrganization(data: { name: string; description?: string }): Observable<Organization> {
+    return this.http.post<Organization>(`${this.baseUrl}/organizations`, data);
+  }
+
+  deleteOrganization(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/organizations/${id}`);
+  }
+
+  // Teams
+  getTeams(orgId: string): Observable<Team[]> {
+    return this.http.get<Team[]>(`${this.baseUrl}/organizations/${orgId}/teams`);
+  }
+
+  createTeam(orgId: string, data: { name: string; description?: string }): Observable<Team> {
+    return this.http.post<Team>(`${this.baseUrl}/organizations/${orgId}/teams`, data);
+  }
+
+  deleteTeam(orgId: string, teamId: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/organizations/${orgId}/teams/${teamId}`);
   }
 }

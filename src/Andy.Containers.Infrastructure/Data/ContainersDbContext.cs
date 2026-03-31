@@ -19,6 +19,8 @@ public class ContainersDbContext : DbContext
     public DbSet<ContainerGitRepository> ContainerGitRepositories => Set<ContainerGitRepository>();
     public DbSet<GitCredential> GitCredentials => Set<GitCredential>();
     public DbSet<ApiKeyCredential> ApiKeyCredentials => Set<ApiKeyCredential>();
+    public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<Team> Teams => Set<Team>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -157,6 +159,26 @@ public class ContainersDbContext : DbContext
             e.HasIndex(k => k.OwnerId);
             e.HasIndex(k => new { k.OwnerId, k.Provider, k.Label }).IsUnique();
             e.Property(k => k.ChangeHistory).HasColumnType("jsonb");
+        });
+
+        // Organization
+        modelBuilder.Entity<Organization>(e =>
+        {
+            e.HasKey(o => o.Id);
+            e.HasIndex(o => o.OwnerId);
+            e.HasIndex(o => o.Name);
+            e.HasMany(o => o.Teams)
+                .WithOne(t => t.Organization)
+                .HasForeignKey(t => t.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Team
+        modelBuilder.Entity<Team>(e =>
+        {
+            e.HasKey(t => t.Id);
+            e.HasIndex(t => t.OrganizationId);
+            e.HasIndex(t => new { t.OrganizationId, t.Name }).IsUnique();
         });
     }
 }

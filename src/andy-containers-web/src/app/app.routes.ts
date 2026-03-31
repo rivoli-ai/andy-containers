@@ -13,6 +13,8 @@ export const routes: Routes = [
   { path: 'templates', loadComponent: () => import('./features/templates/template-list/template-list.component').then(m => m.TemplateListComponent), canActivate: [authGuard] },
   { path: 'templates/:id', loadComponent: () => import('./features/templates/template-detail/template-detail.component').then(m => m.TemplateDetailComponent), canActivate: [authGuard] },
   { path: 'providers', loadComponent: () => import('./features/providers/provider-list/provider-list.component').then(m => m.ProviderListComponent), canActivate: [authGuard] },
+  { path: 'organizations', loadComponent: () => import('./features/organizations/organization-list.component').then(m => m.OrganizationListComponent), canActivate: [authGuard] },
+  { path: 'organizations/:id', loadComponent: () => import('./features/organizations/organization-detail.component').then(m => m.OrganizationDetailComponent), canActivate: [authGuard] },
   { path: 'workspaces', loadComponent: () => import('./features/workspaces/workspace-list/workspace-list.component').then(m => m.WorkspaceListComponent), canActivate: [authGuard] },
   { path: 'workspaces/create', loadComponent: () => import('./features/workspaces/workspace-create/workspace-create.component').then(m => m.WorkspaceCreateComponent), canActivate: [authGuard] },
   { path: 'workspaces/:id', loadComponent: () => import('./features/workspaces/workspace-detail/workspace-detail.component').then(m => m.WorkspaceDetailComponent), canActivate: [authGuard] },
