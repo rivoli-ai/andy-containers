@@ -77,6 +77,8 @@ import { ContainersApiService } from '../../../core/services/api.service';
 export class ContainerThumbnailComponent implements OnInit, OnDestroy, OnChanges {
   @Input() containerId = '';
   @Input() isRunning = false;
+  @Input() isVnc = false;
+  @Input() vncUrl = '';
   @Input() size: 'sm' | 'md' | 'lg' = 'sm';
 
   ansiText: string | null = null;

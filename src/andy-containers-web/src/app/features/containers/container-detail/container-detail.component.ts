@@ -185,18 +185,18 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
               </a>
             </div>
 
-            <!-- Embedded VNC Viewer (for GUI templates) -->
-            <div *ngIf="isVncTemplate && (connectionInfo?.vncEndpoint || container.vncEndpoint)" class="mt-4 rounded-lg overflow-hidden border border-surface-200 dark:border-surface-700">
-              <div class="flex items-center justify-between px-3 py-2 bg-surface-50 dark:bg-surface-900">
-                <span class="text-xs font-medium text-surface-500">Remote Desktop</span>
-                <div class="flex items-center gap-2">
-                  <a [href]="connectionInfo?.vncEndpoint || container.vncEndpoint" target="_blank" class="text-xs text-primary-600 hover:underline">Open in new tab</a>
-                  <button (click)="vncFullscreen = !vncFullscreen" class="text-xs text-surface-400 hover:text-surface-600">
-                    {{ vncFullscreen ? 'Exit fullscreen' : 'Fullscreen' }}
-                  </button>
-                </div>
-              </div>
-              <iframe [src]="sanitizedVncUrl" class="w-full" [style.height]="vncFullscreen ? 'calc(100vh - 200px)' : '600px'" style="border: none;"></iframe>
+            <!-- VNC Remote Desktop (for GUI templates) -->
+            <div *ngIf="isVncTemplate && (connectionInfo?.vncEndpoint || container.vncEndpoint)" class="mt-4">
+              <a [href]="connectionInfo?.vncEndpoint || container.vncEndpoint" target="_blank"
+                class="block rounded-lg border-2 border-dashed border-surface-300 dark:border-surface-600 hover:border-primary-400 dark:hover:border-primary-500 transition-colors p-8 text-center group cursor-pointer no-underline">
+                <svg class="w-16 h-16 mx-auto text-surface-400 group-hover:text-primary-500 transition-colors" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                  <rect x="2" y="3" width="20" height="14" rx="2"/>
+                  <path d="M8 21h8m-4-4v4"/>
+                </svg>
+                <p class="mt-3 text-lg font-medium text-surface-700 dark:text-surface-300 group-hover:text-primary-600 dark:group-hover:text-primary-400">Open Remote Desktop</p>
+                <p class="text-sm text-surface-400 mt-1">{{ connectionInfo?.vncEndpoint || container.vncEndpoint }}</p>
+                <p class="text-xs text-surface-400 mt-1">Password: <code class="font-mono">container</code></p>
+              </a>
             </div>
 
             <!-- IP Address -->
