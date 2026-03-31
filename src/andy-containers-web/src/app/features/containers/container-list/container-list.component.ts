@@ -1,8 +1,9 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Container } from '../../../core/models';
+import { Container, Template, Workspace } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 import { ContainerStatsBarComponent } from '../../../shared/components/container-stats-bar/container-stats-bar.component';
 import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
@@ -11,7 +12,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
 @Component({
   selector: 'app-container-list',
   standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe, ContainerThumbnailComponent],
+  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe, ContainerThumbnailComponent],
   template: `
     <div class="space-y-6">
       <!-- Header -->
@@ -21,6 +22,16 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
           <p *ngIf="!loading" class="text-sm text-surface-500 dark:text-surface-400 mt-1">{{ totalCount }} container(s)</p>
         </div>
         <div class="flex items-center gap-2">
+          <select [(ngModel)]="filterTemplateId" (ngModelChange)="loadContainers()" name="filterTemplate"
+            class="rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-2 py-1.5 text-sm">
+            <option value="">All templates</option>
+            <option *ngFor="let t of templates" [value]="t.id">{{ t.name }}</option>
+          </select>
+          <select [(ngModel)]="filterWorkspaceId" (ngModelChange)="loadContainers()" name="filterWorkspace"
+            class="rounded-lg border border-surface-300 dark:border-surface-600 bg-white dark:bg-surface-900 px-2 py-1.5 text-sm">
+            <option value="">All workspaces</option>
+            <option *ngFor="let w of workspaces" [value]="w.id">{{ w.name }}</option>
+          </select>
           <button (click)="loadContainers()"
             class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg border border-surface-300 dark:border-surface-600 text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-700">
             Refresh
@@ -131,17 +142,30 @@ export class ContainerListComponent implements OnInit {
   error = '';
   containers: (Container & { _busy?: boolean })[] = [];
   totalCount = 0;
+  templates: Template[] = [];
+  workspaces: Workspace[] = [];
+  filterTemplateId = '';
+  filterWorkspaceId = '';
 
   constructor(private api: ContainersApiService) {}
 
   ngOnInit(): void {
     this.loadContainers();
+    this.api.getTemplates({ take: '100' }).subscribe({
+      next: (res) => { this.templates = res.items; },
+    });
+    this.api.getWorkspaces({ take: '100' }).subscribe({
+      next: (res) => { this.workspaces = res.items; },
+    });
   }
 
   loadContainers(): void {
     this.loading = true;
     this.error = '';
-    this.api.getContainers({ take: '100' }).subscribe({
+    const params: Record<string, string> = { take: '100' };
+    if (this.filterTemplateId) params['templateId'] = this.filterTemplateId;
+    if (this.filterWorkspaceId) params['workspaceId'] = this.filterWorkspaceId;
+    this.api.getContainers(params).subscribe({
       next: (res) => {
         this.containers = res.items;
         this.totalCount = res.totalCount;

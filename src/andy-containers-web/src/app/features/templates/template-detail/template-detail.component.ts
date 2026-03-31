@@ -5,13 +5,14 @@ import { FormsModule } from '@angular/forms';
 import { Subject } from 'rxjs';
 import { debounceTime, takeUntil } from 'rxjs/operators';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Template, TemplateDefinition, ValidationResult } from '../../../core/models';
+import { Template, TemplateDefinition, ValidationResult, Container } from '../../../core/models';
 import { YamlEditorComponent } from '../../../shared/components/yaml-editor/yaml-editor.component';
+import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 
 @Component({
   selector: 'app-template-detail',
   standalone: true,
-  imports: [CommonModule, RouterLink, FormsModule, YamlEditorComponent],
+  imports: [CommonModule, RouterLink, FormsModule, YamlEditorComponent, UptimePipe],
   template: `
     <div class="space-y-6">
       <!-- Header -->
@@ -144,6 +145,19 @@ import { YamlEditorComponent } from '../../../shared/components/yaml-editor/yaml
               Click "Load YAML" to view the template definition file.
             </p>
           </div>
+
+          <!-- Active Containers -->
+          <div class="mt-6 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5">
+            <h2 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-4">Active Containers</h2>
+            <div *ngIf="containers.length === 0" class="text-sm text-surface-400">No containers using this template.</div>
+            <div *ngFor="let c of containers" class="flex items-center justify-between py-2 border-b border-surface-100 dark:border-surface-700 last:border-0">
+              <div>
+                <a [routerLink]="['/containers', c.id]" class="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline">{{ c.name }}</a>
+                <span class="ml-2 text-xs text-surface-400">{{ c.status }}</span>
+              </div>
+              <span *ngIf="c.startedAt" class="text-xs text-surface-400">{{ c.startedAt | uptime }}</span>
+            </div>
+          </div>
         </div>
 
         <!-- Edit YAML Tab -->
@@ -267,6 +281,7 @@ export class TemplateDetailComponent implements OnInit, OnDestroy {
   loading = true;
   error = '';
   template: Template | null = null;
+  containers: Container[] = [];
 
   definition: TemplateDefinition | null = null;
   defLoading = false;
@@ -322,6 +337,9 @@ export class TemplateDetailComponent implements OnInit, OnDestroy {
         this.template = t;
         this.loading = false;
         this.loadDefinition();
+        this.api.getContainers({ templateId: this.templateId, take: '50' }).subscribe({
+          next: (res) => { this.containers = res.items; },
+        });
       },
       error: (err) => {
         this.error = err.message || 'Failed to load template';
