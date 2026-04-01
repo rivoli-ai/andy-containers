@@ -55,18 +55,42 @@ services:
       retries: 3
       start_period: 10s
 
-  # Pre-built desktop images (used as base images for VNC templates)
+  # Desktop images — build with: docker compose --profile images build
   desktop-dotnet:
     build:
       context: ./images/desktop-dotnet
+      additional_contexts:
+        scripts: ./scripts/container
     image: andy-desktop-dotnet:latest
-    profiles: [build-images]
+    profiles: [images]
+    entrypoint: ["true"]
 
   desktop-python:
     build:
       context: ./images/desktop-python
+      additional_contexts:
+        scripts: ./scripts/container
     image: andy-desktop-python:latest
-    profiles: [build-images]
+    profiles: [images]
+    entrypoint: ["true"]
+
+  desktop-alpine-dotnet8:
+    build:
+      context: ./images/desktop-alpine-dotnet8
+      additional_contexts:
+        scripts: ./scripts/container
+    image: andy-desktop-alpine-dotnet8:latest
+    profiles: [images]
+    entrypoint: ["true"]
+
+  desktop-alpine-dotnet10:
+    build:
+      context: ./images/desktop-alpine-dotnet10
+      additional_contexts:
+        scripts: ./scripts/container
+    image: andy-desktop-alpine-dotnet10:latest
+    profiles: [images]
+    entrypoint: ["true"]
 
 volumes:
   postgres_data:
