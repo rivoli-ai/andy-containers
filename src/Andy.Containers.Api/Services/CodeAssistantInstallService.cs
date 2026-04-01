@@ -51,9 +51,12 @@ public class CodeAssistantInstallService : ICodeAssistantInstallService
                 "tar xzf oc.tar.gz && mv opencode /usr/local/bin/opencode-bin && chmod +x /usr/local/bin/opencode-bin && rm -f oc.tar.gz LICENSE README.md && " +
                 "cat > /usr/local/bin/opencode << 'OCWRAP'\n" +
                 "#!/bin/sh\n" +
+                ". /etc/profile 2>/dev/null\n" +
+                "for f in /etc/profile.d/*.sh; do [ -f \"$f\" ] && . \"$f\" 2>/dev/null; done\n" +
                 "M=${LLM_MODEL:-gpt-4o}\n" +
+                "K=${OPENAI_API_KEY:-}\n" +
                 "cat > $HOME/.opencode.json << OCCONF\n" +
-                "{\"providers\":{\"openai\":{\"apiKey\":\"env:OPENAI_API_KEY\"}},\"agents\":{\"coder\":{\"model\":\"$M\",\"maxTokens\":5000},\"task\":{\"model\":\"$M\",\"maxTokens\":5000},\"title\":{\"model\":\"$M\",\"maxTokens\":80}}}\n" +
+                "{\"providers\":{\"openai\":{\"apiKey\":\"$K\"}},\"agents\":{\"coder\":{\"model\":\"$M\",\"maxTokens\":5000},\"task\":{\"model\":\"$M\",\"maxTokens\":5000},\"title\":{\"model\":\"$M\",\"maxTokens\":80}}}\n" +
                 "OCCONF\n" +
                 "exec /usr/local/bin/opencode-bin \"$@\"\n" +
                 "OCWRAP\n" +

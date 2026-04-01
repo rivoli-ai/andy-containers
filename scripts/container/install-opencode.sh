@@ -19,12 +19,15 @@ rm -f oc.tar.gz LICENSE README.md
 # Create wrapper that writes config before each launch
 cat > /usr/local/bin/opencode << 'WRAPPER'
 #!/bin/sh
+. /etc/profile 2>/dev/null
+for f in /etc/profile.d/*.sh; do [ -f "$f" ] && . "$f" 2>/dev/null; done
 M=${LLM_MODEL:-gpt-4o}
+K=${OPENAI_API_KEY:-}
 cat > "$HOME/.opencode.json" << CONF
 {
   "providers": {
     "openai": {
-      "apiKey": "env:OPENAI_API_KEY"
+      "apiKey": "$K"
     }
   },
   "agents": {
