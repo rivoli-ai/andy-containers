@@ -151,7 +151,6 @@ public class TerminalController : ControllerBase
         var psi = new ProcessStartInfo
         {
             FileName = "/usr/bin/script",
-            ArgumentList = { "-q", "/dev/null", "/bin/bash", "-c", wrapperCmd },
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -166,6 +165,24 @@ public class TerminalController : ControllerBase
                 ["LC_ALL"] = "C.UTF-8"
             }
         };
+
+        // macOS script: script -q /dev/null /bin/bash -c "cmd"
+        // Linux script: script -q -c "cmd" /dev/null
+        if (OperatingSystem.IsMacOS())
+        {
+            psi.ArgumentList.Add("-q");
+            psi.ArgumentList.Add("/dev/null");
+            psi.ArgumentList.Add("/bin/bash");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(wrapperCmd);
+        }
+        else
+        {
+            psi.ArgumentList.Add("-q");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(wrapperCmd);
+            psi.ArgumentList.Add("/dev/null");
+        }
 
         var process = new Process { StartInfo = psi };
 
