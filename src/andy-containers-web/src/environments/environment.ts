@@ -1,6 +1,6 @@
 export const environment = {
   production: false,
-  apiUrl: '/api',
+  apiUrl: 'https://localhost:4200/api',
   oidc: {
     authority: 'https://localhost:5001',
     clientId: 'andy-containers-web',

@@ -29,6 +29,7 @@ services:
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=postgres
       - AndyAuth__Authority=https://host.docker.internal:5001
       - AndyAuth__Audience=urn:andy-containers-api
+      - AndyAuth__RequireHttpsMetadata=false
       - Rbac__ApiBaseUrl=https://host.docker.internal:7003
       - Rbac__ApplicationCode=containers
       - Cors__Origins__0=https://localhost:5280
@@ -39,6 +40,7 @@ services:
     ports:
       - "5200:8443"
       - "5201:8080"
+      - "4200:8443"
     volumes:
       - ./certs:/usr/local/share/ca-certificates/custom:ro
       # Optional: mount a real cert to override the built-in self-signed one
@@ -53,53 +55,18 @@ services:
       retries: 3
       start_period: 10s
 
-  web:
-    build:
-      context: ./src/andy-containers-web
-      dockerfile: Dockerfile
-    container_name: andy-containers-web
-    depends_on:
-      - api
-    ports:
-      - "4200:80"
-
-  # Desktop images built automatically — used as base images for VNC templates
-  # These don't run as services; they just build the images for container provisioning
+  # Pre-built desktop images (used as base images for VNC templates)
   desktop-dotnet:
     build:
       context: ./images/desktop-dotnet
-      additional_contexts:
-        scripts: ./scripts/container
     image: andy-desktop-dotnet:latest
-    profiles: [images]
-    entrypoint: ["true"]
+    profiles: [build-images]
 
   desktop-python:
     build:
       context: ./images/desktop-python
-      additional_contexts:
-        scripts: ./scripts/container
     image: andy-desktop-python:latest
-    profiles: [images]
-    entrypoint: ["true"]
-
-  desktop-alpine-dotnet8:
-    build:
-      context: ./images/desktop-alpine-dotnet8
-      additional_contexts:
-        scripts: ./scripts/container
-    image: andy-desktop-alpine-dotnet8:latest
-    profiles: [images]
-    entrypoint: ["true"]
-
-  desktop-alpine-dotnet10:
-    build:
-      context: ./images/desktop-alpine-dotnet10
-      additional_contexts:
-        scripts: ./scripts/container
-    image: andy-desktop-alpine-dotnet10:latest
-    profiles: [images]
-    entrypoint: ["true"]
+    profiles: [build-images]
 
 volumes:
   postgres_data:
