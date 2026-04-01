@@ -13,8 +13,9 @@ dbus-daemon --system --fork 2>/dev/null || true
 # Start SSH server
 /usr/sbin/sshd 2>/dev/null || true
 
-# Source env vars for the session
+# Source env vars for the session (including vars injected during provisioning)
 [ -f /etc/profile ] && . /etc/profile 2>/dev/null || true
+for f in /etc/profile.d/*.sh; do [ -f "$f" ] && . "$f" 2>/dev/null; done
 
 # Start VNC server
 # Alpine uses simpler syntax, Ubuntu supports more flags

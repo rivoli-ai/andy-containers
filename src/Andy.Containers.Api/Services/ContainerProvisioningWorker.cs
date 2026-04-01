@@ -173,7 +173,8 @@ public class ContainerProvisioningWorker : BackgroundService
                             return $"echo '{kv.Key}={escaped}' >> /etc/environment && " +
                                    $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.bashrc && " +
                                    $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.profile && " +
-                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile";
+                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile && " +
+                                   $"mkdir -p /etc/profile.d && echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile.d/andy-env.sh";
                         }));
                     await containerService.ExecAsync(job.ContainerId, $"{exportCommands} && {persistCmd}", stoppingToken);
                     _logger.LogInformation("Injected {Count} environment variable(s) into container {ContainerId}",
