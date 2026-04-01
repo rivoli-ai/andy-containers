@@ -42,9 +42,10 @@ services:
       - "5201:8080"
       - "4200:8443"
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./certs:/usr/local/share/ca-certificates/custom:ro
-      # Optional: mount a real cert to override the built-in self-signed one
-      # - ${HOME}/.aspnet/https:/https:ro
+      - ./images:/app/images:ro
+      - ./scripts/container:/app/scripts/container:ro
     depends_on:
       postgres:
         condition: service_healthy
