@@ -1,3 +1,11 @@
+# ── Node build stage (Angular SPA) ────────────────────────────────────────────
+FROM node:22-alpine AS node-build
+WORKDIR /node-build
+COPY src/andy-containers-web/package.json src/andy-containers-web/package-lock.json ./
+RUN npm ci
+COPY src/andy-containers-web/ ./
+RUN npm run build
+
 # ── Build stage ───────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /build
@@ -39,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
+COPY --from=node-build /node-build/dist/andy-containers-web/browser ./wwwroot
 
 # Generate a self-signed dev certificate at build time so no host cert is needed.
 # If a real cert is mounted at /https/aspnetapp.pfx via docker-compose, it takes precedence.

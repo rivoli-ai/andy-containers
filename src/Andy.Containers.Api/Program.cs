@@ -135,6 +135,22 @@ try
                 options.Authority = authority;
                 options.Audience = builder.Configuration["AndyAuth:Audience"];
                 options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+                if (builder.Environment.IsDevelopment())
+                {
+                    options.BackchannelHttpHandler = new HttpClientHandler
+                    {
+                        ServerCertificateCustomValidationCallback =
+                            HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                    };
+                    // Accept localhost:5001 issuer (fixed in andy-auth) even when
+                    // authority is host.docker.internal:5001
+                    var authorityBase = authority.TrimEnd('/');
+                    options.TokenValidationParameters.ValidIssuers = new[]
+                    {
+                        authorityBase, authorityBase + "/",
+                        "https://localhost:5001", "https://localhost:5001/"
+                    };
+                }
             });
         builder.Services.AddAuthorization(options =>
         {
@@ -151,6 +167,24 @@ try
             options.ApiBaseUrl = rbacBaseUrl;
             options.ApplicationCode = "containers";
         });
+
+        // TODO: Remove once RBAC NuGet packages are updated — bypass permission checks in dev
+        if (builder.Environment.IsDevelopment())
+        {
+            builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider,
+                Andy.Containers.Api.Services.AllowAllPolicyProvider>();
+        }
+
+        // In development, skip SSL validation for self-signed certs on RBAC API
+        if (builder.Environment.IsDevelopment())
+        {
+            builder.Services.ConfigureHttpClientDefaults(b =>
+                b.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback =
+                        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                }));
+        }
     }
     else
     {
@@ -195,6 +229,9 @@ try
         app.UseSwaggerUI();
     }
 
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+
     app.UseCors();
 
     // MCP endpoint
@@ -232,6 +269,7 @@ try
     app.UseAuthorization();
     app.MapControllers().RequireAuthorization();
     app.MapHealthChecks("/health").AllowAnonymous();
+    app.MapFallbackToFile("index.html");
 
     Log.Information("Andy Containers API starting");
     Log.Information("Swagger UI: https://localhost:5200/swagger");
