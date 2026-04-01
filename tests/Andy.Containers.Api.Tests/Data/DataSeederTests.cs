@@ -18,11 +18,12 @@ public class DataSeederTests
         await DataSeeder.SeedAsync(db);
 
         var templates = await db.Templates.ToListAsync();
-        templates.Should().HaveCount(10);
+        templates.Should().HaveCount(12);
         templates.Select(t => t.Code).Should().BeEquivalentTo(
             "full-stack", "agent-sandbox-ui", "dotnet-8-vscode",
             "python-3.12-vscode", "angular-18-vscode", "andy-cli-dev", "dotnet-10-cli",
-            "dotnet-8-alpine", "dotnet-8-desktop", "python-3.12-desktop");
+            "dotnet-8-alpine", "dotnet-8-desktop", "python-3.12-desktop",
+            "dotnet-8-alpine-desktop", "dotnet-10-alpine-desktop");
     }
 
     [Fact]

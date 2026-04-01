@@ -185,13 +185,18 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
               </a>
             </div>
 
-            <!-- Embedded VNC Viewer (for GUI templates) -->
+            <!-- Embedded VNC Remote Desktop (HTTPS) -->
             <div *ngIf="isVncTemplate && (connectionInfo?.vncEndpoint || container.vncEndpoint)" class="mt-4 rounded-lg overflow-hidden border border-surface-200 dark:border-surface-700">
               <div class="flex items-center justify-between px-3 py-2 bg-surface-50 dark:bg-surface-900">
-                <span class="text-xs font-medium text-surface-500">Remote Desktop</span>
-                <a [href]="connectionInfo?.vncEndpoint || container.vncEndpoint" target="_blank" class="text-xs text-primary-600 hover:underline">Open in new tab</a>
+                <span class="text-xs font-medium text-surface-500">Remote Desktop <span class="text-surface-400">(password: container)</span></span>
+                <div class="flex items-center gap-2">
+                  <a [href]="connectionInfo?.vncEndpoint || container.vncEndpoint" target="_blank" class="text-xs text-primary-600 hover:underline">Open in new tab</a>
+                  <button (click)="vncFullscreen = !vncFullscreen" class="text-xs text-surface-400 hover:text-surface-600">
+                    {{ vncFullscreen ? 'Exit fullscreen' : 'Fullscreen' }}
+                  </button>
+                </div>
               </div>
-              <iframe [src]="sanitizedVncUrl" class="w-full" style="height: 500px; border: none;"></iframe>
+              <iframe [src]="sanitizedVncUrl" class="w-full" [style.height]="vncFullscreen ? 'calc(100vh - 200px)' : '600px'" style="border: none;"></iframe>
             </div>
 
             <!-- IP Address -->
@@ -479,13 +484,22 @@ export class ContainerDetailComponent implements OnInit, OnDestroy {
     return Object.entries(this.connectionInfo.portMappings);
   }
 
+  vncFullscreen = false;
+
   get isVncTemplate(): boolean {
     return (this.container?.template as any)?.guiType === 'vnc';
   }
 
+  private _cachedVncUrl: string = '';
+  private _cachedSanitizedVncUrl: SafeResourceUrl | null = null;
+
   get sanitizedVncUrl(): SafeResourceUrl {
     const url = this.connectionInfo?.vncEndpoint || this.container?.vncEndpoint || '';
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    if (url !== this._cachedVncUrl || !this._cachedSanitizedVncUrl) {
+      this._cachedVncUrl = url;
+      this._cachedSanitizedVncUrl = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    }
+    return this._cachedSanitizedVncUrl;
   }
 
   loadContainer(): void {

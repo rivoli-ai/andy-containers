@@ -98,8 +98,10 @@ public class ContainerProvisioningWorker : BackgroundService
                 Name = job.ContainerName,
                 Resources = job.Resources ?? new ResourceSpec(),
                 Gpu = job.Gpu,
-                // Always expose SSH (port 22) with a dynamic host port so users
-                // can connect from their native terminal app via ssh://
+                // VNC desktop images use /start.sh which starts VNC+websockify+SSH
+                Command = string.Equals(job.GuiType, "vnc", StringComparison.OrdinalIgnoreCase)
+                    ? "/start.sh" : null,
+                // Always expose SSH (port 22) with a dynamic host port
                 PortMappings = portMappings
             };
 
@@ -170,7 +172,9 @@ public class ContainerProvisioningWorker : BackgroundService
                             var escaped = kv.Value.Replace("'", "'\\''");
                             return $"echo '{kv.Key}={escaped}' >> /etc/environment && " +
                                    $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.bashrc && " +
-                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.profile";
+                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.profile && " +
+                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile && " +
+                                   $"mkdir -p /etc/profile.d && echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile.d/andy-env.sh";
                         }));
                     await containerService.ExecAsync(job.ContainerId, $"{exportCommands} && {persistCmd}", stoppingToken);
                     _logger.LogInformation("Injected {Count} environment variable(s) into container {ContainerId}",

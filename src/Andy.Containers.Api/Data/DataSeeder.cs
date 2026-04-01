@@ -167,6 +167,8 @@ public static class DataSeeder
         var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
         var dotnetDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000009");
         var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
+        var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
+        var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
 
         db.Templates.AddRange(
             new ContainerTemplate
@@ -269,18 +271,38 @@ public static class DataSeeder
                 IsPublished = true, Tags = ["python", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = DesktopScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = alpineDotnet8DesktopId, Code = "dotnet-8-alpine-desktop", Name = ".NET 8 Alpine Desktop (VNC)",
+                Description = "Minimal .NET 8 SDK on Alpine with XFCE4 remote desktop and VNC access",
+                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet8:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
+                IsPublished = true, Tags = ["dotnet", "alpine", "desktop", "vnc", "minimal"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
+                Scripts = DesktopScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = alpineDotnet10DesktopId, Code = "dotnet-10-alpine-desktop", Name = ".NET 10 Alpine Desktop (VNC)",
+                Description = ".NET 10 SDK on Alpine with XFCE4 remote desktop and VNC access",
+                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet10:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
+                IsPublished = true, Tags = ["dotnet", "dotnet-10", "alpine", "desktop", "vnc"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
+                Scripts = DesktopScriptsJson
             }
         );
 
         // Seed dependencies for all templates
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId);
 
         await db.SaveChangesAsync();
     }
 
     private static void SeedDependencySpecs(ContainersDbContext db,
         Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id, Guid dotnetAlpineId,
-        Guid dotnetDesktopId, Guid pythonDesktopId)
+        Guid dotnetDesktopId, Guid pythonDesktopId, Guid alpineDotnet8DesktopId, Guid alpineDotnet10DesktopId)
     {
         db.DependencySpecs.AddRange(
             // Full Stack: dotnet + python + node + angular + git + code-server
@@ -348,7 +370,19 @@ public static class DataSeeder
             new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 3 },
             new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 4 },
             new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 5 },
-            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 6 }
+            new DependencySpec { TemplateId = pythonDesktopId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 6 },
+
+            // .NET 8 Alpine Desktop
+            new DependencySpec { TemplateId = alpineDotnet8DesktopId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "8.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = alpineDotnet8DesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
+            new DependencySpec { TemplateId = alpineDotnet8DesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 3 },
+            new DependencySpec { TemplateId = alpineDotnet8DesktopId, Type = DependencyType.OsPackage, Name = "tigervnc", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 },
+
+            // .NET 10 Alpine Desktop
+            new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "10.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
+            new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 3 },
+            new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.OsPackage, Name = "tigervnc", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 }
         );
     }
 
@@ -362,6 +396,8 @@ public static class DataSeeder
         var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
         var dotnetDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000009");
         var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
+        var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
+        var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
 
         // Check which new templates are missing
         var newTemplates = new Dictionary<Guid, ContainerTemplate>
@@ -405,6 +441,26 @@ public static class DataSeeder
                 IsPublished = true, Tags = ["python", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = DesktopScriptsJson
+            },
+            [alpineDotnet8DesktopId] = new ContainerTemplate
+            {
+                Id = alpineDotnet8DesktopId, Code = "dotnet-8-alpine-desktop", Name = ".NET 8 Alpine Desktop (VNC)",
+                Description = "Minimal .NET 8 SDK on Alpine with XFCE4 remote desktop and VNC access",
+                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet8:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
+                IsPublished = true, Tags = ["dotnet", "alpine", "desktop", "vnc", "minimal"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
+                Scripts = DesktopScriptsJson
+            },
+            [alpineDotnet10DesktopId] = new ContainerTemplate
+            {
+                Id = alpineDotnet10DesktopId, Code = "dotnet-10-alpine-desktop", Name = ".NET 10 Alpine Desktop (VNC)",
+                Description = ".NET 10 SDK on Alpine with XFCE4 remote desktop and VNC access",
+                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet10:latest",
+                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
+                IsPublished = true, Tags = ["dotnet", "dotnet-10", "alpine", "desktop", "vnc"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
+                Scripts = DesktopScriptsJson
             }
         };
 
@@ -439,6 +495,8 @@ public static class DataSeeder
             Guid.Parse("00000002-0001-0001-0001-000000000008"),
             Guid.Parse("00000002-0001-0001-0001-000000000009"),
             Guid.Parse("00000002-0001-0001-0001-000000000010"),
+            Guid.Parse("00000002-0001-0001-0001-000000000011"),
+            Guid.Parse("00000002-0001-0001-0001-000000000012"),
         };
 
         var templates = await db.Templates
@@ -457,6 +515,8 @@ public static class DataSeeder
             ["dotnet-8-alpine"] = DotnetAlpineScriptsJson,
             ["dotnet-8-desktop"] = DesktopScriptsJson,
             ["python-3.12-desktop"] = DesktopScriptsJson,
+            ["dotnet-8-alpine-desktop"] = DesktopScriptsJson,
+            ["dotnet-10-alpine-desktop"] = DesktopScriptsJson,
         };
 
         // Also fix base images for desktop templates (they may have been seeded with ubuntu:24.04)
@@ -464,6 +524,8 @@ public static class DataSeeder
         {
             ["dotnet-8-desktop"] = "andy-desktop-dotnet:latest",
             ["python-3.12-desktop"] = "andy-desktop-python:latest",
+            ["dotnet-8-alpine-desktop"] = "andy-desktop-alpine-dotnet8:latest",
+            ["dotnet-10-alpine-desktop"] = "andy-desktop-alpine-dotnet10:latest",
         };
 
         var updated = false;
@@ -502,8 +564,10 @@ public static class DataSeeder
         var dotnetAlpineId = Guid.Parse("00000002-0001-0001-0001-000000000008");
         var dotnetDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000009");
         var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
+        var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
+        var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
 
-        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId };
+        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId };
 
         // Find which seed templates have no dependency specs at all
         var templatesWithDeps = await db.DependencySpecs
@@ -518,7 +582,7 @@ public static class DataSeeder
 
         // Only seed deps for templates that have none — use a temporary context
         // to avoid duplicating the full-stack deps that may already exist
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId);
 
         // Remove specs for templates that already had them (we just re-added everything)
         var duplicates = db.ChangeTracker.Entries<DependencySpec>()

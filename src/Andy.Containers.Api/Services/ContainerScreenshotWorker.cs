@@ -91,9 +91,18 @@ public class ContainerScreenshotWorker : BackgroundService
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     timeoutCts.CancelAfter(ExecTimeout);
 
+                    // Check if VNC template
+                    var template = container.TemplateId != Guid.Empty
+                        ? await db.Templates.FindAsync([container.TemplateId], ct)
+                        : null;
+                    var isVnc = template?.GuiType == "vnc";
+                    var captureCmd = isVnc
+                        ? "echo '[VNC Desktop - connect via noVNC on port 6080]'"
+                        : "tmux capture-pane -p -t web -S -40 2>/dev/null || echo '[No active terminal session]'";
+
                     var result = await infra.ExecAsync(
                         container.ExternalId,
-                        "tmux capture-pane -p -t web -S -40 2>/dev/null || echo '[No active terminal session]'",
+                        captureCmd,
                         timeoutCts.Token);
 
                     var ansiText = result.StdOut;

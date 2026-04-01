@@ -124,7 +124,9 @@ public class TerminalController : ControllerBase
         var tmuxSession = "web";
         var shellCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
                        $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
+                       $"[ -f /etc/profile ] && . /etc/profile 2>/dev/null; " +
                        $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
+                       $"[ -f ~/.profile ] && . ~/.profile 2>/dev/null; " +
                        $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
                        $"command -v tmux >/dev/null 2>&1 && {{ " +
                        $"tmux set-option -g default-terminal xterm-256color 2>/dev/null; " +
@@ -133,7 +135,7 @@ public class TerminalController : ControllerBase
                        $"exec tmux attach -d -t {tmuxSession}; " +
                        $"else " +
                        $"exec tmux new-session -s {tmuxSession} -x {cols} -y {rows}; " +
-                       $"fi; }} || exec bash";
+                       $"fi; }} || exec sh";
 
         var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
