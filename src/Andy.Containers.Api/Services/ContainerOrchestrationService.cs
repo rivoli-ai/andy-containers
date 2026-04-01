@@ -241,10 +241,30 @@ public class ContainerOrchestrationService : IContainerService
         if (codeAssistant is not null)
         {
             var assistantProvider = MapCodeAssistantToApiKeyProvider(codeAssistant.Tool);
+            // Try primary provider first, then fallback to compatible providers
             var resolvedCred = await _apiKeyService.ResolveCredentialAsync(container.OwnerId, assistantProvider, ct);
+            if (resolvedCred is null)
+            {
+                // For OpenAI-compatible tools, try OpenRouter, then OpenAI, then Custom
+                var fallbackProviders = new[] { ApiKeyProvider.OpenRouter, ApiKeyProvider.OpenAI, ApiKeyProvider.OpenAiCompatible, ApiKeyProvider.Custom };
+                foreach (var fallback in fallbackProviders)
+                {
+                    if (fallback == assistantProvider) continue;
+                    resolvedCred = await _apiKeyService.ResolveCredentialAsync(container.OwnerId, fallback, ct);
+                    if (resolvedCred is not null)
+                    {
+                        _logger.LogInformation("Primary provider {Primary} not found, using fallback {Fallback}",
+                            assistantProvider, fallback);
+                        assistantProvider = fallback;
+                        break;
+                    }
+                }
+            }
             if (resolvedCred is not null)
             {
-                var envVarName = codeAssistant.ApiKeyEnvVar ?? GetDefaultEnvVar(assistantProvider);
+                // Always use the tool's expected env var, not the fallback provider's
+                var originalProvider = MapCodeAssistantToApiKeyProvider(codeAssistant.Tool);
+                var envVarName = codeAssistant.ApiKeyEnvVar ?? GetDefaultEnvVar(originalProvider);
                 envVars = new Dictionary<string, string> { [envVarName] = resolvedCred.ApiKey };
                 _logger.LogInformation("Resolved API key for {Provider}, will inject as {EnvVar}",
                     assistantProvider, envVarName);
