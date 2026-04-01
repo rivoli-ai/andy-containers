@@ -135,18 +135,48 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             _logger.LogWarning(ex, "Failed to check for existing container {Name}", containerName);
         }
 
-        // Pull image if not present
+        // Check if image exists locally first
+        bool imageExists = false;
         try
         {
-            await _client.Images.CreateImageAsync(
-                new ImagesCreateParameters { FromImage = spec.ImageReference },
-                null,
-                new Progress<JSONMessage>(m => _logger.LogDebug("Pull: {Status}", m.Status)),
-                ct);
+            await _client.Images.InspectImageAsync(spec.ImageReference, ct);
+            imageExists = true;
         }
-        catch (Exception ex)
+        catch { }
+
+        if (!imageExists)
         {
-            _logger.LogWarning(ex, "Failed to pull image {Image}, trying local", spec.ImageReference);
+            // For andy-desktop-* images, build from local Dockerfiles
+            if (spec.ImageReference.StartsWith("andy-desktop-"))
+            {
+                _logger.LogInformation("Building local desktop image {Image}", spec.ImageReference);
+                try
+                {
+                    await BuildDesktopImageAsync(spec.ImageReference, ct);
+                    imageExists = true;
+                }
+                catch (Exception buildEx)
+                {
+                    _logger.LogWarning(buildEx, "Failed to build desktop image {Image}", spec.ImageReference);
+                }
+            }
+
+            // Try pulling from registry if not a local build or build failed
+            if (!imageExists)
+            {
+                try
+                {
+                    await _client.Images.CreateImageAsync(
+                        new ImagesCreateParameters { FromImage = spec.ImageReference },
+                        null,
+                        new Progress<JSONMessage>(m => _logger.LogDebug("Pull: {Status}", m.Status)),
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to pull image {Image}, trying local", spec.ImageReference);
+                }
+            }
         }
 
         var portBindings = new Dictionary<string, IList<PortBinding>>();
@@ -339,5 +369,60 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             StdOut = stdout,
             StdErr = stderr
         };
+    }
+
+    /// <summary>
+    /// Builds a desktop image from local Dockerfiles using docker CLI.
+    /// </summary>
+    private async Task BuildDesktopImageAsync(string imageReference, CancellationToken ct)
+    {
+        var imageName = imageReference.Replace(":latest", "").Replace("andy-", "");
+
+        // Search upward for the images/ directory
+        string? buildDir = null;
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, "images", imageName);
+            if (Directory.Exists(candidate)) { buildDir = candidate; break; }
+            dir = dir.Parent;
+        }
+
+        if (buildDir == null)
+            throw new InvalidOperationException($"Build directory not found for {imageReference}");
+
+        var scriptsDir = Path.Combine(Path.GetDirectoryName(buildDir)!, "..", "scripts", "container");
+
+        _logger.LogInformation("Building desktop image {Image} from {Dir}", imageReference, buildDir);
+
+        var args = $"build -t {imageReference}";
+        if (Directory.Exists(scriptsDir))
+            args += $" --build-context scripts={Path.GetFullPath(scriptsDir)}";
+        args += $" {buildDir}";
+
+        var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "docker",
+                Arguments = args,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            }
+        };
+
+        process.Start();
+        _ = await process.StandardOutput.ReadToEndAsync(ct);
+        var stderr = await process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+
+        if (process.ExitCode != 0)
+        {
+            _logger.LogError("Desktop image build failed: {Stderr}", stderr[..Math.Min(500, stderr.Length)]);
+            throw new InvalidOperationException($"Failed to build {imageReference}");
+        }
+
+        _logger.LogInformation("Desktop image {Image} built successfully", imageReference);
     }
 }
