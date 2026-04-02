@@ -342,7 +342,9 @@ public class ContainerOrchestrationService : IContainerService
             GuiType: template.GuiType,
             ContainerUser: container.ContainerUser ?? "root",
             OwnerEmail: request.OwnerEmail,
-            OwnerPreferredUsername: request.OwnerPreferredUsername);
+            OwnerPreferredUsername: request.OwnerPreferredUsername,
+            TemplateName: template.Name,
+            ProviderName: provider.Name);
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",

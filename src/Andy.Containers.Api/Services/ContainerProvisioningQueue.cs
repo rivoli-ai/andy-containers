@@ -18,7 +18,9 @@ public record ContainerProvisionJob(
     string GuiType = "none",
     string ContainerUser = "root",
     string? OwnerEmail = null,
-    string? OwnerPreferredUsername = null);
+    string? OwnerPreferredUsername = null,
+    string? TemplateName = null,
+    string? ProviderName = null);
 
 public class ContainerProvisioningQueue
 {
