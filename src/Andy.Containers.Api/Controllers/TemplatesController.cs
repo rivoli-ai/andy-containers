@@ -18,14 +18,16 @@ public class TemplatesController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly IYamlTemplateParser _parser;
     private readonly IOrganizationMembershipService _orgMembership;
+    private readonly ITemplateBuildService _buildService;
 
-    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, IYamlTemplateParser parser, IOrganizationMembershipService orgMembership)
+    public TemplatesController(ContainersDbContext db, IWebHostEnvironment env, ICurrentUserService currentUser, IYamlTemplateParser parser, IOrganizationMembershipService orgMembership, ITemplateBuildService buildService)
     {
         _db = db;
         _env = env;
         _currentUser = currentUser;
         _parser = parser;
         _orgMembership = orgMembership;
+        _buildService = buildService;
     }
 
     [RequirePermission("template:read")]
@@ -293,6 +295,43 @@ public class TemplatesController : ControllerBase
         if (template.CatalogScope == CatalogScope.Global) return false;
         // User-scoped templates can be modified by their owner
         return template.OwnerId == _currentUser.GetUserId();
+    }
+
+    [RequirePermission("template:read")]
+    [HttpGet("{code}/image-status")]
+    public async Task<IActionResult> GetImageStatus(string code, CancellationToken ct)
+    {
+        var record = await _buildService.GetBuildStatusAsync(code, ct);
+        if (record is null)
+            return Ok(new { status = "none", message = "Not a custom image template" });
+        return Ok(record);
+    }
+
+    [RequirePermission("template:read")]
+    [HttpGet("image-statuses")]
+    public async Task<IActionResult> GetAllImageStatuses(CancellationToken ct)
+    {
+        var records = await _buildService.GetAllBuildStatusesAsync(ct);
+        return Ok(records);
+    }
+
+    [RequirePermission("template:write")]
+    [HttpPost("{code}/build-image")]
+    public async Task<IActionResult> BuildImage(string code, CancellationToken ct)
+    {
+        try
+        {
+            var record = await _buildService.TriggerBuildAsync(code, ct);
+            return Accepted(record);
+        }
+        catch (ArgumentException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
     }
 }
 

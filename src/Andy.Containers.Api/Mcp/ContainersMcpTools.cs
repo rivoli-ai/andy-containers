@@ -421,6 +421,8 @@ public class ContainersMcpTools
             TemplateCode = templateCode,
             ProviderCode = providerCode,
             OwnerId = userId,
+            OwnerEmail = _currentUser.GetEmail(),
+            OwnerPreferredUsername = _currentUser.GetDisplayName(),
             Source = CreationSource.Mcp,
         };
 

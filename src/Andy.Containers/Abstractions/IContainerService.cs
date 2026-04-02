@@ -44,6 +44,8 @@ public class CreateContainerRequest
     public TimeSpan? ExpiresAfter { get; set; }
     public CreationSource Source { get; set; } = CreationSource.Unknown;
     public string? ClientInfo { get; set; }
+    public string? OwnerEmail { get; set; }
+    public string? OwnerPreferredUsername { get; set; }
 }
 
 public class GitRepositoryConfig

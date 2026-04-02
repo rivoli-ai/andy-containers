@@ -395,7 +395,7 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
         _logger.LogInformation("Building desktop image {Image} from {Dir}", imageReference, buildDir);
 
-        var args = $"build -t {imageReference}";
+        var args = $"buildx build -t {imageReference}";
         if (Directory.Exists(scriptsDir))
             args += $" --build-context scripts={Path.GetFullPath(scriptsDir)}";
         args += $" {buildDir}";

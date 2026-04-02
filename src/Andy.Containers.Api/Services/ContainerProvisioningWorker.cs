@@ -156,6 +156,52 @@ public class ContainerProvisioningWorker : BackgroundService
                 }
             }
 
+            // Create non-root user inside the container
+            if (job.ContainerUser != "root")
+            {
+                try
+                {
+                    var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
+                    var userSetupCmd =
+                        $"id {job.ContainerUser} >/dev/null 2>&1 || " +
+                        $"(command -v useradd >/dev/null 2>&1 && useradd -m -s /bin/bash {job.ContainerUser} || " +
+                        $"adduser -D -s /bin/bash {job.ContainerUser}) && " +
+                        // Grant sudo
+                        $"(command -v apt-get >/dev/null 2>&1 && apt-get install -y -qq sudo >/dev/null 2>&1 || " +
+                        $"command -v apk >/dev/null 2>&1 && apk add --no-cache sudo >/dev/null 2>&1 || true) && " +
+                        $"echo '{job.ContainerUser} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/{job.ContainerUser} && " +
+                        $"chmod 0440 /etc/sudoers.d/{job.ContainerUser}";
+
+                    var userResult = await containerService.ExecAsync(job.ContainerId, userSetupCmd, TimeSpan.FromMinutes(2), stoppingToken);
+                    if (userResult.ExitCode != 0)
+                        _logger.LogWarning("User creation exited with {ExitCode} for container {ContainerId}: {StdErr}",
+                            userResult.ExitCode, job.ContainerId, userResult.StdErr);
+                    else
+                        _logger.LogInformation("Created user {User} in container {ContainerId}", job.ContainerUser, job.ContainerId);
+
+                    // Configure git user
+                    if (!string.IsNullOrEmpty(job.OwnerEmail) || !string.IsNullOrEmpty(job.OwnerPreferredUsername))
+                    {
+                        var gitConfigCmd = $"su - {job.ContainerUser} -c '";
+                        if (!string.IsNullOrEmpty(job.OwnerPreferredUsername))
+                            gitConfigCmd += $"git config --global user.name \"{job.OwnerPreferredUsername.Replace("\"", "\\\"")}\" && ";
+                        else if (!string.IsNullOrEmpty(job.OwnerEmail))
+                            gitConfigCmd += $"git config --global user.name \"{job.OwnerEmail.Split('@')[0]}\" && ";
+                        if (!string.IsNullOrEmpty(job.OwnerEmail))
+                            gitConfigCmd += $"git config --global user.email \"{job.OwnerEmail}\"";
+                        else
+                            gitConfigCmd = gitConfigCmd.TrimEnd('&', ' ');
+                        gitConfigCmd += "'";
+                        await containerService.ExecAsync(job.ContainerId, gitConfigCmd, stoppingToken);
+                    }
+                }
+                catch (Exception userEx)
+                {
+                    _logger.LogWarning(userEx, "Failed to create user {User} in container {ContainerId}",
+                        job.ContainerUser, job.ContainerId);
+                }
+            }
+
             // Inject environment variables (including API keys) into the container
             if (job.EnvironmentVariables is { Count: > 0 })
             {
@@ -177,6 +223,22 @@ public class ContainerProvisioningWorker : BackgroundService
                                    $"mkdir -p /etc/profile.d && echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile.d/andy-env.sh";
                         }));
                     await containerService.ExecAsync(job.ContainerId, $"{exportCommands} && {persistCmd}", stoppingToken);
+
+                    // Also persist to user's home directory
+                    if (job.ContainerUser != "root")
+                    {
+                        var userHome = $"/home/{job.ContainerUser}";
+                        var userPersistCmd = string.Join(" && ",
+                            job.EnvironmentVariables.Select(kv =>
+                            {
+                                var escaped = kv.Value.Replace("'", "'\\''");
+                                return $"echo 'export {kv.Key}=\"{escaped}\"' >> {userHome}/.bashrc && " +
+                                       $"echo 'export {kv.Key}=\"{escaped}\"' >> {userHome}/.profile && " +
+                                       $"chown {job.ContainerUser}:{job.ContainerUser} {userHome}/.bashrc {userHome}/.profile";
+                            }));
+                        await containerService.ExecAsync(job.ContainerId, userPersistCmd, stoppingToken);
+                    }
+
                     _logger.LogInformation("Injected {Count} environment variable(s) into container {ContainerId}",
                         job.EnvironmentVariables.Count, job.ContainerId);
                 }

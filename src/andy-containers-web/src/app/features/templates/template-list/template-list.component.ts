@@ -2,7 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Template } from '../../../core/models';
+import { Template, ImageBuildRecord, TemplateBuildStatus } from '../../../core/models';
 
 @Component({
   selector: 'app-template-list',
@@ -33,10 +33,20 @@ import { Template } from '../../../core/models';
       <!-- Grid of template cards -->
       <div *ngIf="!loading && !error" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <a *ngFor="let t of templates" [routerLink]="['/templates', t.id]"
-          class="group block rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-5 hover:shadow-md hover:border-primary-300 dark:hover:border-primary-600 hover:-translate-y-0.5 transition-all cursor-pointer no-underline">
+          class="group block rounded-lg border bg-white dark:bg-surface-800 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer no-underline border-l-4"
+          [ngClass]="isCustomImage(t)
+            ? 'border-l-amber-500 border-amber-200 dark:border-amber-800 hover:border-amber-300 dark:hover:border-amber-600'
+            : 'border-l-sky-500 border-sky-200 dark:border-sky-800 hover:border-sky-300 dark:hover:border-sky-600'">
           <div class="flex items-start justify-between mb-2">
             <h3 class="text-base font-semibold text-primary-600 dark:text-primary-400 group-hover:underline">{{ t.name }}</h3>
-            <span class="text-xs text-surface-400 font-mono">{{ t.code }}</span>
+            <div class="flex items-center gap-1.5">
+              <span *ngIf="getBuildStatus(t.code) as status"
+                class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap"
+                [ngClass]="getBuildStatusClasses(status)">
+                {{ getBuildStatusLabel(status) }}
+              </span>
+              <span class="text-xs text-surface-400 font-mono">{{ t.code }}</span>
+            </div>
           </div>
           <p *ngIf="t.description" class="text-sm text-surface-500 dark:text-surface-400 mb-3 line-clamp-2">{{ t.description }}</p>
           <div class="space-y-2 text-xs text-surface-500 dark:text-surface-400">
@@ -44,9 +54,27 @@ import { Template } from '../../../core/models';
               <span>Version</span>
               <span class="font-medium text-surface-700 dark:text-surface-300">{{ t.version }}</span>
             </div>
-            <div class="flex justify-between">
+            <div class="flex justify-between items-center">
               <span>Base Image</span>
-              <span class="font-mono text-surface-700 dark:text-surface-300 truncate ml-2 max-w-[200px]">{{ t.baseImage }}</span>
+              <div class="flex items-center gap-1.5">
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap"
+                  [ngClass]="isCustomImage(t) ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' : 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'">
+                  {{ isCustomImage(t) ? 'Custom' : 'Registry' }}
+                </span>
+                <span class="font-mono text-surface-700 dark:text-surface-300 truncate max-w-[150px]">{{ t.baseImage }}</span>
+              </div>
+            </div>
+            <div *ngIf="getBuildRecord(t.code) as rec" class="flex justify-between">
+              <span>Image Size</span>
+              <span class="font-medium text-surface-700 dark:text-surface-300">{{ rec.imageSizeBytes ? formatBytes(rec.imageSizeBytes) : 'N/A' }}</span>
+            </div>
+            <div *ngIf="getBuildRecord(t.code) as rec" class="flex justify-between">
+              <span>Platform</span>
+              <span class="font-medium text-surface-700 dark:text-surface-300">{{ rec.os && rec.architecture ? rec.os + '/' + rec.architecture : 'N/A' }}</span>
+            </div>
+            <div *ngIf="getBuildRecord(t.code) as rec" class="flex justify-between">
+              <span>Layers</span>
+              <span class="font-medium text-surface-700 dark:text-surface-300">{{ rec.layerCount || 'N/A' }}</span>
             </div>
             <div class="flex justify-between">
               <span>IDE Type</span>
@@ -80,11 +108,14 @@ export class TemplateListComponent implements OnInit {
   loading = true;
   error = '';
   templates: Template[] = [];
+  buildStatuses: Record<string, TemplateBuildStatus> = {};
+  buildRecords: Record<string, ImageBuildRecord> = {};
 
   constructor(private api: ContainersApiService) {}
 
   ngOnInit(): void {
     this.loadTemplates();
+    this.loadBuildStatuses();
   }
 
   private static readonly TAG_COLORS: Record<string, string> = {
@@ -130,5 +161,62 @@ export class TemplateListComponent implements OnInit {
         this.loading = false;
       },
     });
+  }
+
+  loadBuildStatuses(): void {
+    this.api.getImageBuildStatuses().subscribe({
+      next: (records) => {
+        this.buildStatuses = {};
+        this.buildRecords = {};
+        for (const r of records) {
+          if (r.templateCode) {
+            this.buildStatuses[r.templateCode] = r.status;
+            this.buildRecords[r.templateCode] = r;
+          }
+        }
+      },
+      error: () => { /* ignore - build statuses are optional */ },
+    });
+  }
+
+  getBuildStatus(code: string): TemplateBuildStatus | null {
+    return this.buildStatuses[code] ?? null;
+  }
+
+  getBuildRecord(code: string): ImageBuildRecord | null {
+    return this.buildRecords[code] ?? null;
+  }
+
+  formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0) + ' ' + units[i];
+  }
+
+  getBuildStatusLabel(status: TemplateBuildStatus): string {
+    switch (status) {
+      case 'Built': return 'Image Built';
+      case 'NotBuilt': return 'Not Built';
+      case 'Building': return 'Building...';
+      case 'Outdated': return 'Outdated';
+      case 'Failed': return 'Build Failed';
+      default: return '';
+    }
+  }
+
+  getBuildStatusClasses(status: TemplateBuildStatus): string {
+    switch (status) {
+      case 'Built': return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300';
+      case 'NotBuilt': return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+      case 'Building': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
+      case 'Outdated': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300';
+      case 'Failed': return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+      default: return 'bg-surface-100 text-surface-600 dark:bg-surface-700 dark:text-surface-300';
+    }
+  }
+
+  isCustomImage(t: Template): boolean {
+    return t.baseImage?.startsWith('andy-') ?? false;
   }
 }

@@ -28,6 +28,7 @@ public class Container
     public DateTime? LastActivityAt { get; set; }
     public CreationSource CreationSource { get; set; } = CreationSource.Unknown;
     public string? ClientInfo { get; set; }
+    public string? ContainerUser { get; set; }
     public string? Metadata { get; set; }
 
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();

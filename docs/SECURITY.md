@@ -103,12 +103,12 @@ Application code: `containers`
 
 | Resource Type | Actions | Supports Instances | Description |
 |---|---|---|---|
-| container | read, write, delete, execute | Yes | Container lifecycle, exec, resize |
+| container | read, write, delete, exec | Yes | Container lifecycle, exec, resize |
 | template | read, write, delete | No | Template catalog |
 | workspace | read, write, delete | No | Workspace management |
-| provider | read, admin | No | Infrastructure providers |
+| provider | read, write | No | Infrastructure providers |
 | settings | read, write | No | API keys, monitoring config |
-| image | read, write, delete | No | Container images |
+| organization | read, write | No | Organization management |
 
 ### 2.4 Roles
 
@@ -245,7 +245,13 @@ In addition to RBAC permissions, containers enforce ownership:
 - Non-admin users can only see/manage their own containers
 - Organization membership is checked for org-scoped operations
 - Template/image visibility respects catalog scope (Global > Organization > Team > User)
-- SSH access uses `root:container` credentials (dev only)
+
+### 6.1 Non-Root Container Execution
+
+Containers run as a non-root user derived from the authenticated user's JWT claims. The container user is created during provisioning with the username extracted from the JWT `preferred_username` or `email` claim. This ensures:
+- Containers do not run as root
+- File ownership matches the authenticated user
+- Processes inside the container have limited privileges
 
 ## 7. Certificate Management
 
@@ -278,6 +284,7 @@ All Docker images set these for corporate proxy/SSL compatibility:
 - [ ] `AndyAuth:Authority` set to production auth server
 - [ ] `Rbac:ApiBaseUrl` set to production RBAC server
 - [ ] API keys encrypted with production-grade Data Protection keys
+- [ ] Data Protection keys persisted to durable storage (not ephemeral volume)
 - [ ] CORS origins restricted to production domains
-- [ ] SSH credentials changed from default `root:container`
 - [ ] Container expiry policies configured
+- [ ] Non-root container user enforcement verified

@@ -72,8 +72,14 @@ Presentation Layer
 Business Logic Layer
 ├── Container Orchestration Service
 ├── Container Provisioning Worker (Channel-based background queue)
+├── Container Status Sync Worker (periodic state sync)
+├── Container Screenshot Worker (tmux pane capture)
+├── Provider Health Check Worker (periodic health checks)
+├── Image Build Worker (custom image build tracking)
 ├── Workspace Service
 ├── Template Catalog Service
+├── Code Assistant Install Service (10 tools, distro-agnostic)
+├── API Key Service (multi-provider, encrypted storage)
 ├── Session Management Service
 ├── Infrastructure Routing Service
 ├── Health Monitoring Service
@@ -449,18 +455,24 @@ full-stack (global)
               └── my-custom-env (user) [inherits team workspace, adds personal dotfiles]
 ```
 
-### 6.3 Built-In Templates
+### 6.3 Built-In Templates (12)
 
 | Template | Toolchains | IDE | GPU | Base Image |
 |----------|-----------|-----|-----|------------|
 | `dotnet-8-vscode` | .NET 8 SDK | code-server | No | Ubuntu 24.04 |
+| `dotnet-8-alpine` | .NET 8 SDK (minimal) | terminal | No | Alpine Linux |
+| `dotnet-10-cli` | .NET 10 SDK | terminal | No | Alpine Linux |
 | `python-3.12-vscode` | Python 3.12, pip, venv | code-server | No | Ubuntu 24.04 |
 | `angular-18-vscode` | Node 20, npm, Angular CLI 18 | code-server | No | Ubuntu 24.04 |
 | `full-stack` | .NET 8, Python 3.12, Node 20, Angular 18 | code-server | No | Ubuntu 24.04 |
 | `full-stack-gpu` | .NET 8, Python 3.12, Node 20, Angular 18 | code-server | Yes | Ubuntu 24.04 + CUDA |
 | `andy-cli-dev` | .NET 8, Andy CLI pre-installed | code-server + terminal | No | Ubuntu 24.04 |
-| `agent-sandbox` | .NET 8, Python 3.12, git | None (headless) | No | Ubuntu 24.04 minimal |
-| `agent-sandbox-ui` | .NET 8, Python 3.12, git | Zed + noVNC | Optional | Ubuntu 24.04 + XFCE |
+| `dotnet-8-desktop` | .NET 8 SDK | XFCE4 + TigerVNC + noVNC | No | Ubuntu 24.04 |
+| `dotnet-8-alpine-desktop` | .NET 8 SDK | XFCE4 + TigerVNC + noVNC | No | Alpine Linux |
+| `dotnet-10-alpine-desktop` | .NET 10 SDK | XFCE4 + TigerVNC + noVNC | No | Alpine Linux |
+| `python-3.12-desktop` | Python 3.12 | XFCE4 + TigerVNC + noVNC | No | Ubuntu 24.04 |
+
+VNC desktop templates provide a full graphical desktop environment accessible via the web UI through an embedded noVNC iframe. The VNC server uses HTTPS with self-signed certificates.
 
 ## 7. Security Model
 
@@ -685,7 +697,81 @@ AI assistant integration for managing containers from Claude Desktop, Cursor, et
 - Compare images to see what changed
 - Search for images by installed tool
 
-## 12. Technology Stack
+## 12. Code Assistants
+
+Andy Containers supports auto-installation of 10 AI coding tools in containers:
+
+| Tool | Install Method | Default API Key Env Var |
+|------|---------------|------------------------|
+| Claude Code | npm: @anthropic-ai/claude-code | ANTHROPIC_API_KEY |
+| Aider | pip: aider-chat | OPENAI_API_KEY |
+| OpenCode | Binary from GitHub releases | OPENAI_API_KEY |
+| Codex CLI | npm: @openai/codex | OPENAI_API_KEY |
+| Continue | IDE marketplace | OPENAI_API_KEY |
+| Qwen Coder | pip: qwen-coder-cli | DASHSCOPE_API_KEY |
+| Gemini Code | npm: gemini-code | GOOGLE_API_KEY |
+| GitHub Copilot | gh extension | GITHUB_TOKEN |
+| Amazon Q | Binary installer | AWS credentials |
+| Cline | IDE marketplace | ANTHROPIC_API_KEY |
+
+Each tool can be configured with a custom model name and API base URL. The `CodeAssistantInstallService` handles distro-agnostic installation (Alpine, Debian, RHEL).
+
+### 12.1 Multi-Provider API Keys
+
+API keys support a fallback chain for maximum flexibility:
+
+1. **Primary provider** (e.g., Anthropic for Claude Code)
+2. **OpenRouter** (multi-model proxy)
+3. **OpenAI** (GPT models)
+4. **OpenAI-Compatible** (vLLM, LiteLLM, Azure OpenAI)
+5. **Custom** (user-specified base URL)
+
+Keys are encrypted at rest using ASP.NET Core Data Protection and injected as environment variables during container provisioning.
+
+## 13. VNC Desktop
+
+Desktop templates (suffixed with `-desktop`) provide a full graphical environment:
+
+- **Window Manager**: XFCE4
+- **VNC Server**: TigerVNC
+- **Web Client**: noVNC with HTTPS via self-signed certificates
+- **UI Integration**: Embedded iframe in the Angular web UI
+
+VNC endpoints are exposed via the container connection info and accessible alongside the web terminal.
+
+## 14. Non-Root Container Execution
+
+Containers run as a non-root user derived from the authenticated user's JWT claims:
+
+- Username is extracted from `preferred_username` or `email` claim
+- A Linux user is created during container provisioning
+- All processes run under this user (not root)
+- File ownership and home directory are configured for the user
+- Code assistants and API keys are configured in the user's environment
+
+## 15. Image Build Tracking
+
+The `ImageBuildWorker` background service manages custom image builds:
+
+- Track build status (Pending, Building, Completed, Failed)
+- Trigger rebuilds from the web UI
+- Content-addressed image hashing (SHA-256)
+- Image introspection: detect installed tools, OS packages, base image details
+- Image diffing: compare two images to see tool changes, severity classification, package deltas
+
+## 16. Background Workers
+
+Five `BackgroundService` workers run concurrently:
+
+| Worker | Trigger | Default Interval | Description |
+|--------|---------|-------------------|-------------|
+| ContainerProvisioningWorker | Channel queue | On demand | Provisions containers: infra creation, post-create scripts, env var injection, code assistant install, git clone |
+| ContainerStatusSyncWorker | PeriodicTimer | 15s | Syncs container state with Docker; detects destroyed containers |
+| ProviderHealthCheckWorker | PeriodicTimer | 60s | Health checks on all providers; updates Healthy/Degraded/Unreachable status |
+| ContainerScreenshotWorker | PeriodicTimer | 30s | Captures tmux pane text via `tmux capture-pane`; max 20 containers per cycle |
+| ImageBuildWorker | PeriodicTimer | 30s | Monitors and manages custom image build processes |
+
+## 17. Technology Stack
 
 | Layer | Technology |
 |-------|-----------|
@@ -705,7 +791,7 @@ AI assistant integration for managing containers from Claude Desktop, Cursor, et
 | **Observability** | OpenTelemetry (tracing + metrics), Serilog |
 | **Testing** | xUnit, FluentAssertions, Moq, bUnit |
 
-## 13. Deployment
+## 18. Deployment
 
 ### 13.1 Docker Compose (Local Development)
 

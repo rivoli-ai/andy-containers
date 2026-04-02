@@ -95,6 +95,13 @@ public class ContainerOrchestrationService : IContainerService
                 : null
         };
 
+        // Derive container username from owner claims
+        var containerUser = UserNameDerivation.DeriveUsername(
+            request.OwnerPreferredUsername,
+            request.OwnerEmail,
+            request.OwnerId ?? "system");
+        container.ContainerUser = containerUser;
+
         if (request.GitRepository is not null)
         {
             container.GitRepository = JsonSerializer.Serialize(request.GitRepository);
@@ -332,7 +339,10 @@ public class ContainerOrchestrationService : IContainerService
             PostCreateScripts: postCreateScripts,
             CodeAssistant: codeAssistant,
             EnvironmentVariables: envVars,
-            GuiType: template.GuiType);
+            GuiType: template.GuiType,
+            ContainerUser: container.ContainerUser ?? "root",
+            OwnerEmail: request.OwnerEmail,
+            OwnerPreferredUsername: request.OwnerPreferredUsername);
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",

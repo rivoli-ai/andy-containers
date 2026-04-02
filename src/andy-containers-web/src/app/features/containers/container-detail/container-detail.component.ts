@@ -92,6 +92,11 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
             <dt class="text-sm text-surface-500 dark:text-surface-400">Created</dt>
             <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.createdAt | date:'medium' }}</dd>
 
+            <ng-container *ngIf="container.containerUser">
+              <dt class="text-sm text-surface-500 dark:text-surface-400">User</dt>
+              <dd class="text-sm font-mono text-surface-600 dark:text-surface-300">{{ container.containerUser }}</dd>
+            </ng-container>
+
             <ng-container *ngIf="container.creationSource && container.creationSource !== 'Unknown'">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Source</dt>
               <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.creationSource }}</dd>

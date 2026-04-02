@@ -23,6 +23,7 @@ import {
   ContainerScreenshot,
   Organization,
   Team,
+  ImageBuildRecord,
 } from '../models';
 
 @Injectable({ providedIn: 'root' })
@@ -149,6 +150,18 @@ export class ContainersApiService {
 
   deleteTemplate(id: string): Observable<void> {
     return this.http.delete<void>(`${this.baseUrl}/templates/${id}`);
+  }
+
+  getImageBuildStatuses(): Observable<ImageBuildRecord[]> {
+    return this.http.get<ImageBuildRecord[]>(`${this.baseUrl}/templates/image-statuses`);
+  }
+
+  getImageBuildStatus(code: string): Observable<ImageBuildRecord> {
+    return this.http.get<ImageBuildRecord>(`${this.baseUrl}/templates/${code}/image-status`);
+  }
+
+  buildImage(code: string): Observable<ImageBuildRecord> {
+    return this.http.post<ImageBuildRecord>(`${this.baseUrl}/templates/${code}/build-image`, {});
   }
 
   // Workspaces

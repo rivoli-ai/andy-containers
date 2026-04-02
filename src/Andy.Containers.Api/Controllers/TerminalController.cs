@@ -111,6 +111,8 @@ public class TerminalController : ControllerBase
     {
         var externalId = container.ExternalId!;
         var providerType = container.Provider?.Type ?? ProviderType.Docker;
+        var containerUser = container.ContainerUser ?? "root";
+        var homeDir = containerUser == "root" ? "/root" : $"/home/{containerUser}";
 
         // Wait for client to send terminal dimensions before creating PTY
         var (cols, rows) = await WaitForTerminalSize(ws, ct);
@@ -146,7 +148,7 @@ public class TerminalController : ControllerBase
         // the INNER (container exec) PTY. Both must match for correct rendering.
         var innerShellQuoted = shellCmd.Replace("'", "'\"'\"'");
         var wrapperCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
-                         $"exec {execCommand} exec -it -w /root {externalId} bash -c '{innerShellQuoted}'";
+                         $"exec {execCommand} exec -it -u {containerUser} -w {homeDir} {externalId} bash -c '{innerShellQuoted}'";
 
         var psi = new ProcessStartInfo
         {

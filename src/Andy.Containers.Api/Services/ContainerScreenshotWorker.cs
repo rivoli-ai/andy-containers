@@ -96,9 +96,12 @@ public class ContainerScreenshotWorker : BackgroundService
                         ? await db.Templates.FindAsync([container.TemplateId], ct)
                         : null;
                     var isVnc = template?.GuiType == "vnc";
+                    var containerUser = container.ContainerUser ?? "root";
                     var captureCmd = isVnc
                         ? "echo '[VNC Desktop - connect via noVNC on port 6080]'"
-                        : "tmux capture-pane -p -t web -S -40 2>/dev/null || echo '[No active terminal session]'";
+                        : containerUser != "root"
+                            ? $"su - {containerUser} -c 'tmux capture-pane -p -t web -S -40 2>/dev/null' 2>/dev/null || echo '[No active terminal session]'"
+                            : "tmux capture-pane -p -t web -S -40 2>/dev/null || echo '[No active terminal session]'";
 
                     var result = await infra.ExecAsync(
                         container.ExternalId,

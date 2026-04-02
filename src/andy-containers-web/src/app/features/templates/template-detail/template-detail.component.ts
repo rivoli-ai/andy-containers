@@ -5,7 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { Subject } from 'rxjs';
 import { debounceTime, takeUntil } from 'rxjs/operators';
 import { ContainersApiService } from '../../../core/services/api.service';
-import { Template, TemplateDefinition, ValidationResult, Container } from '../../../core/models';
+import { Template, TemplateDefinition, ValidationResult, Container, ImageBuildRecord, TemplateBuildStatus } from '../../../core/models';
 import { YamlEditorComponent } from '../../../shared/components/yaml-editor/yaml-editor.component';
 import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 
@@ -111,6 +111,73 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
                 class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-100 text-surface-600 dark:bg-surface-700 dark:text-surface-300">
                 {{ tag }}
               </span>
+            </div>
+          </div>
+
+          <!-- Image Info -->
+          <div *ngIf="buildRecord" class="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-6">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-base font-semibold text-surface-900 dark:text-surface-100">{{ isCustomImage ? 'Image Build' : 'Image Info' }}</h3>
+              <span *ngIf="buildRecord" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                [ngClass]="buildStatusClasses">
+                {{ buildStatusLabel }}
+              </span>
+            </div>
+
+            <div *ngIf="!buildRecord" class="text-sm text-surface-400">Checking image status...</div>
+
+            <div *ngIf="buildRecord">
+              <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm mb-3">
+                <div class="text-surface-500 dark:text-surface-400">Source</div>
+                <div>
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+                    [ngClass]="isCustomImage ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' : 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'">
+                    {{ isCustomImage ? 'Custom Build' : 'Public Registry' }}
+                  </span>
+                </div>
+
+                <div class="text-surface-500 dark:text-surface-400">Image</div>
+                <div class="font-mono text-xs text-surface-700 dark:text-surface-300 break-all">{{ buildRecord.imageReference }}</div>
+
+                <ng-container *ngIf="buildRecord.imageSizeBytes">
+                  <div class="text-surface-500 dark:text-surface-400">Size</div>
+                  <div class="text-surface-700 dark:text-surface-300 font-medium">{{ formatBytes(buildRecord.imageSizeBytes) }}</div>
+                </ng-container>
+
+                <ng-container *ngIf="buildRecord.architecture">
+                  <div class="text-surface-500 dark:text-surface-400">Architecture</div>
+                  <div class="text-surface-700 dark:text-surface-300">{{ buildRecord.os }}/{{ buildRecord.architecture }}</div>
+                </ng-container>
+
+                <ng-container *ngIf="buildRecord.layerCount">
+                  <div class="text-surface-500 dark:text-surface-400">Layers</div>
+                  <div class="text-surface-700 dark:text-surface-300">{{ buildRecord.layerCount }}</div>
+                </ng-container>
+
+                <ng-container *ngIf="buildRecord.lastBuiltAt">
+                  <div class="text-surface-500 dark:text-surface-400">Last Built</div>
+                  <div class="text-surface-700 dark:text-surface-300">{{ buildRecord.lastBuiltAt | date:'medium' }}</div>
+                </ng-container>
+
+                <ng-container *ngIf="buildRecord.imageCreatedAt">
+                  <div class="text-surface-500 dark:text-surface-400">Image Created</div>
+                  <div class="text-surface-700 dark:text-surface-300">{{ buildRecord.imageCreatedAt | date:'medium' }}</div>
+                </ng-container>
+
+                <ng-container *ngIf="buildRecord.imageDigest">
+                  <div class="text-surface-500 dark:text-surface-400">Digest</div>
+                  <div class="font-mono text-xs text-surface-500 dark:text-surface-400 truncate" [title]="buildRecord.imageDigest">{{ buildRecord.imageDigest }}</div>
+                </ng-container>
+              </div>
+
+              <p *ngIf="buildRecord.lastBuildError" class="text-sm text-red-600 dark:text-red-400 mb-3">Error: {{ buildRecord.lastBuildError }}</p>
+
+              <button *ngIf="isCustomImage" (click)="triggerBuild()" [disabled]="buildRecord.status === 'Building'"
+                class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+                <svg *ngIf="buildRecord.status !== 'Building'" class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <div *ngIf="buildRecord.status === 'Building'" class="animate-spin w-4 h-4 mr-1.5 border-2 border-white border-t-transparent rounded-full"></div>
+                {{ buildRecord.status === 'Building' ? 'Building...' : (buildRecord.status === 'Built' ? 'Rebuild Image' : 'Build Image') }}
+              </button>
             </div>
           </div>
 
@@ -283,6 +350,8 @@ export class TemplateDetailComponent implements OnInit, OnDestroy {
   template: Template | null = null;
   containers: Container[] = [];
 
+  buildRecord: ImageBuildRecord | null = null;
+
   definition: TemplateDefinition | null = null;
   defLoading = false;
   defError = '';
@@ -337,6 +406,7 @@ export class TemplateDetailComponent implements OnInit, OnDestroy {
         this.template = t;
         this.loading = false;
         this.loadDefinition();
+        this.loadBuildStatus();
         this.api.getContainers({ templateId: this.templateId, take: '50' }).subscribe({
           next: (res) => { this.containers = res.items; },
         });
@@ -454,6 +524,70 @@ export class TemplateDetailComponent implements OnInit, OnDestroy {
     URL.revokeObjectURL(url);
   }
 
+  get isCustomImage(): boolean {
+    return !!this.template?.baseImage?.startsWith('andy-');
+  }
+
+  get buildStatusLabel(): string {
+    if (!this.buildRecord) return '';
+    switch (this.buildRecord.status) {
+      case 'Built': return 'Built';
+      case 'NotBuilt': return 'Not Built';
+      case 'Building': return 'Building...';
+      case 'Outdated': return 'Outdated';
+      case 'Failed': return 'Failed';
+      default: return 'Unknown';
+    }
+  }
+
+  get buildStatusClasses(): string {
+    if (!this.buildRecord) return '';
+    switch (this.buildRecord.status) {
+      case 'Built': return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300';
+      case 'NotBuilt': return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+      case 'Building': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
+      case 'Outdated': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300';
+      case 'Failed': return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+      default: return 'bg-surface-100 text-surface-600 dark:bg-surface-700 dark:text-surface-300';
+    }
+  }
+
+  loadBuildStatus(): void {
+    if (!this.template?.code) return;
+    this.api.getImageBuildStatus(this.template.code).subscribe({
+      next: (record) => { this.buildRecord = record; },
+      error: () => { /* ignore */ },
+    });
+  }
+
+  triggerBuild(): void {
+    if (!this.template?.code || this.buildRecord?.status === 'Building') return;
+    this.api.buildImage(this.template.code).subscribe({
+      next: (record) => {
+        this.buildRecord = record;
+        // Poll for completion
+        this.pollBuildStatus();
+      },
+      error: () => { /* ignore */ },
+    });
+  }
+
+  private pollBuildStatus(): void {
+    if (!this.template?.code) return;
+    const interval = setInterval(() => {
+      this.api.getImageBuildStatus(this.template!.code).subscribe({
+        next: (record) => {
+          this.buildRecord = record;
+          if (record.status !== 'Building') clearInterval(interval);
+        },
+        error: () => clearInterval(interval),
+      });
+    }, 3000);
+
+    // Stop polling after 10 minutes
+    setTimeout(() => clearInterval(interval), 600000);
+  }
+
   getScopeBadgeClass(scope: string): string {
     switch (scope?.toLowerCase()) {
       case 'global': return 'scope-badge-global';
@@ -462,5 +596,12 @@ export class TemplateDetailComponent implements OnInit, OnDestroy {
       case 'user': return 'scope-badge-user';
       default: return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400';
     }
+  }
+
+  formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0) + ' ' + units[i];
   }
 }

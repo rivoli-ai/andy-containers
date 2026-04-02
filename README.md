@@ -16,72 +16,82 @@ Development container management platform for the Andy ecosystem.
 
 ## Features
 
-- **Multi-Infrastructure** - Provision containers on Docker, Apple Containers (macOS), Azure (ACI/ACA/ACP), Rivoli-managed, or third-party servers via SSH
-- **Template Catalog** - Hierarchical catalog of container templates scoped by global, organization, team, or user
-- **Declarative Dependencies** - Specify compilers, tools, and libraries in YAML; exact versions resolved and locked automatically
-- **Content-Addressed Images** - Every built image has a unique hash; track exactly what changed between versions
-- **Image Introspection** - Automatically detect installed tool versions, OS packages, and base image details after every build
-- **Image Diffing** - Compare two images to see tool changes, severity classification, package deltas, and size changes
-- **Multi-Repo Git Clone** - Clone multiple git repositories into containers with per-repo status tracking
-- **Git Credential Management** - Securely store and resolve PATs and deploy keys for private repository cloning
-- **Automatic Rebuilds** - New compiler/library versions trigger automatic image rebuilds per your update policy
-- **Air-Gapped Builds** - Full support for internet-isolated environments with offline dependency caching
-- **GPU Support** - Request GPU acceleration when available (NVIDIA, Azure GPU SKUs)
-- **IDE Access** - VSCode (code-server) and/or Zed editor, accessible via browser
-- **Workspace Management** - Group containers into workspaces tied to git repositories
-- **Andy Auth Integration** - OAuth 2.0 / OIDC authentication via Andy Auth
-- **Andy RBAC Integration** - Fine-grained permissions for all container operations
-- **DevPilot Integration** - Spawn AI agents on containers with UI (noVNC) or headless
-- **Organization-Scoped RBAC** - JWT claims + RBAC API fallback for org-level permissions with caching
-- **OpenTelemetry** - Distributed tracing and metrics with OTLP or console exporters
-- **Web Terminal** - Browser-based terminal for executing commands in running containers
-- **CLI Tool** - Full-featured command-line tool with `auth login`, `list`, `connect`, `exec`, `stats`, and more
-- **Native Terminal Connect** - SSH into containers from your native terminal via `ssh://` URL scheme or CLI
-- **Live Resource Monitoring** - Real-time CPU, RAM, and disk usage with configurable polling intervals
-- **Dynamic Resource Resize** - Adjust CPU and memory on running containers without restart (Docker)
-- **Container Uptime** - Human-readable uptime display across all container views
-- **Post-Create Scripts** - Template-defined lifecycle scripts for multi-distro package installation and SSH setup
-- **Code Assistant Integration** - Auto-install Claude Code, Codex CLI, Aider, etc. (distro-agnostic: Alpine, Debian, RHEL)
-- **gRPC & REST APIs** - High-performance service-to-service and user-facing APIs
+- **Container Lifecycle** - Create from templates, start/stop/destroy, live resize CPU/RAM
+- **12 Templates** - Including 4 VNC desktop variants (dotnet-8-desktop, dotnet-8-alpine-desktop, dotnet-10-alpine-desktop, python-3.12-desktop)
+- **10 Code Assistants** - Claude Code, Aider, OpenCode, Codex CLI, Continue, Qwen Coder, Gemini Code, GitHub Copilot, Amazon Q, Cline with model/base URL configuration
+- **Web Terminal** - xterm.js + tmux session persistence, 18 themes with per-container persistence, WebGL rendering
+- **VNC Desktop** - XFCE4 + TigerVNC + noVNC with HTTPS via self-signed certs, embedded iframe in UI
+- **Multi-Provider API Keys** - Fallback chain: primary, OpenRouter, OpenAI, OpenAI-compatible, custom
+- **Container Stats** - Real-time CPU/RAM/Disk monitoring with configurable polling
+- **Container Screenshots** - Background worker captures tmux terminal content for thumbnails
+- **Git Integration** - Multiple repo cloning, credential management, clone status tracking
+- **Non-Root Containers** - Containers run as non-root user derived from authenticated user's JWT claims
+- **Image Build Tracking** - Track custom image build status, trigger rebuilds from UI
+- **Organizations & Teams** - Multi-tenant support with hierarchical template scoping
+- **Multi-Infrastructure** - Docker, Apple Containers, Azure (ACI/ACA/ACP), SSH, and more
+- **Template Catalog** - Hierarchical catalog scoped by global, organization, team, or user
+- **CLI Tool** - Full container management from the terminal with OAuth Device Flow auth
 - **MCP Support** - Model Context Protocol tools for AI assistants (Claude Desktop, Cursor)
-- **YAML-First Config** - All templates, providers, and dependencies defined in YAML files
+- **Auth & RBAC** - OAuth 2.0/OIDC via Andy Auth, per-endpoint RBAC permissions via Andy RBAC
+- **Live Resource Monitoring** - Real-time CPU, RAM, and disk usage with configurable polling intervals
+- **Dynamic Resource Resize** - Adjust CPU and memory on running containers without restart
 
 ## Quick Start
 
 ### Prerequisites
 
-- .NET 8.0 SDK
 - Docker Desktop (for PostgreSQL and local container provider)
-- Apple Containers CLI (optional, macOS only — `brew install container`)
+- .NET 8.0 SDK (for building the API)
+- Node.js 20+ (for the Angular frontend)
+
+### Docker Compose (Recommended)
+
+```bash
+git clone https://github.com/rivoli-ai/andy-containers.git
+cd andy-containers
+docker compose up --build
+```
+
+This starts all services:
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Frontend | http://localhost:4200 | Angular 18 web UI |
+| API (HTTPS) | https://localhost:5200 | REST / MCP API |
+| API (HTTP) | http://localhost:5201 | HTTP access |
+| PostgreSQL | localhost:5434 | Database (postgres:16-alpine) |
+| Andy Auth | https://localhost:5001 | OAuth 2.0 / OIDC server |
+| Andy RBAC API | https://localhost:7003 | RBAC permission server |
+| Andy RBAC Web | https://localhost:5180 | RBAC admin UI |
+
+The database schema is auto-created on first startup and seed data (providers, templates) is inserted automatically.
 
 ### Local Development
 
 ```bash
 # 1. Start PostgreSQL
-docker-compose up -d postgres
+docker compose up -d postgres
 
 # 2. Run the API server
-dotnet run --project src/Andy.Containers.Api --launch-profile "Andy.Containers.Api"
+dotnet run --project src/Andy.Containers.Api
 
 # 3. Run the Angular frontend
-cd src/andy-containers-web && npm install && npx ng serve --ssl --port 4200
+cd src/andy-containers-web && npm install && npx ng serve
 ```
 
 - API: **https://localhost:5200**
-- Web UI: **https://localhost:4200**
-
-The database schema is auto-created on first startup and seed data (providers, templates) is inserted automatically. Data persists across restarts.
+- Web UI: **http://localhost:4200**
 
 ## Project Structure
 
 ```
 src/
 ├── Andy.Containers/              # Core library (models, abstractions)
-├── Andy.Containers.Api/          # REST, gRPC & MCP API server
-├── Andy.Containers.Client/       # HTTP/gRPC client library
+├── Andy.Containers.Api/          # REST & MCP API server
+├── Andy.Containers.Client/       # HTTP client library
 ├── Andy.Containers.Infrastructure/ # EF Core, repositories, infrastructure providers
 ├── Andy.Containers.Cli/          # Command-line interface
-└── andy-containers-web/          # Admin UI (Angular SPA)
+└── andy-containers-web/          # Web UI (Angular 18 SPA)
 
 tests/
 ├── Andy.Containers.Tests/        # Core library tests
@@ -94,150 +104,68 @@ config/
 ├── providers/                    # YAML provider definitions
 └── workspaces/                   # YAML workspace definitions
 
-proto/                            # gRPC protobuf definitions
-openapi/                          # OpenAPI/Swagger specifications
-docs/                             # Architecture and design docs
 images/                           # Container image Dockerfiles
+docs/                             # Documentation (MkDocs Material)
 ```
 
-## Template Catalog
+## Background Workers
 
-Templates are organized hierarchically with visibility scoping:
-
-| Scope | Visibility | Example |
-|-------|-----------|---------|
-| Global | Everyone | `full-stack`, `agent-sandbox-ui` |
-| Organization | Org members | `acme-backend` |
-| Team | Team members | `team-alpha-workspace` |
-| User | Private | `my-custom-env` |
-
-### Built-In Templates
-
-| Template | Toolchains | IDE | GPU |
-|----------|-----------|-----|-----|
-| `full-stack` | .NET 8, Python 3.12, Node 20, Angular 18 | VSCode | No |
-| `full-stack-gpu` | Same as full-stack | VSCode | Yes |
-| `dotnet-8-vscode` | .NET 8 SDK | VSCode | No |
-| `python-3.12-vscode` | Python 3.12 | VSCode | No |
-| `angular-18-vscode` | Node 20, Angular 18 | VSCode | No |
-| `andy-cli-dev` | .NET 8, Andy CLI | VSCode | No |
-| `dotnet-10-cli` | .NET 10 SDK | VSCode | No |
-| `dotnet-8-alpine` | .NET 8 SDK (Alpine Linux, minimal) | VSCode | No |
-| `agent-sandbox` | .NET 8, Python 3.12, git | None (headless) | No |
-| `agent-sandbox-ui` | .NET 8, Python 3.12, git | Zed + noVNC | Optional |
-
-## Dependency Tracking
-
-Templates declare dependencies with version constraints. The build system resolves exact versions, locks them, and tracks changes:
-
-```yaml
-dependencies:
-  - type: sdk
-    name: dotnet-sdk
-    version: "8.0.*"          # Any 8.0.x
-    auto_update: true
-    update_policy: patch      # Auto-rebuild on 8.0.3 -> 8.0.4
-```
-
-When upstream versions change, images are automatically rebuilt and a changelog is generated showing exactly what changed.
-
-## Infrastructure Providers
-
-| Provider | Type | Description |
-|----------|------|-------------|
-| Local Docker | `docker` | Docker Desktop or remote Docker host |
-| Apple Containers | `apple-container` | Native macOS container runtime |
-| Rivoli Managed | `rivoli` | Rivoli-managed container fleet |
-| Third-Party SSH | `ssh` | Any Linux server via SSH |
-| Azure ACI | `azure-aci` | Azure Container Instances (serverless) |
-| Azure ACA | `azure-aca` | Azure Container Apps (auto-scaling) |
-| Azure ACP | `azure-acp` | Azure Container Platform |
-
-## API Endpoints
-
-### Containers
-- `POST /api/containers` - Create a container
-- `GET /api/containers` - List containers (supports owner, org, team, status, template, provider filters)
-- `GET /api/containers/{id}` - Get container details
-- `POST /api/containers/{id}/start` - Start container
-- `POST /api/containers/{id}/stop` - Stop container
-- `POST /api/containers/{id}/exec` - Execute command
-- `GET /api/containers/{id}/connection` - Get IDE/VNC/SSH endpoints
-- `GET /api/containers/{id}/stats` - Get real-time CPU, memory, and disk usage
-- `PUT /api/containers/{id}/resources` - Live resize CPU and memory
-- `GET /api/containers/{id}/events` - Get container lifecycle events
-- `GET /api/containers/{id}/cost-estimate` - Get hourly/monthly cost estimate
-- `DELETE /api/containers/{id}` - Destroy container
-- `GET /api/containers/{id}/repositories` - List cloned git repositories
-- `POST /api/containers/{id}/repositories` - Clone a new repository
-- `POST /api/containers/{id}/repositories/{repoId}/pull` - Pull latest changes
-
-### Organizations
-- `GET /api/organizations/{orgId}/images` - List organization images
-- `POST /api/organizations/{orgId}/images` - Publish image to organization
-- `DELETE /api/organizations/{orgId}/images/{imageId}` - Delete organization image
-- `GET /api/organizations/{orgId}/templates` - List organization templates
-- `GET /api/organizations/{orgId}/providers` - List organization providers
-
-### Workspaces
-- `POST /api/workspaces` - Create workspace
-- `GET /api/workspaces` - List workspaces
-- `GET /api/workspaces/{id}` - Get workspace details
-- `PUT /api/workspaces/{id}` - Update workspace
-- `DELETE /api/workspaces/{id}` - Delete workspace
-
-### Templates (Catalog)
-- `GET /api/templates` - Browse catalog
-- `POST /api/templates` - Create template
-- `GET /api/templates/{id}` - Get template details
-- `POST /api/templates/{id}/publish` - Publish to catalog
-
-### Images
-- `GET /api/images/{templateId}` - List built images
-- `POST /api/images/{templateId}/build` - Trigger build
-- `GET /api/images/{templateId}/latest` - Get latest image
-- `GET /api/images/diff` - Compare two images
-- `GET /api/images/{imageId}/manifest` - Get introspection manifest
-- `GET /api/images/{imageId}/tools` - List installed tools
-- `GET /api/images/{imageId}/packages` - List OS packages
-- `POST /api/images/{imageId}/introspect` - Re-run introspection
-
-### Git Credentials
-- `POST /api/git-credentials` - Store a credential (PAT or deploy key)
-- `GET /api/git-credentials` - List stored credentials (tokens never returned)
-- `DELETE /api/git-credentials/{id}` - Delete a credential
-
-### Providers
-- `GET /api/providers` - List providers
-- `POST /api/providers` - Register provider
-- `GET /api/providers/{id}/health` - Check health
+| Worker | Description |
+|--------|-------------|
+| ContainerProvisioningWorker | Channel-based queue for container creation and setup |
+| ContainerStatusSyncWorker | Periodic sync of container state with Docker (15s default) |
+| ProviderHealthCheckWorker | Periodic health checks on infrastructure providers (60s default) |
+| ContainerScreenshotWorker | Captures tmux terminal content for thumbnails (30s default) |
+| ImageBuildWorker | Tracks and manages custom image build processes |
 
 ## CLI
 
 ```bash
-# Authentication (OAuth 2.0 Device Flow, like gh auth login)
-andy-containers auth login              # Opens browser for sign-in
-andy-containers auth login --token <t>  # Direct token (dev mode)
-andy-containers auth status             # Show current user and token expiry
+# Authentication (OAuth 2.0 Device Flow)
+andy-containers auth login
 andy-containers auth logout
 
 # Container management
-andy-containers list                                    # Formatted table with status, uptime
-andy-containers create --template dotnet-8-alpine --name my-dev
-andy-containers info <id>                               # Detailed container view
+andy-containers list
+andy-containers create --name <n> --template <code> [--provider <code>] [--code-assistant <tool>] [--model <model>]
 andy-containers start <id>
 andy-containers stop <id>
 andy-containers destroy <id>
-andy-containers exec <id> "dotnet --version"
-andy-containers stats <id>                              # CPU, RAM, disk with visual bars
-andy-containers connect <id>                            # SSH into container (native terminal)
+andy-containers exec <id> <command>
+andy-containers ssh <id>
+andy-containers info <id>
+andy-containers stats <id>
 
-# Workspace management (stubs)
-andy-containers workspace list
-
-# Template catalog (stubs)
+# Template catalog
 andy-containers templates list
+andy-containers templates info <code>
+
+# Provider management
+andy-containers providers list
 ```
+
+## RBAC Permissions
+
+All endpoints are protected by `[RequirePermission]` attributes:
+
+| Permission | Description |
+|------------|-------------|
+| container:read | List and view containers |
+| container:write | Create containers, add repositories |
+| container:delete | Destroy containers |
+| container:exec | Start, stop, exec, resize, pull |
+| template:read | Browse template catalog |
+| template:write | Create, update, publish templates |
+| template:delete | Delete templates |
+| provider:read | List providers, health checks |
+| provider:write | Register and delete providers |
+| workspace:read | List and view workspaces |
+| workspace:write | Create and update workspaces |
+| workspace:delete | Delete workspaces |
+| settings:read | List API keys and git credentials |
+| settings:write | Manage API keys and git credentials |
+| organization:read | View organization resources |
+| organization:write | Manage organization resources |
 
 ## Testing
 
@@ -253,25 +181,28 @@ dotnet test --settings coverlet.runsettings --collect:"XPlat Code Coverage"
 
 - **Framework**: ASP.NET Core 8.0
 - **Database**: PostgreSQL 16 with EF Core
-- **APIs**: REST + gRPC + MCP
-- **UI**: Angular 18 (standalone components)
+- **APIs**: REST + MCP (Model Context Protocol)
+- **UI**: Angular 18 (standalone components, Tailwind CSS)
 - **CLI**: System.CommandLine + Spectre.Console
-- **Docker**: Docker.DotNet
-- **Azure**: Azure.ResourceManager SDK
-- **SSH**: SSH.NET
-- **Auth**: JWT Bearer (Andy Auth)
-- **AuthZ**: Organization-scoped RBAC (JWT claims + HTTP fallback with IMemoryCache)
+- **Docker**: Docker.DotNet + Docker-in-Docker
+- **Auth**: JWT Bearer (Andy Auth OAuth 2.0 / OIDC)
+- **AuthZ**: Andy RBAC with `[RequirePermission]` attributes
 - **Observability**: OpenTelemetry (tracing + metrics), Serilog
-- **Config**: YAML (source of truth) + Database (runtime)
-- **Caching**: IMemoryCache
 - **Testing**: xUnit, FluentAssertions, Moq
 
 ## Documentation
 
+Documentation is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) and deployed via GitHub Actions (`docs.yml` workflow).
+
+To enable GitHub Pages, go to Settings > Pages > Source and select "GitHub Actions".
+
 - [Architecture](docs/ARCHITECTURE.md) - System design, domain model, provider architecture
+- [Security](docs/SECURITY.md) - Authentication, authorization, certificates
+- [Getting Started](docs/getting-started.md) - Setup guide
+- [API Reference](docs/api-reference.md) - REST API endpoints
+- [CLI Reference](docs/cli-reference.md) - Command-line tool usage
+- [Implementation](docs/implementation.md) - Implementation phases and details
 - [YAML Configuration](docs/YAML-CONFIGURATION.md) - YAML-first configuration guide
-- [OpenAPI Spec](openapi/containers-api.yaml) - REST API specification
-- [gRPC Proto](proto/containers.proto) - gRPC service definition
 
 ## License
 
@@ -281,4 +212,4 @@ Apache 2.0
 
 **Status:** Alpha
 **Version:** 0.1.0-alpha
-**Last Updated:** 2026-03-29
+**Last Updated:** 2026-04-01

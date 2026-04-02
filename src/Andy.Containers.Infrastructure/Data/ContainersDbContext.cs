@@ -21,6 +21,7 @@ public class ContainersDbContext : DbContext
     public DbSet<ApiKeyCredential> ApiKeyCredentials => Set<ApiKeyCredential>();
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<Team> Teams => Set<Team>();
+    public DbSet<ImageBuildRecord> ImageBuildRecords => Set<ImageBuildRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -179,6 +180,14 @@ public class ContainersDbContext : DbContext
             e.HasKey(t => t.Id);
             e.HasIndex(t => t.OrganizationId);
             e.HasIndex(t => new { t.OrganizationId, t.Name }).IsUnique();
+        });
+
+        // ImageBuildRecord
+        modelBuilder.Entity<ImageBuildRecord>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.HasIndex(r => r.ImageReference);
+            e.HasIndex(r => r.TemplateCode).IsUnique();
         });
     }
 }

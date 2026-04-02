@@ -23,6 +23,7 @@ export interface Container {
   creationSource?: string;
   clientInfo?: string;
   codeAssistant?: string;
+  containerUser?: string;
 }
 
 export interface Template {
@@ -266,3 +267,23 @@ export interface Team {
   description?: string;
   createdAt: string;
 }
+
+export interface ImageBuildRecord {
+  id: string;
+  imageReference: string;
+  templateCode?: string;
+  status: TemplateBuildStatus;
+  lastBuiltAt?: string;
+  dockerfileChecksum?: string;
+  lastBuildError?: string;
+  buildLog?: string;
+  imageSizeBytes?: number;
+  architecture?: string;
+  os?: string;
+  layerCount?: number;
+  imageDigest?: string;
+  imageCreatedAt?: string;
+  checkedAt: string;
+}
+
+export type TemplateBuildStatus = 'Unknown' | 'NotBuilt' | 'Building' | 'Built' | 'Outdated' | 'Failed';

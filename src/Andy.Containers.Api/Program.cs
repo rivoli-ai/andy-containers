@@ -74,6 +74,10 @@ try
     // Container screenshot capture worker
     builder.Services.AddHostedService<ContainerScreenshotWorker>();
 
+    // Image build status tracking + background worker
+    builder.Services.AddScoped<ITemplateBuildService, TemplateBuildService>();
+    builder.Services.AddHostedService<ImageBuildWorker>();
+
     // Git credential + clone services
     builder.Services.AddDataProtection();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
@@ -230,7 +234,23 @@ try
     }
 
     app.UseDefaultFiles();
-    app.UseStaticFiles();
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        OnPrepareResponse = ctx =>
+        {
+            // Cache JS/CSS chunks with hashed names for 1 year
+            if (ctx.File.Name.EndsWith(".js") || ctx.File.Name.EndsWith(".css"))
+            {
+                ctx.Context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+            }
+            // Never cache index.html — ensures fresh chunk references
+            else if (ctx.File.Name == "index.html")
+            {
+                ctx.Context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+                ctx.Context.Response.Headers.Pragma = "no-cache";
+            }
+        }
+    });
 
     app.UseCors();
 

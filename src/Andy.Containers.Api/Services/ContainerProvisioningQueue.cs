@@ -15,7 +15,10 @@ public record ContainerProvisionJob(
     IReadOnlyList<string>? PostCreateScripts = null,
     Andy.Containers.Models.CodeAssistantConfig? CodeAssistant = null,
     Dictionary<string, string>? EnvironmentVariables = null,
-    string GuiType = "none");
+    string GuiType = "none",
+    string ContainerUser = "root",
+    string? OwnerEmail = null,
+    string? OwnerPreferredUsername = null);
 
 public class ContainerProvisioningQueue
 {

@@ -121,6 +121,8 @@ public class ContainersController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateContainerRequest request, CancellationToken ct)
     {
         request.OwnerId = _currentUser.GetUserId();
+        request.OwnerEmail = _currentUser.GetEmail();
+        request.OwnerPreferredUsername = _currentUser.GetDisplayName();
         if (request.Source == CreationSource.Unknown)
             request.Source = CreationSource.RestApi;
         if (string.IsNullOrEmpty(request.ClientInfo) && HttpContext?.Request?.Headers.UserAgent.Count > 0)

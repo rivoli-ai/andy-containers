@@ -12,6 +12,8 @@ Or run from source:
 dotnet run --project src/Andy.Containers.Cli -- <command>
 ```
 
+The CLI is built with **System.CommandLine** and **Spectre.Console** for rich terminal output.
+
 ## Authentication
 
 ```bash
@@ -35,11 +37,14 @@ andy-containers auth logout
 andy-containers list
 
 # Create a container
-andy-containers create --template dotnet-8-alpine --name my-dev
+andy-containers create --name my-dev --template dotnet-8-alpine
+
+# Create with a specific provider
+andy-containers create --name my-dev --template dotnet-8-alpine --provider local-docker
 
 # Create with code assistant and model
-andy-containers create --template dotnet-8-alpine --name ai-dev \
-  --code-assistant Aider --model gpt-4o --base-url https://openrouter.ai/api/v1
+andy-containers create --name ai-dev --template dotnet-8-alpine \
+  --code-assistant Aider --model gpt-4o
 
 # Show container details
 andy-containers info <id>
@@ -52,26 +57,57 @@ andy-containers destroy <id>
 # Execute a command
 andy-containers exec <id> "dotnet --version"
 
-# Show resource usage
+# SSH into a running container
+andy-containers ssh <id>
+
+# Show resource usage (CPU, RAM, disk with visual bars)
 andy-containers stats <id>
 ```
 
-## Terminal Connect
+## Template Catalog
 
 ```bash
-# SSH into a running container (native terminal)
-andy-containers connect <id>
+# List all available templates
+andy-containers templates list
+
+# Show template details
+andy-containers templates info <code>
 ```
 
-Uses SSH when available (port 22 auto-mapped). Falls back to suggesting `docker exec` if SSH isn't available.
+## Provider Management
+
+```bash
+# List infrastructure providers
+andy-containers providers list
+```
+
+## Command Summary
+
+| Command | Description |
+|---------|-------------|
+| `auth login` | Authenticate via OAuth Device Flow or direct token |
+| `auth logout` | Clear stored credentials |
+| `auth status` | Show current user and token expiry |
+| `list` | List all containers with status and uptime |
+| `create` | Create a new container from a template |
+| `start <id>` | Start a stopped container |
+| `stop <id>` | Stop a running container |
+| `destroy <id>` | Permanently destroy a container |
+| `exec <id> <cmd>` | Execute a command in a container |
+| `ssh <id>` | SSH into a running container |
+| `info <id>` | Show detailed container information |
+| `stats <id>` | Show CPU, RAM, and disk usage |
+| `templates list` | Browse the template catalog |
+| `templates info <code>` | Show template details |
+| `providers list` | List infrastructure providers |
 
 ## Global Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--api-url` | https://localhost:5200 | API server URL |
-| `--help` | — | Show help |
-| `--version` | — | Show version |
+| `--help` | -- | Show help |
+| `--version` | -- | Show version |
 
 ## Credentials
 

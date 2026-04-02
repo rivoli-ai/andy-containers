@@ -21,6 +21,9 @@
 | 7: Auth & RBAC | 8 | Complete |
 | 8: Web Frontend | 16 | Complete |
 | 9: Git & Image Management | 14 | Complete |
+| 10: VNC Desktop | 4 | Complete |
+| 11: Non-Root Containers | 3 | Complete |
+| 12: Image Build Tracking | 3 | Complete |
 
 ## 1. Implementation Order
 
@@ -106,7 +109,7 @@ ContainerEvent audit log
 **Goal:** Auto-install AI coding tools in containers with model/provider selection.
 
 ```
-CodeAssistantType enum (7 tools):
+CodeAssistantType enum (10 tools):
   - ClaudeCode (npm: @anthropic-ai/claude-code)
   - CodexCli (npm: @openai/codex)
   - Aider (pip: aider-chat)
@@ -114,6 +117,9 @@ CodeAssistantType enum (7 tools):
   - OpenCode (binary from GitHub releases)
   - QwenCoder (pip: qwen-coder-cli)
   - GeminiCode (npm: gemini-code)
+  - GitHubCopilot (gh extension)
+  - AmazonQ (binary installer)
+  - Cline (IDE marketplace)
 CodeAssistantInstallService (distro-agnostic install scripts)
   - Node.js install: apk / apt+nodesource / dnf
   - Python/pip install: apk / apt / dnf
@@ -124,7 +130,7 @@ ApiKeyValidationService (HTTP validation against provider APIs)
 Default env var mapping per tool (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 ```
 
-**Exit Criteria:** Creating a container with `codeAssistant: ClaudeCode` installs Claude Code and injects the API key. All 7 tools install successfully on Alpine, Debian, and RHEL.
+**Exit Criteria:** Creating a container with `codeAssistant: ClaudeCode` installs Claude Code and injects the API key. All 10 tools install successfully on Alpine, Debian, and RHEL.
 
 ### Phase 6: API Surfaces
 **Goal:** REST, gRPC, and MCP APIs with full endpoint coverage.
@@ -262,6 +268,49 @@ Image Management:
 
 **Exit Criteria:** Containers clone multiple repos with per-repo status. Images have content hashes and introspection manifests. Image diffs show tool changes with severity.
 
+### Phase 10: VNC Desktop
+**Goal:** Graphical desktop environment accessible via web browser.
+
+```
+VNC Desktop templates (4 variants):
+  - dotnet-8-desktop (Ubuntu 24.04 + XFCE4 + TigerVNC + noVNC)
+  - dotnet-8-alpine-desktop (Alpine + XFCE4 + TigerVNC + noVNC)
+  - dotnet-10-alpine-desktop (Alpine + .NET 10 + XFCE4 + TigerVNC + noVNC)
+  - python-3.12-desktop (Ubuntu 24.04 + Python 3.12 + XFCE4 + TigerVNC + noVNC)
+VNC server configuration (TigerVNC with HTTPS via self-signed certs)
+noVNC web client embedded as iframe in Angular UI
+VNC endpoint exposed via container connection info
+```
+
+**Exit Criteria:** Desktop templates provide a full XFCE4 graphical environment accessible via noVNC in the web UI.
+
+### Phase 11: Non-Root Containers
+**Goal:** Containers run as non-root user derived from authenticated user's JWT claims.
+
+```
+Non-root user provisioning:
+  - Extract username from JWT preferred_username or email claim
+  - Create Linux user during container provisioning
+  - Configure home directory, file ownership, and shell profile
+  - Run all processes under non-root user
+  - Code assistant and API key injection into user environment
+```
+
+**Exit Criteria:** Containers do not run as root. User is created from JWT claims during provisioning.
+
+### Phase 12: Image Build Tracking
+**Goal:** Track custom image build status and trigger rebuilds from UI.
+
+```
+ImageBuildWorker (BackgroundService):
+  - Monitor build processes (Pending, Building, Completed, Failed)
+  - Trigger rebuilds from web UI
+  - Update content hashes and metadata on completion
+  - Build status visible in frontend image management views
+```
+
+**Exit Criteria:** Image builds can be triggered from the UI. Build status is tracked and displayed in real time.
+
 ## 2. Key Implementation Details
 
 ### 2.1 Program.cs Setup
@@ -319,6 +368,7 @@ builder.Services.AddHostedService<ContainerProvisioningWorker>();
 builder.Services.AddHostedService<ProviderHealthCheckWorker>();
 builder.Services.AddHostedService<ContainerStatusSyncWorker>();
 builder.Services.AddHostedService<ContainerScreenshotWorker>();
+builder.Services.AddHostedService<ImageBuildWorker>();
 
 // MCP Server
 builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly();
@@ -353,7 +403,7 @@ app.Run();
 
 ### 2.2 Background Workers
 
-Four `BackgroundService` workers run concurrently:
+Five `BackgroundService` workers run concurrently:
 
 **ContainerProvisioningWorker** (Channel-based queue):
 - Reads from `ContainerProvisioningQueue` (bounded `Channel<ContainerProvisionJob>`)
@@ -383,7 +433,21 @@ Four `BackgroundService` workers run concurrently:
 - Max 20 containers per cycle with 500ms delay between containers
 - 10-second exec timeout
 
-### 2.3 Infrastructure Provider Pattern
+**ImageBuildWorker** (PeriodicTimer):
+- Monitors custom image build processes
+- Tracks build status: Pending, Building, Completed, Failed
+- Triggers rebuilds when requested from the UI
+- Updates image metadata and content hashes on completion
+
+### 2.3 Non-Root Container Execution
+
+Containers run as a non-root user derived from the authenticated user's JWT claims:
+- Username is extracted from `preferred_username` or `email` claim during provisioning
+- A Linux user is created inside the container with appropriate permissions
+- The home directory, file ownership, and environment are configured for this user
+- Code assistant configuration and API keys are injected into the user's shell profile
+
+### 2.4 Infrastructure Provider Pattern
 
 All providers implement `IInfrastructureProvider`:
 
@@ -422,7 +486,7 @@ public interface IInfrastructureProvider
 
 `InfrastructureRoutingService` auto-selects the best provider based on container specs, GPU requirements, cost estimation, and health status.
 
-### 2.4 Terminal WebSocket
+### 2.5 Terminal WebSocket
 
 The `TerminalController` provides a WebSocket-based terminal at `GET /api/containers/{id}/terminal`:
 
@@ -441,7 +505,7 @@ The `TerminalController` provides a WebSocket-based terminal at `GET /api/contai
 
 PTY sizing is critical: both the outer `script` PTY and inner container exec PTY are sized via `stty rows N cols N` to prevent line-wrapping corruption at column 80.
 
-### 2.5 MCP Tool Implementation
+### 2.6 MCP Tool Implementation
 
 Tools use the `[McpServerToolType]` / `[McpServerTool]` attribute pattern:
 
@@ -477,7 +541,7 @@ public class ContainersMcpTools
 
 All MCP tools enforce organization-level access via `IOrganizationMembershipService.IsMemberAsync()` and `ICurrentUserService.IsAdmin()`. Return types use dedicated MCP record types (e.g., `McpContainerInfo`, `McpTemplateInfo`) rather than domain entities.
 
-### 2.6 RBAC Integration
+### 2.7 RBAC Integration
 
 Per-endpoint permission enforcement uses the `[RequirePermission]` attribute from `Andy.Rbac.Authorization`:
 
