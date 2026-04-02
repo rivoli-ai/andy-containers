@@ -411,86 +411,70 @@ public class ContainerProvisioningWorker : BackgroundService
             ? $"MODEL=\\\"{job.CodeAssistant.ModelName}\\\""
             : "MODEL=\\\"\\\"";
 
+        var containerName = EscapeForShell(job.ContainerName);
+        var templateName = EscapeForShell(job.TemplateName ?? job.TemplateBaseImage);
+        var providerName = EscapeForShell(job.ProviderName ?? job.ProviderCode);
+        var containerUser = EscapeForShell(job.ContainerUser);
+        var caTool = job.CodeAssistant is not null ? EscapeForShell(job.CodeAssistant.Tool.ToString()) : "";
+        var caModel = job.CodeAssistant?.ModelName is not null ? EscapeForShell(job.CodeAssistant.ModelName) : "";
+
+        // Build fastfetch custom config lines
+        var caLine = !string.IsNullOrEmpty(caTool)
+            ? (!string.IsNullOrEmpty(caModel) ? $"{caTool} ({caModel})" : caTool)
+            : "";
+
         var script = $@"
+# Install fastfetch (lightweight neofetch replacement)
+command -v fastfetch >/dev/null 2>&1 || {{
+    command -v apk >/dev/null 2>&1 && apk add --no-cache fastfetch >/dev/null 2>&1
+    command -v apt-get >/dev/null 2>&1 && apt-get install -y -qq fastfetch >/dev/null 2>&1
+}} || true
+
+# Create custom fastfetch config for Andy Containers
+mkdir -p /etc/fastfetch
+cat > /etc/fastfetch/config.jsonc << 'FFCONF'
+{{
+    ""$schema"": ""https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json"",
+    ""logo"": {{ ""type"": ""small"" }},
+    ""display"": {{ ""separator"": ""  "" }},
+    ""modules"": [
+        {{ ""type"": ""title"", ""format"": ""Andy Containers"" }},
+        ""separator"",
+        {{ ""type"": ""custom"", ""format"": ""Container:  {containerName}"" }},
+        {{ ""type"": ""custom"", ""format"": ""Template:   {templateName}"" }},
+        {{ ""type"": ""custom"", ""format"": ""Provider:   {providerName}"" }},
+        {{ ""type"": ""custom"", ""format"": ""User:       {containerUser}"" }},
+        ""separator"",
+        ""os"",
+        ""kernel"",
+        ""uptime"",
+        ""packages"",
+        ""shell"",
+        ""cpu"",
+        ""memory"",
+        ""disk"",
+        ""localip"",{(string.IsNullOrEmpty(caLine) ? "" : $@"
+        ""separator"",
+        {{ ""type"": ""custom"", ""format"": ""Code Asst:  {caLine}"" }},")}
+        ""break"",
+        ""colors""
+    ]
+}}
+FFCONF
+
+# Create banner wrapper
 cat > /usr/local/bin/andy-banner << 'BANNEREOF'
 #!/bin/sh
 [ ""$ANDY_NO_BANNER"" = ""1"" ] && exit 0
-[ -z ""$PS1"" ] && exit 0
-
-C_RESET='\033[0m'
-C_CYAN='\033[36m'
-C_GREEN='\033[32m'
-C_YELLOW='\033[33m'
-C_DIM='\033[2m'
-C_BOLD='\033[1m'
-C_LINE='\033[36m'
-
-# Detect tools
-TOOLS=""""
-command -v dotnet >/dev/null 2>&1 && TOOLS=""$TOOLS  dotnet $(dotnet --version 2>/dev/null)""$'\n'
-command -v python3 >/dev/null 2>&1 && TOOLS=""$TOOLS  python $(python3 --version 2>/dev/null | awk '{{print $2}}')""$'\n'
-command -v node >/dev/null 2>&1 && TOOLS=""$TOOLS  node $(node --version 2>/dev/null)""$'\n'
-command -v go >/dev/null 2>&1 && TOOLS=""$TOOLS  go $(go version 2>/dev/null | awk '{{print $3}}' | sed 's/go//')""$'\n'
-command -v rustc >/dev/null 2>&1 && TOOLS=""$TOOLS  rustc $(rustc --version 2>/dev/null | awk '{{print $2}}')""$'\n'
-command -v git >/dev/null 2>&1 && TOOLS=""$TOOLS  git $(git --version 2>/dev/null | awk '{{print $3}}')""$'\n'
-command -v gh >/dev/null 2>&1 && TOOLS=""$TOOLS  gh $(gh --version 2>/dev/null | head -1 | awk '{{print $3}}')""$'\n'
-
-# Code assistant
-{codeAssistantLine}
-{modelLine}
-ASSISTANT_LINE=""""
-if [ -n ""$CODE_ASSISTANT"" ]; then
-    if [ -n ""$MODEL"" ]; then
-        ASSISTANT_LINE=""$CODE_ASSISTANT ($MODEL)""
-    else
-        ASSISTANT_LINE=""$CODE_ASSISTANT""
-    fi
+if command -v fastfetch >/dev/null 2>&1; then
+    fastfetch --config /etc/fastfetch/config.jsonc 2>/dev/null
+else
+    printf '\n  Andy Containers - {containerName}\n  Template: {templateName}\n  Provider: {providerName}\n\n'
 fi
-
-# Ports
-PORTS=""""
-ss -tlnp 2>/dev/null | grep -oP ':\K[0-9]+' | sort -un | head -5 | while read p; do
-    PORTS=""$PORTS $p""
-done
-
-echo """"
-printf ""$C_LINE""
-echo ""  ┌──────────────────────────────────────────────────────┐""
-printf ""  │$C_BOLD$C_CYAN  Andy Containers$C_RESET$C_LINE                                      │\n""
-echo ""  ├──────────────────────────────────────────────────────┤""
-printf ""  │$C_RESET  Container:  $C_BOLD{EscapeForShell(job.ContainerName),-40}$C_RESET$C_LINE│\n""
-printf ""  │$C_RESET  Template:   $C_DIM{EscapeForShell(job.TemplateName ?? job.TemplateBaseImage),-40}$C_RESET$C_LINE│\n""
-printf ""  │$C_RESET  Provider:   $C_DIM{EscapeForShell(job.ProviderName ?? job.ProviderCode),-40}$C_RESET$C_LINE│\n""
-printf ""  │$C_RESET  User:       $C_DIM{EscapeForShell(job.ContainerUser),-40}$C_RESET$C_LINE│\n""
-echo ""  │                                                      │""
-if [ -n ""$TOOLS"" ]; then
-    printf ""  │$C_RESET  $C_GREEN""Toolchains:""$C_RESET                                        $C_LINE│\n""
-    echo ""$TOOLS"" | while IFS= read -r line; do
-        [ -z ""$line"" ] && continue
-        printf ""  │$C_RESET  $C_DIM%-40s$C_RESET$C_LINE│\n"" ""$line""
-    done
-    echo ""  │                                                      │""
-fi
-if [ -n ""$ASSISTANT_LINE"" ]; then
-    printf ""  │$C_RESET  $C_YELLOW""Code Assistant:""$C_RESET $C_DIM%-33s$C_RESET$C_LINE│\n"" ""$ASSISTANT_LINE""
-    echo ""  │                                                      │""
-fi
-printf ""$C_LINE""
-echo ""  └──────────────────────────────────────────────────────┘""
-printf ""$C_RESET""
-echo """"
 BANNEREOF
 chmod +x /usr/local/bin/andy-banner
 
-# Install into profile so it runs on login
-mkdir -p /etc/profile.d
-cat > /etc/profile.d/99-andy-welcome.sh << 'PROFILEEOF'
-if [ -z ""$ANDY_BANNER_SHOWN"" ] && [ -x /usr/local/bin/andy-banner ]; then
-    /usr/local/bin/andy-banner
-    export ANDY_BANNER_SHOWN=1
-fi
-PROFILEEOF
-chmod +x /etc/profile.d/99-andy-welcome.sh
+# Banner is triggered by the terminal controller after tmux attaches
 ";
         return script;
     }

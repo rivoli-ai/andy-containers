@@ -124,6 +124,29 @@ public class TerminalController : ControllerBase
         // - attach -d detaches dead/stale clients so tmux uses current PTY size
         // - default-terminal xterm-256color prevents arrow key / escape issues
         var tmuxSession = "web";
+
+        // Check if tmux session already exists (to decide whether to show banner)
+        var checkExisting = providerType == ProviderType.AppleContainer ? "container" : "docker";
+        var hasExistingSession = false;
+        try
+        {
+            var checkProcess = System.Diagnostics.Process.Start(new ProcessStartInfo
+            {
+                FileName = checkExisting == "docker" ? "docker" : "container",
+                Arguments = $"exec {externalId} tmux has-session -t {tmuxSession}",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            if (checkProcess is not null)
+            {
+                await checkProcess.WaitForExitAsync(ct);
+                hasExistingSession = checkProcess.ExitCode == 0;
+            }
+        }
+        catch { /* assume new session */ }
+
         var shellCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
                        $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
                        $"[ -f /etc/profile ] && . /etc/profile 2>/dev/null; " +
@@ -269,13 +292,31 @@ public class TerminalController : ControllerBase
             }
         }, ct);
 
+        // Send welcome banner after tmux has initialized (only on new sessions)
+        var stdinStream = process.StandardInput.BaseStream;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Wait for tmux to fully initialize and draw
+                await Task.Delay(1500, ct);
+                if (!hasExistingSession && !process.HasExited && ws.State == WebSocketState.Open)
+                {
+                    // Clear screen, run banner silently (space prefix avoids bash history), then clear the command line
+                    var bannerCmd = System.Text.Encoding.UTF8.GetBytes(" clear && /usr/local/bin/andy-banner 2>/dev/null; true\n");
+                    await stdinStream.WriteAsync(bannerCmd, ct);
+                    await stdinStream.FlushAsync(ct);
+                }
+            }
+            catch { /* ignore */ }
+        }, ct);
+
         // Relay: WebSocket -> Process stdin
         // Write raw bytes to BaseStream instead of using StreamWriter to avoid
         // any text encoding transformations that could corrupt escape sequences
         // (e.g. arrow keys: \x1b[A, \x1b[B, etc.)
         // Also intercepts resize messages from the client to update the PTY size
         // via ioctl, which sends SIGWINCH to tmux so it redraws at the new size.
-        var stdinStream = process.StandardInput.BaseStream;
         var wsToProcess = Task.Run(async () =>
         {
             var buffer = new byte[4096];

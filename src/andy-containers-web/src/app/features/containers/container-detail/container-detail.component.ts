@@ -79,7 +79,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
             <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.ownerId }}</dd>
 
             <dt class="text-sm text-surface-500 dark:text-surface-400">Template</dt>
-            <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.template?.name || container.templateId | slice:0:8 }} <span *ngIf="container.template?.code" class="text-xs font-mono text-surface-400">({{ container.template?.code }})</span></dd>
+            <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.template?.name || (container.templateId | slice:0:8) }} <span *ngIf="container.template?.code" class="text-xs font-mono text-surface-400">({{ container.template?.code }})</span></dd>
 
             <ng-container *ngIf="container.template?.baseImage">
               <dt class="text-sm text-surface-500 dark:text-surface-400">Base Image</dt>
@@ -87,7 +87,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
             </ng-container>
 
             <dt class="text-sm text-surface-500 dark:text-surface-400">Provider</dt>
-            <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.provider?.name || container.providerId | slice:0:8 }}</dd>
+            <dd class="text-sm text-surface-900 dark:text-surface-100 break-words">{{ container.provider?.name || (container.providerId | slice:0:8) }}</dd>
 
             <dt class="text-sm text-surface-500 dark:text-surface-400">Created</dt>
             <dd class="text-sm text-surface-600 dark:text-surface-300">{{ container.createdAt | date:'medium' }}</dd>
