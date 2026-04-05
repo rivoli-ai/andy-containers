@@ -1,6 +1,16 @@
 # ── Node build stage (Angular SPA) ────────────────────────────────────────────
 FROM node:22-alpine AS node-build
 WORKDIR /node-build
+
+# Trust corporate CAs (same certs/ directory used by the .NET stages)
+COPY --from=certs . /usr/local/share/ca-certificates/corporate/
+RUN apk add --no-cache ca-certificates && \
+    find /usr/local/share/ca-certificates/corporate/ -name '.git*' -delete 2>/dev/null || true && \
+    find /usr/local/share/ca-certificates/corporate/ -name 'README.md' -delete 2>/dev/null || true && \
+    update-ca-certificates 2>/dev/null || true
+
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
 COPY src/andy-containers-web/package.json src/andy-containers-web/package-lock.json ./
 RUN npm ci
 COPY src/andy-containers-web/ ./
