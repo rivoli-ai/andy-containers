@@ -25,6 +25,15 @@ public class ContainersDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // Provider-specific column type for the jsonb columns. Postgres
+        // uses native `jsonb`; SQLite stores the same payload as TEXT
+        // (the values themselves are typed CLR objects that EF Core
+        // already serialises via its default JSON value converter).
+        // This keeps the hosted (Npgsql) deployments unchanged while
+        // letting the embedded SQLite path round-trip the same payloads
+        // without any schema-level provider awareness leaking out.
+        var jsonColumnType = Database.IsNpgsql() ? "jsonb" : null;
+
         // Container
         modelBuilder.Entity<Container>(e =>
         {
@@ -32,12 +41,15 @@ public class ContainersDbContext : DbContext
             e.HasIndex(c => c.OwnerId);
             e.HasIndex(c => c.Status);
             e.HasIndex(c => c.OrganizationId);
-            e.Property(c => c.AllocatedResources).HasColumnType("jsonb");
-            e.Property(c => c.NetworkConfig).HasColumnType("jsonb");
-            e.Property(c => c.GitRepository).HasColumnType("jsonb");
-            e.Property(c => c.EnvironmentVariables).HasColumnType("jsonb");
-            e.Property(c => c.CodeAssistant).HasColumnType("jsonb");
-            e.Property(c => c.Metadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(c => c.AllocatedResources).HasColumnType(jsonColumnType);
+                e.Property(c => c.NetworkConfig).HasColumnType(jsonColumnType);
+                e.Property(c => c.GitRepository).HasColumnType(jsonColumnType);
+                e.Property(c => c.EnvironmentVariables).HasColumnType(jsonColumnType);
+                e.Property(c => c.CodeAssistant).HasColumnType(jsonColumnType);
+                e.Property(c => c.Metadata).HasColumnType(jsonColumnType);
+            }
             e.HasOne(c => c.Template).WithMany().HasForeignKey(c => c.TemplateId);
             e.HasOne(c => c.Provider).WithMany().HasForeignKey(c => c.ProviderId);
             e.HasMany(c => c.Sessions).WithOne(s => s.Container).HasForeignKey(s => s.ContainerId);
@@ -51,14 +63,17 @@ public class ContainersDbContext : DbContext
             e.HasKey(t => t.Id);
             e.HasIndex(t => t.Code).IsUnique();
             e.HasIndex(t => t.CatalogScope);
-            e.Property(t => t.Toolchains).HasColumnType("jsonb");
-            e.Property(t => t.DefaultResources).HasColumnType("jsonb");
-            e.Property(t => t.EnvironmentVariables).HasColumnType("jsonb");
-            e.Property(t => t.Ports).HasColumnType("jsonb");
-            e.Property(t => t.Scripts).HasColumnType("jsonb");
-            e.Property(t => t.GitRepositories).HasColumnType("jsonb");
-            e.Property(t => t.CodeAssistant).HasColumnType("jsonb");
-            e.Property(t => t.Metadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(t => t.Toolchains).HasColumnType(jsonColumnType);
+                e.Property(t => t.DefaultResources).HasColumnType(jsonColumnType);
+                e.Property(t => t.EnvironmentVariables).HasColumnType(jsonColumnType);
+                e.Property(t => t.Ports).HasColumnType(jsonColumnType);
+                e.Property(t => t.Scripts).HasColumnType(jsonColumnType);
+                e.Property(t => t.GitRepositories).HasColumnType(jsonColumnType);
+                e.Property(t => t.CodeAssistant).HasColumnType(jsonColumnType);
+                e.Property(t => t.Metadata).HasColumnType(jsonColumnType);
+            }
             e.HasOne(t => t.ParentTemplate).WithMany().HasForeignKey(t => t.ParentTemplateId);
         });
 
@@ -68,9 +83,12 @@ public class ContainersDbContext : DbContext
             e.HasKey(i => i.Id);
             e.HasIndex(i => i.ContentHash).IsUnique();
             e.HasIndex(i => i.Tag);
-            e.Property(i => i.DependencyManifest).HasColumnType("jsonb");
-            e.Property(i => i.DependencyLock).HasColumnType("jsonb");
-            e.Property(i => i.Metadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(i => i.DependencyManifest).HasColumnType(jsonColumnType);
+                e.Property(i => i.DependencyLock).HasColumnType(jsonColumnType);
+                e.Property(i => i.Metadata).HasColumnType(jsonColumnType);
+            }
             e.HasOne(i => i.Template).WithMany().HasForeignKey(i => i.TemplateId);
             e.HasOne(i => i.PreviousImage).WithMany().HasForeignKey(i => i.PreviousImageId);
             e.HasIndex(i => new { i.TemplateId, i.OrganizationId });
@@ -83,7 +101,10 @@ public class ContainersDbContext : DbContext
             e.HasKey(s => s.Id);
             e.HasIndex(s => s.ContainerId);
             e.HasIndex(s => s.SubjectId);
-            e.Property(s => s.Metadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(s => s.Metadata).HasColumnType(jsonColumnType);
+            }
         });
 
         // ContainerEvent
@@ -92,7 +113,10 @@ public class ContainersDbContext : DbContext
             e.HasKey(ev => ev.Id);
             e.HasIndex(ev => ev.ContainerId);
             e.HasIndex(ev => ev.Timestamp);
-            e.Property(ev => ev.Details).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(ev => ev.Details).HasColumnType(jsonColumnType);
+            }
         });
 
         // Workspace
@@ -101,9 +125,12 @@ public class ContainersDbContext : DbContext
             e.HasKey(w => w.Id);
             e.HasIndex(w => w.OwnerId);
             e.HasIndex(w => w.OrganizationId);
-            e.Property(w => w.GitRepositories).HasColumnType("jsonb");
-            e.Property(w => w.Configuration).HasColumnType("jsonb");
-            e.Property(w => w.Metadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(w => w.GitRepositories).HasColumnType(jsonColumnType);
+                e.Property(w => w.Configuration).HasColumnType(jsonColumnType);
+                e.Property(w => w.Metadata).HasColumnType(jsonColumnType);
+            }
             e.HasOne(w => w.DefaultContainer).WithMany().HasForeignKey(w => w.DefaultContainerId);
             e.HasMany(w => w.Containers).WithMany();
         });
@@ -113,9 +140,12 @@ public class ContainersDbContext : DbContext
         {
             e.HasKey(p => p.Id);
             e.HasIndex(p => p.Code).IsUnique();
-            e.Property(p => p.ConnectionConfig).HasColumnType("jsonb");
-            e.Property(p => p.Capabilities).HasColumnType("jsonb");
-            e.Property(p => p.Metadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(p => p.ConnectionConfig).HasColumnType(jsonColumnType);
+                e.Property(p => p.Capabilities).HasColumnType(jsonColumnType);
+                e.Property(p => p.Metadata).HasColumnType(jsonColumnType);
+            }
         });
 
         // DependencySpec
@@ -123,7 +153,10 @@ public class ContainersDbContext : DbContext
         {
             e.HasKey(d => d.Id);
             e.HasIndex(d => new { d.TemplateId, d.Name }).IsUnique();
-            e.Property(d => d.Metadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(d => d.Metadata).HasColumnType(jsonColumnType);
+            }
             e.HasOne(d => d.Template).WithMany().HasForeignKey(d => d.TemplateId);
         });
 
@@ -142,7 +175,10 @@ public class ContainersDbContext : DbContext
             e.HasKey(r => r.Id);
             e.HasIndex(r => r.ContainerId);
             e.HasIndex(r => r.CloneStatus);
-            e.Property(r => r.CloneMetadata).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(r => r.CloneMetadata).HasColumnType(jsonColumnType);
+            }
         });
 
         // GitCredential
@@ -159,7 +195,10 @@ public class ContainersDbContext : DbContext
             e.HasKey(k => k.Id);
             e.HasIndex(k => k.OwnerId);
             e.HasIndex(k => new { k.OwnerId, k.Provider, k.Label }).IsUnique();
-            e.Property(k => k.ChangeHistory).HasColumnType("jsonb");
+            if (jsonColumnType != null)
+            {
+                e.Property(k => k.ChangeHistory).HasColumnType(jsonColumnType);
+            }
         });
 
         // Organization

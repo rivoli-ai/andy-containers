@@ -50,9 +50,17 @@ try
             o.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
         });
 
-    // Database
+    // Database — provider switch (PostgreSQL for hosted/Docker, SQLite
+    // for embedded Conductor). Active provider read from
+    // `Database:Provider` config key. `appsettings.json` pins PostgreSql
+    // so existing deployment paths are unchanged; Conductor's embedded
+    // launcher overrides via `Database__Provider=Sqlite` env var.
+    var dbProvider = DatabaseProviderExtensions.GetDatabaseProvider(builder.Configuration);
+    var dbConnectionString = DatabaseProviderExtensions.ResolveConnectionString(builder.Configuration, dbProvider);
     builder.Services.AddDbContext<ContainersDbContext>(options =>
-        options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    {
+        DatabaseProviderExtensions.ConfigureDbContext(options, dbProvider, dbConnectionString);
+    });
 
     // Services
     builder.Services.AddScoped<IContainerService, ContainerOrchestrationService>();
