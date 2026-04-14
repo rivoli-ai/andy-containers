@@ -16,6 +16,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # NATS JetStream broker for inter-service messaging (ADR 0001).
+  # -js enables JetStream; -m 8222 exposes the HTTP monitoring endpoint
+  # used by the healthcheck and for local observability.
+  nats:
+    image: nats:2-alpine
+    container_name: andy-containers-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: .
@@ -35,6 +53,8 @@ services:
       - Cors__Origins__0=https://localhost:5280
       - Cors__Origins__1=https://localhost:4200
       - Cors__Origins__2=https://localhost:3000
+      - Messaging__Provider=Nats
+      - Messaging__Nats__Url=nats://nats:4222
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -49,6 +69,8 @@ services:
       - dataprotection_keys:/root/.aspnet/DataProtection-Keys
     depends_on:
       postgres:
+        condition: service_healthy
+      nats:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fk", "https://localhost:8443/health"]
@@ -97,3 +119,4 @@ services:
 volumes:
   postgres_data:
   dataprotection_keys:
+  nats_data:

@@ -12,6 +12,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Andy.Containers.Api.Tests" />
     <InternalsVisibleTo Include="Andy.Containers.Tests" />
+    <InternalsVisibleTo Include="Andy.Containers.Integration.Tests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,6 +31,7 @@
     <PackageReference Include="Google.Cloud.Run.V2" />
     <PackageReference Include="AWSSDK.ECS" />
     <PackageReference Include="AWSSDK.EC2" />
+    <PackageReference Include="NATS.Net" />
   </ItemGroup>
 
 </Project>
