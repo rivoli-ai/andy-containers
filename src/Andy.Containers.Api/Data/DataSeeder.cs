@@ -59,51 +59,71 @@ public static class DataSeeder
 
     // Template-specific post-create scripts that install toolchains after base packages
     private static string PythonScriptsJson { get; } = JsonSerializer.Serialize(
-        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
             "apt-get install -y -qq python3 python3-pip python3-venv >/dev/null 2>&1 && " +
             "ln -sf /usr/bin/python3 /usr/bin/python 2>/dev/null; " +
-            "ln -sf /usr/bin/pip3 /usr/bin/pip 2>/dev/null" });
+            "ln -sf /usr/bin/pip3 /usr/bin/pip 2>/dev/null"
+        });
 
     private static string DotnetScriptsJson { get; } = JsonSerializer.Serialize(
-        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
             // Use official install script (works without Microsoft repo registration)
             "curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 && " +
             "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
             "echo 'export DOTNET_ROOT=/root/.dotnet' >> /root/.bashrc && " +
-            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc" });
+            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc"
+        });
 
     private static string Dotnet10ScriptsJson { get; } = JsonSerializer.Serialize(
-        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
             "curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 && " +
             "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
             "echo 'export DOTNET_ROOT=/root/.dotnet' >> /root/.bashrc && " +
-            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc" });
+            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc"
+        });
 
     private static string NodeScriptsJson { get; } = JsonSerializer.Serialize(
-        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
             "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && " +
-            "apt-get install -y -qq nodejs >/dev/null 2>&1" });
+            "apt-get install -y -qq nodejs >/dev/null 2>&1"
+        });
 
     // Alpine-based .NET 8: base image already has .NET SDK, just add bash and build tools
     private static string DotnetAlpineScriptsJson { get; } = JsonSerializer.Serialize(
-        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
             "apk add --quiet --no-cache bash build-base icu-libs >/dev/null 2>&1 && " +
-            "echo 'export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false' >> /root/.bashrc" });
+            "echo 'export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false' >> /root/.bashrc"
+        });
 
     // Desktop templates use pre-built images with VNC already installed.
     // PostCreateScript ensures dbus + xstartup + VNC + websockify are running.
     private static string DesktopScriptsJson { get; } = JsonSerializer.Serialize(
-        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
             // Ensure dbus is running (required by XFCE4)
             "mkdir -p /run/dbus && (dbus-daemon --system --fork 2>/dev/null || true) && " +
             // Create xstartup if missing (pre-built images have it, but just in case)
             "mkdir -p /root/.vnc && printf '#!/bin/sh\\nunset SESSION_MANAGER\\nunset DBUS_SESSION_BUS_ADDRESS\\nexec startxfce4\\n' > /root/.vnc/xstartup && chmod +x /root/.vnc/xstartup && " +
             // Start VNC and websockify
             "vncserver -kill :1 2>/dev/null; nohup vncserver :1 -geometry 1280x720 -depth 24 -localhost no >/dev/null 2>&1 & disown && " +
-            "sleep 2 && nohup websockify --web /usr/share/novnc 6080 localhost:5901 >/dev/null 2>&1 & disown" });
+            "sleep 2 && nohup websockify --web /usr/share/novnc 6080 localhost:5901 >/dev/null 2>&1 & disown"
+        });
 
     private static string FullStackScriptsJson { get; } = JsonSerializer.Serialize(
-        new Dictionary<string, string> { ["post_create"] = PostCreateScript + " && " +
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
             // Python
             "apt-get install -y -qq python3 python3-pip python3-venv >/dev/null 2>&1 && " +
             "ln -sf /usr/bin/python3 /usr/bin/python 2>/dev/null; " +
@@ -115,7 +135,8 @@ public static class DataSeeder
             "{ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 && " +
             "ln -sf /root/.dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
             "echo 'export DOTNET_ROOT=/root/.dotnet' >> /root/.bashrc && " +
-            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc; } || true" });
+            "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc; } || true"
+        });
 
     public static async Task SeedAsync(ContainersDbContext db)
     {
@@ -169,140 +190,223 @@ public static class DataSeeder
         var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
         var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
         var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
+        var devpilotDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000013");
 
         db.Templates.AddRange(
             new ContainerTemplate
             {
-                Id = fullStackId, Code = "full-stack", Name = "Full Stack Development",
+                Id = fullStackId,
+                Code = "full-stack",
+                Name = "Full Stack Development",
                 Description = "Complete environment with .NET 8, Python 3.12, Node 20, Angular 18",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["dotnet", "python", "node", "angular", "full-stack"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["dotnet", "python", "node", "angular", "full-stack"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":40}""",
                 Scripts = FullStackScriptsJson
             },
             new ContainerTemplate
             {
-                Id = agentSandboxId, Code = "agent-sandbox-ui", Name = "Agent Sandbox with UI",
+                Id = agentSandboxId,
+                Code = "agent-sandbox-ui",
+                Name = "Agent Sandbox with UI",
                 Description = "DevPilot AI agent environment with remote desktop and IDE",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.Both, GuiType = "vnc", GpuPreferred = true,
-                IsPublished = true, Tags = ["agent", "devpilot", "ui", "vnc"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.Both,
+                GuiType = "vnc",
+                GpuPreferred = true,
+                IsPublished = true,
+                Tags = ["agent", "devpilot", "ui", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = FullStackScriptsJson,
                 CodeAssistant = """{"Tool":"ClaudeCode","AutoStart":false,"ApiKeyEnvVar":"ANTHROPIC_API_KEY"}"""
             },
             new ContainerTemplate
             {
-                Id = dotnetId, Code = "dotnet-8-vscode", Name = ".NET 8 Development",
+                Id = dotnetId,
+                Code = "dotnet-8-vscode",
+                Name = ".NET 8 Development",
                 Description = ".NET 8 SDK with VSCode",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["dotnet"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["dotnet"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = DotnetScriptsJson
             },
             new ContainerTemplate
             {
-                Id = pythonId, Code = "python-3.12-vscode", Name = "Python 3.12 Development",
+                Id = pythonId,
+                Code = "python-3.12-vscode",
+                Name = "Python 3.12 Development",
                 Description = "Python 3.12 with VSCode",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["python"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["python"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = PythonScriptsJson
             },
             new ContainerTemplate
             {
-                Id = angularId, Code = "angular-18-vscode", Name = "Angular 18 Development",
+                Id = angularId,
+                Code = "angular-18-vscode",
+                Name = "Angular 18 Development",
                 Description = "Node 20 + Angular 18 with VSCode",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["angular", "node"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["angular", "node"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = NodeScriptsJson
             },
             new ContainerTemplate
             {
-                Id = andyCliId, Code = "andy-cli-dev", Name = "Andy CLI Development",
+                Id = andyCliId,
+                Code = "andy-cli-dev",
+                Name = "Andy CLI Development",
                 Description = "Pre-installed Andy CLI environment",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["andy-cli", "dotnet", "ai"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["andy-cli", "dotnet", "ai"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = ScriptsJson
             },
             new ContainerTemplate
             {
-                Id = dotnet10Id, Code = "dotnet-10-cli", Name = ".NET 10 CLI Development",
+                Id = dotnet10Id,
+                Code = "dotnet-10-cli",
+                Name = ".NET 10 CLI Development",
                 Description = ".NET 10 SDK for CLI and API development",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["dotnet", "dotnet-10"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["dotnet", "dotnet-10"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = Dotnet10ScriptsJson
             },
             new ContainerTemplate
             {
-                Id = dotnetAlpineId, Code = "dotnet-8-alpine", Name = ".NET 8 Alpine (Minimal)",
+                Id = dotnetAlpineId,
+                Code = "dotnet-8-alpine",
+                Name = ".NET 8 Alpine (Minimal)",
                 Description = "Minimal .NET 8 development environment based on Alpine Linux with essential dev tools",
-                Version = "1.0.0", BaseImage = "mcr.microsoft.com/dotnet/sdk:8.0-alpine",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["dotnet", "alpine", "minimal"],
+                Version = "1.0.0",
+                BaseImage = "mcr.microsoft.com/dotnet/sdk:8.0-alpine",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["dotnet", "alpine", "minimal"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
                 Scripts = DotnetAlpineScriptsJson
             },
             new ContainerTemplate
             {
-                Id = dotnetDesktopId, Code = "dotnet-8-desktop", Name = ".NET 8 Desktop (VNC)",
+                Id = dotnetDesktopId,
+                Code = "dotnet-8-desktop",
+                Name = ".NET 8 Desktop (VNC)",
                 Description = ".NET 8 SDK with XFCE4 remote desktop, code-server IDE, and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-dotnet:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
-                IsPublished = true, Tags = ["dotnet", "desktop", "vnc"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-dotnet:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["dotnet", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = DesktopScriptsJson
             },
             new ContainerTemplate
             {
-                Id = pythonDesktopId, Code = "python-3.12-desktop", Name = "Python 3.12 Desktop (VNC)",
+                Id = pythonDesktopId,
+                Code = "python-3.12-desktop",
+                Name = "Python 3.12 Desktop (VNC)",
                 Description = "Python 3.12 with XFCE4 remote desktop, code-server IDE, and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-python:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
-                IsPublished = true, Tags = ["python", "desktop", "vnc"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-python:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["python", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = DesktopScriptsJson
             },
             new ContainerTemplate
             {
-                Id = alpineDotnet8DesktopId, Code = "dotnet-8-alpine-desktop", Name = ".NET 8 Alpine Desktop (VNC)",
+                Id = alpineDotnet8DesktopId,
+                Code = "dotnet-8-alpine-desktop",
+                Name = ".NET 8 Alpine Desktop (VNC)",
                 Description = "Minimal .NET 8 SDK on Alpine with XFCE4 remote desktop and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet8:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
-                IsPublished = true, Tags = ["dotnet", "alpine", "desktop", "vnc", "minimal"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-alpine-dotnet8:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.None,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["dotnet", "alpine", "desktop", "vnc", "minimal"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
                 Scripts = DesktopScriptsJson
             },
             new ContainerTemplate
             {
-                Id = alpineDotnet10DesktopId, Code = "dotnet-10-alpine-desktop", Name = ".NET 10 Alpine Desktop (VNC)",
+                Id = alpineDotnet10DesktopId,
+                Code = "dotnet-10-alpine-desktop",
+                Name = ".NET 10 Alpine Desktop (VNC)",
                 Description = ".NET 10 SDK on Alpine with XFCE4 remote desktop and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet10:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
-                IsPublished = true, Tags = ["dotnet", "dotnet-10", "alpine", "desktop", "vnc"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-alpine-dotnet10:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.None,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["dotnet", "dotnet-10", "alpine", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
+                Scripts = DesktopScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = devpilotDesktopId,
+                Code = "devpilot-desktop",
+                Name = "DevPilot Desktop (VNC + Zed)",
+                Description = "Slim XFCE remote desktop with Zed IDE — drop-in replacement for the deprecated andy-devpilot default sandbox",
+                Version = "1.0.0",
+                BaseImage = "andy-devpilot-desktop:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.Zed,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["desktop", "zed", "vnc", "devpilot-parity"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = DesktopScriptsJson
             }
         );
 
         // Seed dependencies for all templates
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId);
 
         await db.SaveChangesAsync();
     }
 
     private static void SeedDependencySpecs(ContainersDbContext db,
         Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id, Guid dotnetAlpineId,
-        Guid dotnetDesktopId, Guid pythonDesktopId, Guid alpineDotnet8DesktopId, Guid alpineDotnet10DesktopId)
+        Guid dotnetDesktopId, Guid pythonDesktopId, Guid alpineDotnet8DesktopId, Guid alpineDotnet10DesktopId, Guid devpilotDesktopId)
     {
         db.DependencySpecs.AddRange(
             // Full Stack: dotnet + python + node + angular + git + code-server
@@ -382,7 +486,13 @@ public static class DataSeeder
             new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.Sdk, Name = "dotnet-sdk", VersionConstraint = "10.0.*", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
             new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
             new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 3 },
-            new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.OsPackage, Name = "tigervnc", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 }
+            new DependencySpec { TemplateId = alpineDotnet10DesktopId, Type = DependencyType.OsPackage, Name = "tigervnc", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 },
+
+            // DevPilot Desktop: git + zed + xfce4 + tigervnc (no language SDK — slim default)
+            new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
+            new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.Tool, Name = "zed", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
+            new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 3 },
+            new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 }
         );
     }
 
@@ -398,68 +508,119 @@ public static class DataSeeder
         var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
         var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
         var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
+        var devpilotDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000013");
 
         // Check which new templates are missing
         var newTemplates = new Dictionary<Guid, ContainerTemplate>
         {
             [dotnet10Id] = new ContainerTemplate
             {
-                Id = dotnet10Id, Code = "dotnet-10-cli", Name = ".NET 10 CLI Development",
+                Id = dotnet10Id,
+                Code = "dotnet-10-cli",
+                Name = ".NET 10 CLI Development",
                 Description = ".NET 10 SDK for CLI and API development",
-                Version = "1.0.0", BaseImage = "ubuntu:24.04",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["dotnet", "dotnet-10"],
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["dotnet", "dotnet-10"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = Dotnet10ScriptsJson
             },
             [dotnetAlpineId] = new ContainerTemplate
             {
-                Id = dotnetAlpineId, Code = "dotnet-8-alpine", Name = ".NET 8 Alpine (Minimal)",
+                Id = dotnetAlpineId,
+                Code = "dotnet-8-alpine",
+                Name = ".NET 8 Alpine (Minimal)",
                 Description = "Minimal .NET 8 development environment based on Alpine Linux with essential dev tools",
-                Version = "1.0.0", BaseImage = "mcr.microsoft.com/dotnet/sdk:8.0-alpine",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer,
-                IsPublished = true, Tags = ["dotnet", "alpine", "minimal"],
+                Version = "1.0.0",
+                BaseImage = "mcr.microsoft.com/dotnet/sdk:8.0-alpine",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["dotnet", "alpine", "minimal"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
                 Scripts = DotnetAlpineScriptsJson
             },
             [dotnetDesktopId] = new ContainerTemplate
             {
-                Id = dotnetDesktopId, Code = "dotnet-8-desktop", Name = ".NET 8 Desktop (VNC)",
+                Id = dotnetDesktopId,
+                Code = "dotnet-8-desktop",
+                Name = ".NET 8 Desktop (VNC)",
                 Description = ".NET 8 SDK with XFCE4 remote desktop, code-server IDE, and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-dotnet:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
-                IsPublished = true, Tags = ["dotnet", "desktop", "vnc"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-dotnet:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["dotnet", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = DesktopScriptsJson
             },
             [pythonDesktopId] = new ContainerTemplate
             {
-                Id = pythonDesktopId, Code = "python-3.12-desktop", Name = "Python 3.12 Desktop (VNC)",
+                Id = pythonDesktopId,
+                Code = "python-3.12-desktop",
+                Name = "Python 3.12 Desktop (VNC)",
                 Description = "Python 3.12 with XFCE4 remote desktop, code-server IDE, and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-python:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.CodeServer, GuiType = "vnc",
-                IsPublished = true, Tags = ["python", "desktop", "vnc"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-python:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["python", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":4,"memoryMb":8192,"diskGb":30}""",
                 Scripts = DesktopScriptsJson
             },
             [alpineDotnet8DesktopId] = new ContainerTemplate
             {
-                Id = alpineDotnet8DesktopId, Code = "dotnet-8-alpine-desktop", Name = ".NET 8 Alpine Desktop (VNC)",
+                Id = alpineDotnet8DesktopId,
+                Code = "dotnet-8-alpine-desktop",
+                Name = ".NET 8 Alpine Desktop (VNC)",
                 Description = "Minimal .NET 8 SDK on Alpine with XFCE4 remote desktop and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet8:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
-                IsPublished = true, Tags = ["dotnet", "alpine", "desktop", "vnc", "minimal"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-alpine-dotnet8:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.None,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["dotnet", "alpine", "desktop", "vnc", "minimal"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
                 Scripts = DesktopScriptsJson
             },
             [alpineDotnet10DesktopId] = new ContainerTemplate
             {
-                Id = alpineDotnet10DesktopId, Code = "dotnet-10-alpine-desktop", Name = ".NET 10 Alpine Desktop (VNC)",
+                Id = alpineDotnet10DesktopId,
+                Code = "dotnet-10-alpine-desktop",
+                Name = ".NET 10 Alpine Desktop (VNC)",
                 Description = ".NET 10 SDK on Alpine with XFCE4 remote desktop and VNC access",
-                Version = "1.0.0", BaseImage = "andy-desktop-alpine-dotnet10:latest",
-                CatalogScope = CatalogScope.Global, IdeType = IdeType.None, GuiType = "vnc",
-                IsPublished = true, Tags = ["dotnet", "dotnet-10", "alpine", "desktop", "vnc"],
+                Version = "1.0.0",
+                BaseImage = "andy-desktop-alpine-dotnet10:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.None,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["dotnet", "dotnet-10", "alpine", "desktop", "vnc"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":15}""",
+                Scripts = DesktopScriptsJson
+            },
+            [devpilotDesktopId] = new ContainerTemplate
+            {
+                Id = devpilotDesktopId,
+                Code = "devpilot-desktop",
+                Name = "DevPilot Desktop (VNC + Zed)",
+                Description = "Slim XFCE remote desktop with Zed IDE — drop-in replacement for the deprecated andy-devpilot default sandbox",
+                Version = "1.0.0",
+                BaseImage = "andy-devpilot-desktop:latest",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.Zed,
+                GuiType = "vnc",
+                IsPublished = true,
+                Tags = ["desktop", "zed", "vnc", "devpilot-parity"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = DesktopScriptsJson
             }
         };
@@ -497,6 +658,7 @@ public static class DataSeeder
             Guid.Parse("00000002-0001-0001-0001-000000000010"),
             Guid.Parse("00000002-0001-0001-0001-000000000011"),
             Guid.Parse("00000002-0001-0001-0001-000000000012"),
+            Guid.Parse("00000002-0001-0001-0001-000000000013"),
         };
 
         var templates = await db.Templates
@@ -517,6 +679,7 @@ public static class DataSeeder
             ["python-3.12-desktop"] = DesktopScriptsJson,
             ["dotnet-8-alpine-desktop"] = DesktopScriptsJson,
             ["dotnet-10-alpine-desktop"] = DesktopScriptsJson,
+            ["devpilot-desktop"] = DesktopScriptsJson,
         };
 
         // Also fix base images for desktop templates (they may have been seeded with ubuntu:24.04)
@@ -526,6 +689,7 @@ public static class DataSeeder
             ["python-3.12-desktop"] = "andy-desktop-python:latest",
             ["dotnet-8-alpine-desktop"] = "andy-desktop-alpine-dotnet8:latest",
             ["dotnet-10-alpine-desktop"] = "andy-desktop-alpine-dotnet10:latest",
+            ["devpilot-desktop"] = "andy-devpilot-desktop:latest",
         };
 
         var updated = false;
@@ -566,8 +730,9 @@ public static class DataSeeder
         var pythonDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000010");
         var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
         var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
+        var devpilotDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000013");
 
-        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId };
+        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId };
 
         // Find which seed templates have no dependency specs at all
         var templatesWithDeps = await db.DependencySpecs
@@ -582,7 +747,7 @@ public static class DataSeeder
 
         // Only seed deps for templates that have none — use a temporary context
         // to avoid duplicating the full-stack deps that may already exist
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId);
 
         // Remove specs for templates that already had them (we just re-added everything)
         var duplicates = db.ChangeTracker.Entries<DependencySpec>()
