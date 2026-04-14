@@ -1,3 +1,4 @@
+using Andy.Containers.Messaging;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -22,6 +23,7 @@ public class ContainersDbContext : DbContext
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<ImageBuildRecord> ImageBuildRecords => Set<ImageBuildRecord>();
+    public DbSet<OutboxEntry> OutboxEntries => Set<OutboxEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -227,6 +229,20 @@ public class ContainersDbContext : DbContext
             e.HasKey(r => r.Id);
             e.HasIndex(r => r.ImageReference);
             e.HasIndex(r => r.TemplateCode).IsUnique();
+        });
+
+        // OutboxEntry — transactional outbox rows for messaging (ADR 0001).
+        // The dispatcher polls on PublishedAt IS NULL ordered by CreatedAt,
+        // so the composite index covers its hot path. Subject gets its own
+        // index for ad-hoc diagnostics (e.g. "show me everything on
+        // andy.containers.events.run.*").
+        modelBuilder.Entity<OutboxEntry>(e =>
+        {
+            e.HasKey(o => o.Id);
+            e.Property(o => o.Subject).IsRequired().HasMaxLength(256);
+            e.Property(o => o.PayloadJson).IsRequired();
+            e.HasIndex(o => new { o.PublishedAt, o.CreatedAt });
+            e.HasIndex(o => o.Subject);
         });
     }
 }
