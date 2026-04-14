@@ -3,6 +3,7 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Data;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Infrastructure.Messaging;
 using Microsoft.EntityFrameworkCore;
 using Andy.Containers.Api.Telemetry;
 using Andy.Rbac.Client;
@@ -222,6 +223,10 @@ try
 
     // OpenTelemetry
     builder.Services.AddAndyTelemetry(builder.Configuration);
+
+    // Messaging (ADR 0001) — registers IMessageBus (InMemory by default,
+    // Nats when Messaging:Provider=Nats) and the OutboxDispatcher.
+    builder.Services.AddContainersMessaging(builder.Configuration);
 
     var app = builder.Build();
 

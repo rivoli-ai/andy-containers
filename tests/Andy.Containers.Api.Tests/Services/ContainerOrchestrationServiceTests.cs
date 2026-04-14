@@ -208,6 +208,62 @@ public class ContainerOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StopContainer_EmitsRunFinishedOutboxRow()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var storyId = Guid.NewGuid();
+        var container = new Container
+        {
+            Name = "to-stop",
+            OwnerId = "user1",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            ExternalId = "ext-stop-1",
+            Status = ContainerStatus.Running,
+            StartedAt = DateTime.UtcNow.AddSeconds(-10),
+            StoryId = storyId
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockInfraProvider.Setup(p => p.StopContainerAsync("ext-stop-1", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _service.StopContainerAsync(container.Id, CancellationToken.None);
+
+        var outbox = await _db.OutboxEntries.SingleAsync();
+        outbox.Subject.Should().Be($"andy.containers.events.run.{container.Id}.finished");
+        outbox.PublishedAt.Should().BeNull();
+        outbox.CorrelationId.Should().Be(storyId);
+        outbox.PayloadJson.Should().Contain("\"duration_seconds\"");
+    }
+
+    [Fact]
+    public async Task DestroyContainer_EmitsRunCancelledOutboxRow()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        var container = new Container
+        {
+            Name = "to-destroy-evt",
+            OwnerId = "user1",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            ExternalId = "ext-destroy-evt",
+            Status = ContainerStatus.Running
+        };
+        _db.Containers.Add(container);
+        await _db.SaveChangesAsync();
+
+        _mockInfraProvider.Setup(p => p.DestroyContainerAsync("ext-destroy-evt", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _service.DestroyContainerAsync(container.Id, CancellationToken.None);
+
+        var outbox = await _db.OutboxEntries.SingleAsync();
+        outbox.Subject.Should().Be($"andy.containers.events.run.{container.Id}.cancelled");
+    }
+
+    [Fact]
     public async Task DestroyContainer_WithoutExternalId_ShouldNotCallProviderButStillDestroy()
     {
         var (template, provider) = await SeedTemplateAndProvider();

@@ -2,6 +2,8 @@ using System.Diagnostics;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -353,6 +355,8 @@ public class ContainerProvisioningWorker : BackgroundService
                     EventType = ContainerEventType.Failed,
                     Details = System.Text.Json.JsonSerializer.Serialize(new { error = errorMessage })
                 });
+                // Emit andy.containers.events.run.<id>.failed — provisioning failure.
+                db.AppendRunEvent(container, RunEventKind.Failed, exitCode: null, durationSeconds: null);
                 await db.SaveChangesAsync();
             }
         }
@@ -386,6 +390,7 @@ public class ContainerProvisioningWorker : BackgroundService
                     EventType = ContainerEventType.Failed,
                     Details = System.Text.Json.JsonSerializer.Serialize(new { error = "Recovered from stuck state on worker restart" })
                 });
+                db.AppendRunEvent(container, RunEventKind.Failed, exitCode: null, durationSeconds: null);
             }
 
             if (stuckContainers.Count > 0)

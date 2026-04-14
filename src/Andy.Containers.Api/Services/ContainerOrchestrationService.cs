@@ -3,6 +3,8 @@ using System.Text.Json;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -90,6 +92,7 @@ public class ContainerOrchestrationService : IContainerService
             Status = ContainerStatus.Pending,
             CreationSource = request.Source,
             ClientInfo = request.ClientInfo,
+            StoryId = request.StoryId,
             ExpiresAt = request.ExpiresAfter.HasValue
                 ? DateTime.UtcNow.Add(request.ExpiresAfter.Value)
                 : null
@@ -434,6 +437,11 @@ public class ContainerOrchestrationService : IContainerService
         container.Status = ContainerStatus.Stopped;
         container.StoppedAt = DateTime.UtcNow;
         _db.Events.Add(new ContainerEvent { ContainerId = containerId, EventType = ContainerEventType.Stopped });
+        // Emit andy.containers.events.run.<id>.finished — clean stop.
+        var durationSeconds = (container.StartedAt.HasValue && container.StoppedAt.HasValue)
+            ? (container.StoppedAt.Value - container.StartedAt.Value).TotalSeconds
+            : (double?)null;
+        _db.AppendRunEvent(container, RunEventKind.Finished, exitCode: null, durationSeconds: durationSeconds);
         await _db.SaveChangesAsync(ct);
     }
 
@@ -451,6 +459,11 @@ public class ContainerOrchestrationService : IContainerService
 
         container.Status = ContainerStatus.Destroyed;
         _db.Events.Add(new ContainerEvent { ContainerId = containerId, EventType = ContainerEventType.Destroyed });
+        // Emit andy.containers.events.run.<id>.cancelled — explicit teardown.
+        var destroyedDuration = (container.StartedAt.HasValue)
+            ? (DateTime.UtcNow - container.StartedAt.Value).TotalSeconds
+            : (double?)null;
+        _db.AppendRunEvent(container, RunEventKind.Cancelled, exitCode: null, durationSeconds: destroyedDuration);
         await _db.SaveChangesAsync(ct);
 
         Meters.ContainersDeleted.Add(1);

@@ -46,6 +46,11 @@ public class CreateContainerRequest
     public string? ClientInfo { get; set; }
     public string? OwnerEmail { get; set; }
     public string? OwnerPreferredUsername { get; set; }
+
+    // Optional correlation to a backlog story. When set, the container's
+    // run.* lifecycle events (finished/failed/cancelled) carry this id so
+    // the caller (e.g. andy-issues) can tie the run back to a UserStory.
+    public Guid? StoryId { get; set; }
 }
 
 public class GitRepositoryConfig

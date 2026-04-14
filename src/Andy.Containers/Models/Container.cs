@@ -31,6 +31,12 @@ public class Container
     public string? ContainerUser { get; set; }
     public string? Metadata { get; set; }
 
+    // Optional correlation to a backlog story. Stamped by the caller
+    // (typically andy-issues' SandboxService) at create time. Propagated
+    // into run.* event payloads so andy-issues' Story 15.6 consumer can
+    // transition the linked UserStory's state on run completion.
+    public Guid? StoryId { get; set; }
+
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();
     public ICollection<ContainerGitRepository> GitRepositories { get; set; } = new List<ContainerGitRepository>();
