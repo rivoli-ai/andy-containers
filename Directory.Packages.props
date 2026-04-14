@@ -66,6 +66,8 @@
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.11.2" />
     <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.11.2" />
     <PackageVersion Include="Serilog.Sinks.OpenTelemetry" Version="4.1.1" />
+    <!-- Messaging (ADR 0001) — version-aligned with andy-tasks -->
+    <PackageVersion Include="NATS.Net" Version="2.7.3" />
     <!-- Testing -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageVersion Include="xunit" Version="2.9.2" />

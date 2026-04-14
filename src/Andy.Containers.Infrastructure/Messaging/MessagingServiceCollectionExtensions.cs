@@ -25,13 +25,16 @@ public static class MessagingServiceCollectionExtensions
 
         if (string.Equals(provider, "Nats", StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotSupportedException(
-                "Messaging:Provider=Nats is not wired yet. Follow-up PR to " +
-                "this repo's #78 adds NatsMessageBus + NatsStreamProvisioner. " +
-                "For now use Messaging:Provider=InMemory (the default).");
+            services.Configure<NatsOptions>(
+                configuration.GetSection(NatsOptions.SectionName));
+            services.AddSingleton<NatsMessageBus>();
+            services.AddSingleton<IMessageBus>(sp => sp.GetRequiredService<NatsMessageBus>());
+            services.AddHostedService<NatsStreamProvisioner>();
         }
-
-        services.TryAddSingleton<IMessageBus, InMemoryMessageBus>();
+        else
+        {
+            services.TryAddSingleton<IMessageBus, InMemoryMessageBus>();
+        }
 
         services.Configure<OutboxDispatcherOptions>(
             configuration.GetSection(OutboxDispatcherOptions.SectionName));
