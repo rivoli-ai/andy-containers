@@ -18,12 +18,13 @@ public class DataSeederTests
         await DataSeeder.SeedAsync(db);
 
         var templates = await db.Templates.ToListAsync();
-        templates.Should().HaveCount(12);
+        templates.Should().HaveCount(13);
         templates.Select(t => t.Code).Should().BeEquivalentTo(
             "full-stack", "agent-sandbox-ui", "dotnet-8-vscode",
             "python-3.12-vscode", "angular-18-vscode", "andy-cli-dev", "dotnet-10-cli",
             "dotnet-8-alpine", "dotnet-8-desktop", "python-3.12-desktop",
-            "dotnet-8-alpine-desktop", "dotnet-10-alpine-desktop");
+            "dotnet-8-alpine-desktop", "dotnet-10-alpine-desktop",
+            "devpilot-desktop");
     }
 
     [Fact]
@@ -62,6 +63,7 @@ public class DataSeederTests
     [InlineData("andy-cli-dev", new[] { "dotnet-sdk", "andy-cli", "git", "code-server" })]
     [InlineData("dotnet-10-cli", new[] { "dotnet-sdk", "git", "code-server" })]
     [InlineData("dotnet-8-alpine", new[] { "dotnet-sdk", "git", "code-server", "build-base", "bash" })]
+    [InlineData("devpilot-desktop", new[] { "git", "zed", "xfce4", "tigervnc-standalone-server" })]
     public async Task SeedAsync_TemplateHasExpectedDependencies(string templateCode, string[] expectedDeps)
     {
         using var db = InMemoryDbHelper.CreateContext(_dbName);

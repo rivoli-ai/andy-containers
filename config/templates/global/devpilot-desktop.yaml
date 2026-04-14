@@ -1,0 +1,60 @@
+code: devpilot-desktop
+name: DevPilot Desktop (VNC + Zed)
+description: Slim XFCE remote desktop with Zed IDE — drop-in replacement for the deprecated andy-devpilot default sandbox
+version: "1.0.0"
+base_image: andy-devpilot-desktop:latest
+catalog_scope: global
+ide_type: zed
+gui_type: vnc
+
+gpu:
+  required: false
+  preferred: false
+
+resources:
+  cpu_cores: 2
+  memory_mb: 4096
+  disk_gb: 20
+
+dependencies:
+  - type: tool
+    name: git
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: zed
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+  - type: os_package
+    name: xfce4
+    version: "latest"
+    auto_update: false
+    update_policy: security-only
+
+  - type: os_package
+    name: tigervnc-standalone-server
+    version: "latest"
+    auto_update: false
+    update_policy: security-only
+
+environment:
+  DISPLAY: ":1"
+
+ports:
+  6080: novnc
+  5901: vnc
+  22: ssh
+
+scripts:
+  init: |
+    git config --global init.defaultBranch main
+
+tags:
+  - desktop
+  - zed
+  - vnc
+  - devpilot-parity
