@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: andy_containers
     ports:
-      - "5434:5432"
+      - "7434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -24,8 +24,8 @@ services:
     container_name: andy-containers-nats
     command: ["-js", "-m", "8222"]
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "7422:4222"
+      - "7223:8222"
     volumes:
       - nats_data:/data
     healthcheck:
@@ -58,9 +58,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "5200:8443"
-      - "5201:8080"
-      - "4200:8443"
+      - "7200:8443"
+      - "7201:8080"
+      - "6200:8443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./certs:/usr/local/share/ca-certificates/custom:ro
