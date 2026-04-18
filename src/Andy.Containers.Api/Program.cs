@@ -230,11 +230,26 @@ try
 
     var app = builder.Build();
 
-    // Auto-create DB (if missing) and seed
+    // Auto-migrate (PostgreSQL) or auto-create (SQLite) and seed.
+    //
+    // EnsureCreated only creates the DB if missing — it does NOT apply
+    // migrations to an existing DB. For PostgreSQL that silently drops
+    // schema changes (e.g. the `AddContainerStoryId` migration would
+    // never take effect). Use Migrate there instead.
+    //
+    // SQLite migrations in this project use Npgsql-specific types
+    // (`type: "uuid"`) and are not portable, so keep the EnsureCreated
+    // shortcut for the embedded path. When the model changes, the
+    // existing SQLite file must be deleted (Conductor ships it under
+    // `Application Support/ai.rivoli.conductor/db/`) or patched
+    // manually; there is no in-place upgrade path on SQLite today.
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<ContainersDbContext>();
-        await db.Database.EnsureCreatedAsync();
+        if (db.Database.IsNpgsql())
+            await db.Database.MigrateAsync();
+        else
+            await db.Database.EnsureCreatedAsync();
         await DataSeeder.SeedAsync(db);
     }
 
