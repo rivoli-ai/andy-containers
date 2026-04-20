@@ -24,6 +24,7 @@ public class ContainersDbContext : DbContext
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<ImageBuildRecord> ImageBuildRecords => Set<ImageBuildRecord>();
     public DbSet<OutboxEntry> OutboxEntries => Set<OutboxEntry>();
+    public DbSet<Run> Runs => Set<Run>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -243,6 +244,35 @@ public class ContainersDbContext : DbContext
             e.Property(o => o.PayloadJson).IsRequired();
             e.HasIndex(o => new { o.PublishedAt, o.CreatedAt });
             e.HasIndex(o => o.Subject);
+        });
+
+        // Run — agent-run execution entity (AP1, rivoli-ai/andy-containers#103).
+        // A Run represents one invocation of an Agent (from andy-agents) against
+        // a delegation contract inside a container. Hot paths: "list active runs"
+        // (indexed on Status) and causation tracing (indexed on CorrelationId).
+        modelBuilder.Entity<Run>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.Property(r => r.AgentId).IsRequired().HasMaxLength(100);
+            e.Property(r => r.Error).HasMaxLength(4000);
+            // Enums as strings for stability across migrations + readability in
+            // database tools. Matches the existing pattern elsewhere in the
+            // schema (status columns are already string-typed in Container etc.
+            // via EF's default enum-to-int mapping — Run is explicit here so
+            // debugging via psql/sqlite-cli is friction-free from day one).
+            e.Property(r => r.Mode).HasConversion<string>().HasMaxLength(16);
+            e.Property(r => r.Status).HasConversion<string>().HasMaxLength(16);
+            e.HasIndex(r => r.Status);
+            e.HasIndex(r => r.CorrelationId);
+            e.HasIndex(r => r.AgentId);
+            // WorkspaceRef as an owned value object — inlined columns prefixed
+            // `WorkspaceRef_*` (EF default). Keeps Run self-contained without
+            // introducing a separate table.
+            e.OwnsOne(r => r.WorkspaceRef, wr =>
+            {
+                wr.Property(w => w.WorkspaceId).HasColumnName("WorkspaceRef_WorkspaceId");
+                wr.Property(w => w.Branch).HasColumnName("WorkspaceRef_Branch").HasMaxLength(200);
+            });
         });
     }
 }
