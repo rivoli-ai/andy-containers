@@ -1,0 +1,73 @@
+{
+  "$schema": "../../andy-service-template/docs/registration.schema.json",
+  "service": {
+    "name": "andy-containers",
+    "displayName": "Andy Containers",
+    "description": "Container orchestration — workspaces, templates, runtime lifecycle.",
+    "embeddedProxyPrefix": "/containers",
+    "ports": {
+      "dotnetHttps": 5200,
+      "dotnetHttp":  5201,
+      "dotnetPostgres": 5434,
+      "dotnetClient": 4200,
+      "dockerHttps": 7200,
+      "dockerHttp":  7201,
+      "dockerPostgres": 7434,
+      "dockerClient": 6200,
+      "embeddedProxy": 9100
+    }
+  },
+  "auth": {
+    "audience": "urn:andy-containers-api",
+    "webClient": {
+      "clientId": "andy-containers-web",
+      "clientType": "public",
+      "displayName": "Andy Containers Web",
+      "description": "Angular SPA for container management",
+      "grantTypes": ["authorization_code", "refresh_token"],
+      "scopes": ["email", "profile", "roles", "scp:urn:andy-containers-api"],
+      "redirectUris": [
+        "https://localhost:4200/callback",
+        "https://localhost:6200/callback",
+        "http://localhost:9100/containers/callback"
+      ],
+      "postLogoutRedirectUris": [
+        "https://localhost:4200/",
+        "https://localhost:6200/",
+        "http://localhost:9100/containers/"
+      ]
+    },
+    "cliClient": {
+      "clientId": "andy-containers-cli",
+      "clientType": "public",
+      "displayName": "Andy Containers CLI",
+      "description": "Command-line client using device authorization flow",
+      "grantTypes": ["device_code", "refresh_token"],
+      "scopes": ["email", "profile", "roles", "scp:urn:andy-containers-api"]
+    }
+  },
+  "rbac": {
+    "applicationCode": "andy-containers",
+    "applicationName": "Andy Containers",
+    "description": "Container management platform",
+    "resourceTypes": [
+      { "code": "workspace", "name": "Workspace", "supportsInstances": true  },
+      { "code": "template",  "name": "Template",  "supportsInstances": true  },
+      { "code": "runtime",   "name": "Runtime",   "supportsInstances": true  }
+    ],
+    "roles": [
+      { "code": "admin",  "name": "Administrator", "description": "Full access to containers",  "isSystem": true },
+      { "code": "user",   "name": "User",          "description": "Standard user",              "isSystem": true },
+      { "code": "viewer", "name": "Viewer",        "description": "Read-only access",           "isSystem": true }
+    ],
+    "testUserRole": "admin"
+  },
+  "settings": {
+    "definitions": [
+      { "key": "andy.containers.defaultProvider",    "displayName": "Default Provider",   "description": "Default infrastructure provider",            "category": "General",      "dataType": "String",  "defaultValue": "docker", "allowedScopes": ["Machine","Application","User","Team"] },
+      { "key": "andy.containers.maxCpuCores",        "displayName": "Max CPU Cores",      "description": "Maximum CPU cores per container",            "category": "Resources",    "dataType": "Integer", "defaultValue": 4 },
+      { "key": "andy.containers.maxMemoryMb",        "displayName": "Max Memory (MB)",    "description": "Maximum memory per container in MB",         "category": "Resources",    "dataType": "Integer", "defaultValue": 8192 },
+      { "key": "andy.containers.sshTimeoutSeconds",  "displayName": "SSH Timeout",        "description": "SSH connection timeout in seconds",          "category": "Connectivity", "dataType": "Integer", "defaultValue": 30 }
+    ]
+  }
+}
