@@ -6,6 +6,11 @@
     <!-- Andy internal packages -->
     <PackageVersion Include="Andy.Auth" Version="2025.11.17-rc.1" />
     <PackageVersion Include="Andy.Rbac.Client" Version="1.0.0" />
+    <!-- Andy.Settings.Client: during epic/andy-settings-migration, pinned to the dev
+         version produced by `andy-settings/scripts/pack-local.sh` and resolved via the
+         root-level NuGet.config local feed. On merge to main, flip to the
+         `yyyy.mm.dd-rc.<run>` version published to nuget.org by andy-settings CI. -->
+    <PackageVersion Include="Andy.Settings.Client" Version="0.1.0-dev" />
     <!-- ASP.NET Core -->
     <PackageVersion Include="coverlet.collector" Version="6.0.4">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

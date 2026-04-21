@@ -42,6 +42,7 @@
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="Andy.Auth" />
     <PackageReference Include="Andy.Rbac.Client" />
+    <PackageReference Include="Andy.Settings.Client" />
   </ItemGroup>
 
   <ItemGroup>
