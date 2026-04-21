@@ -3,15 +3,15 @@
   "service": {
     "name": "andy-containers",
     "displayName": "Andy Containers",
-    "description": "Container orchestration — workspaces, templates, runtime lifecycle.",
+    "description": "Container orchestration \u2014 workspaces, templates, runtime lifecycle.",
     "embeddedProxyPrefix": "/containers",
     "ports": {
       "dotnetHttps": 5200,
-      "dotnetHttp":  5201,
+      "dotnetHttp": 5201,
       "dotnetPostgres": 5434,
       "dotnetClient": 4200,
       "dockerHttps": 7200,
-      "dockerHttp":  7201,
+      "dockerHttp": 7201,
       "dockerPostgres": 7434,
       "dockerClient": 6200,
       "embeddedProxy": 9100
@@ -24,8 +24,16 @@
       "clientType": "public",
       "displayName": "Andy Containers Web",
       "description": "Angular SPA for container management",
-      "grantTypes": ["authorization_code", "refresh_token"],
-      "scopes": ["email", "profile", "roles", "scp:urn:andy-containers-api"],
+      "grantTypes": [
+        "authorization_code",
+        "refresh_token"
+      ],
+      "scopes": [
+        "email",
+        "profile",
+        "roles",
+        "scp:urn:andy-containers-api"
+      ],
       "redirectUris": [
         "https://localhost:4200/callback",
         "https://localhost:6200/callback",
@@ -42,8 +50,16 @@
       "clientType": "public",
       "displayName": "Andy Containers CLI",
       "description": "Command-line client using device authorization flow",
-      "grantTypes": ["device_code", "refresh_token"],
-      "scopes": ["email", "profile", "roles", "scp:urn:andy-containers-api"]
+      "grantTypes": [
+        "device_code",
+        "refresh_token"
+      ],
+      "scopes": [
+        "email",
+        "profile",
+        "roles",
+        "scp:urn:andy-containers-api"
+      ]
     }
   },
   "rbac": {
@@ -51,23 +67,190 @@
     "applicationName": "Andy Containers",
     "description": "Container management platform",
     "resourceTypes": [
-      { "code": "workspace", "name": "Workspace", "supportsInstances": true  },
-      { "code": "template",  "name": "Template",  "supportsInstances": true  },
-      { "code": "runtime",   "name": "Runtime",   "supportsInstances": true  }
+      {
+        "code": "workspace",
+        "name": "Workspace",
+        "supportsInstances": true
+      },
+      {
+        "code": "template",
+        "name": "Template",
+        "supportsInstances": true
+      },
+      {
+        "code": "runtime",
+        "name": "Runtime",
+        "supportsInstances": true
+      }
     ],
     "roles": [
-      { "code": "admin",  "name": "Administrator", "description": "Full access to containers",  "isSystem": true },
-      { "code": "user",   "name": "User",          "description": "Standard user",              "isSystem": true },
-      { "code": "viewer", "name": "Viewer",        "description": "Read-only access",           "isSystem": true }
+      {
+        "code": "admin",
+        "name": "Administrator",
+        "description": "Full access to containers",
+        "isSystem": true
+      },
+      {
+        "code": "user",
+        "name": "User",
+        "description": "Standard user",
+        "isSystem": true
+      },
+      {
+        "code": "viewer",
+        "name": "Viewer",
+        "description": "Read-only access",
+        "isSystem": true
+      }
     ],
     "testUserRole": "admin"
   },
   "settings": {
     "definitions": [
-      { "key": "andy.containers.defaultProvider",    "displayName": "Default Provider",   "description": "Default infrastructure provider",            "category": "General",      "dataType": "String",  "defaultValue": "docker", "allowedScopes": ["Machine","Application","User","Team"] },
-      { "key": "andy.containers.maxCpuCores",        "displayName": "Max CPU Cores",      "description": "Maximum CPU cores per container",            "category": "Resources",    "dataType": "Integer", "defaultValue": 4 },
-      { "key": "andy.containers.maxMemoryMb",        "displayName": "Max Memory (MB)",    "description": "Maximum memory per container in MB",         "category": "Resources",    "dataType": "Integer", "defaultValue": 8192 },
-      { "key": "andy.containers.sshTimeoutSeconds",  "displayName": "SSH Timeout",        "description": "SSH connection timeout in seconds",          "category": "Connectivity", "dataType": "Integer", "defaultValue": 30 }
+      {
+        "key": "andy.containers.defaultProvider",
+        "displayName": "Default Provider",
+        "description": "Default infrastructure provider",
+        "category": "General",
+        "dataType": "String",
+        "defaultValue": "docker",
+        "allowedScopes": [
+          "Machine",
+          "Application",
+          "User",
+          "Team"
+        ]
+      },
+      {
+        "key": "andy.containers.maxCpuCores",
+        "displayName": "Max CPU Cores",
+        "description": "Maximum CPU cores per container",
+        "category": "Resources",
+        "dataType": "Integer",
+        "defaultValue": 4
+      },
+      {
+        "key": "andy.containers.maxMemoryMb",
+        "displayName": "Max Memory (MB)",
+        "description": "Maximum memory per container in MB",
+        "category": "Resources",
+        "dataType": "Integer",
+        "defaultValue": 8192
+      },
+      {
+        "key": "andy.containers.sshTimeoutSeconds",
+        "displayName": "SSH Timeout",
+        "description": "SSH connection timeout in seconds",
+        "category": "Connectivity",
+        "dataType": "Integer",
+        "defaultValue": 30
+      },
+      {
+        "key": "andy.containers.providers.azure.subscriptionId",
+        "displayName": "Azure Subscription ID",
+        "description": "Azure subscription hosting ACI containers. Migrated from AzureAciProvider.ConnectionConfig.",
+        "category": "Providers",
+        "dataType": "String",
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.providers.azure.resourceGroup",
+        "displayName": "Azure Resource Group",
+        "description": "Resource group for provisioned ACI containers.",
+        "category": "Providers",
+        "dataType": "String",
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.providers.azure.region",
+        "displayName": "Azure Region",
+        "description": "Azure region (e.g. eastus, westeurope).",
+        "category": "Providers",
+        "dataType": "String",
+        "defaultValue": "eastus",
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.providers.azure.registryServer",
+        "displayName": "Azure Container Registry Server",
+        "description": "Container registry host (e.g. myregistry.azurecr.io).",
+        "category": "Providers",
+        "dataType": "String",
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.providers.azure.registryUsername",
+        "displayName": "Registry Username",
+        "description": "Username for the container registry.",
+        "category": "Providers",
+        "dataType": "String",
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.providers.azure.registryPassword",
+        "displayName": "Registry Password",
+        "description": "Password/token for the container registry.",
+        "category": "Providers",
+        "dataType": "Secret",
+        "isSecret": true,
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.codeAssistant.anthropicApiKey",
+        "displayName": "Anthropic API Key (system fallback)",
+        "description": "Injected into spawned containers when the user has no Anthropic key of their own.",
+        "category": "CodeAssistant",
+        "dataType": "Secret",
+        "isSecret": true,
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.codeAssistant.openaiApiKey",
+        "displayName": "OpenAI API Key (system fallback)",
+        "description": "Injected into spawned containers when the user has no OpenAI key of their own.",
+        "category": "CodeAssistant",
+        "dataType": "Secret",
+        "isSecret": true,
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.codeAssistant.googleApiKey",
+        "displayName": "Google API Key (system fallback)",
+        "description": "Injected into spawned containers when the user has no Google key of their own.",
+        "category": "CodeAssistant",
+        "dataType": "Secret",
+        "isSecret": true,
+        "allowedScopes": [
+          "Machine"
+        ]
+      },
+      {
+        "key": "andy.containers.messaging.natsUrl",
+        "displayName": "NATS URL",
+        "description": "NATS message-bus endpoint. Migrated from the NATS_URL environment variable.",
+        "category": "Messaging",
+        "dataType": "Uri",
+        "defaultValue": "nats://localhost:4222",
+        "allowedScopes": [
+          "Machine"
+        ]
+      }
     ]
   }
 }
