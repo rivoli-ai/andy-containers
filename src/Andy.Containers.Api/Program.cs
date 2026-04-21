@@ -7,6 +7,7 @@ using Andy.Containers.Infrastructure.Messaging;
 using Microsoft.EntityFrameworkCore;
 using Andy.Containers.Api.Telemetry;
 using Andy.Rbac.Client;
+using Andy.Settings.Client;
 using Serilog;
 using System.Text.Json.Serialization;
 
@@ -147,21 +148,33 @@ try
             {
                 options.Authority = authority;
                 options.Audience = builder.Configuration["AndyAuth:Audience"];
-                options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+                // HTTPS metadata off in every non-production mode: dev
+                // cert, docker internal http, Embedded proxy on 9100.
+                options.RequireHttpsMetadata = !builder.Environment.IsLocalOrEmbedded();
+
+                var authorityBase = authority.TrimEnd('/');
                 if (builder.Environment.IsDevelopment())
                 {
+                    // Permissive SSL + legacy localhost:5001 issuer are
+                    // Mode 1 (`dotnet run`) concessions only.
                     options.BackchannelHttpHandler = new HttpClientHandler
                     {
                         ServerCertificateCustomValidationCallback =
                             HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
                     };
-                    // Accept localhost:5001 issuer (fixed in andy-auth) even when
-                    // authority is host.docker.internal:5001
-                    var authorityBase = authority.TrimEnd('/');
                     options.TokenValidationParameters.ValidIssuers = new[]
                     {
                         authorityBase, authorityBase + "/",
                         "https://localhost:5001", "https://localhost:5001/"
+                    };
+                }
+                else
+                {
+                    // Docker + Embedded: strict issuer matching against
+                    // the configured AndyAuth:Authority.
+                    options.TokenValidationParameters.ValidIssuers = new[]
+                    {
+                        authorityBase, authorityBase + "/"
                     };
                 }
             });
@@ -181,7 +194,9 @@ try
             options.ApplicationCode = "containers";
         });
 
-        // TODO: Remove once RBAC NuGet packages are updated — bypass permission checks in dev
+        // `dotnet run` convenience: skip RBAC for developers iterating on
+        // the API. EXPLICITLY NOT applied in Embedded mode — Conductor
+        // mints real JWTs and every permission check must run.
         if (builder.Environment.IsDevelopment())
         {
             builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider,
@@ -204,6 +219,29 @@ try
         throw new InvalidOperationException(
             "Rbac:ApiBaseUrl is not configured. RBAC is required — set the URL in appsettings.json or appsettings.Development.json.");
     }
+
+    // andy-settings client — fail loud if unreachable.
+    //
+    // andy-containers resolves provider credentials (Azure ACI registry
+    // username/password, subscription/resource-group routing) and the
+    // system-default LLM API keys injected into spawned containers
+    // (ANTHROPIC / OPENAI / GOOGLE) from andy-settings. There is no
+    // local fallback — running without andy-settings means imports and
+    // Azure launches silently fail or fall back to stale env vars, which
+    // is exactly the class of bug epic rivoli-ai/conductor#771 deletes.
+    //
+    // AddAndySettingsClient registers IAndySettingsClient (HTTP),
+    // ISettingsSnapshot (hot-path cache), and SettingsRefreshService
+    // (background poll of TrackedKeys every 30 s).
+    var settingsBaseUrl = builder.Configuration["AndySettings:ApiBaseUrl"];
+    if (string.IsNullOrWhiteSpace(settingsBaseUrl))
+    {
+        throw new InvalidOperationException(
+            "AndySettings:ApiBaseUrl must be configured. andy-containers sources its " +
+            "provider credentials + code-assistant API keys from andy-settings and " +
+            "will not start without it.");
+    }
+    builder.Services.AddAndySettingsClient(builder.Configuration);
 
     // Health checks
     builder.Services.AddHealthChecks();
@@ -328,7 +366,13 @@ try
 }
 catch (Exception ex)
 {
+    // Log + rethrow so the host propagates a non-zero exit code AND so
+    // WebApplicationFactory-based tests can assert on the real exception
+    // instead of swallowing it behind "entry point exited without ever
+    // building an IHost". Without the rethrow, startup misconfiguration
+    // (e.g. missing AndySettings:ApiBaseUrl) looks like a clean exit.
     Log.Fatal(ex, "Andy Containers API terminated unexpectedly");
+    throw;
 }
 finally
 {
