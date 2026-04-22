@@ -37,6 +37,20 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NUGET_SIGNATURE_VERIFICATION=false
 
+# During epic/andy-settings-migration, Andy.Settings.Client is packed
+# locally and not yet on nuget.org. Mount the artifacts folder via
+# docker-compose `additional_contexts` and override NuGet.config at /build
+# to pull from that local feed. See rivoli-ai/conductor#771.
+COPY --from=andy-settings-artifacts . /andy-settings-artifacts/
+RUN printf '<?xml version="1.0" encoding="utf-8"?>\n\
+<configuration>\n\
+  <packageSources>\n\
+    <clear />\n\
+    <add key="andy-settings-local" value="/andy-settings-artifacts" />\n\
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />\n\
+  </packageSources>\n\
+</configuration>\n' > /build/NuGet.config
+
 # Restore (cached layer — only .csproj files + build props)
 COPY Directory.Build.props Directory.Packages.props ./
 COPY proto/ proto/

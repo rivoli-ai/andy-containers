@@ -40,6 +40,10 @@ services:
       dockerfile: src/Andy.Containers.Api/Dockerfile
       additional_contexts:
         certs: ./certs
+        # Mounts sibling andy-settings artifacts so the Dockerfile can
+        # restore the local Andy.Settings.Client 0.1.0-dev package during
+        # the epic. Run `bash ../andy-settings/scripts/pack-local.sh` once.
+        andy-settings-artifacts: ../andy-settings/artifacts
     container_name: andy-containers-api
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
