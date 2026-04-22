@@ -45,10 +45,10 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=https://+:8443;http://+:8080
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=postgres
-      - AndyAuth__Authority=https://host.docker.internal:5001
+      - AndyAuth__Authority=https://host.docker.internal:${ANDY_AUTH_DOCKER_HTTPS:-7001}
       - AndyAuth__Audience=urn:andy-containers-api
       - AndyAuth__RequireHttpsMetadata=false
-      - Rbac__ApiBaseUrl=https://host.docker.internal:7003
+      - Rbac__ApiBaseUrl=https://host.docker.internal:${ANDY_RBAC_DOCKER_HTTPS:-7003}
       - Rbac__ApplicationCode=containers
       # andy-settings client wiring (epic rivoli-ai/conductor#771)
       # Port resolved from andy-settings' config/registration.json via
