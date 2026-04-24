@@ -1,3 +1,4 @@
+using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Andy.Rbac.Authorization;
@@ -20,10 +21,17 @@ namespace Andy.Containers.Api.Controllers;
 public class RunsController : ControllerBase
 {
     private readonly ContainersDbContext _db;
+    private readonly IRunConfigurator _configurator;
+    private readonly ILogger<RunsController> _logger;
 
-    public RunsController(ContainersDbContext db)
+    public RunsController(
+        ContainersDbContext db,
+        IRunConfigurator configurator,
+        ILogger<RunsController> logger)
     {
         _db = db;
+        _configurator = configurator;
+        _logger = logger;
     }
 
     [HttpPost]
@@ -71,6 +79,19 @@ public class RunsController : ControllerBase
 
         _db.Runs.Add(run);
         await _db.SaveChangesAsync(ct);
+
+        // AP3 (rivoli-ai/andy-containers#105). Build + write the andy-cli
+        // headless config now so AP6's runner has a file path the moment it
+        // wakes up. Failures here do NOT roll back the Run — the row stays
+        // Pending and AP5/AP6 can retry the configurator on the next pass
+        // (or surface a transition to Failed once that policy is decided).
+        var configResult = await _configurator.ConfigureAsync(run, ct);
+        if (!configResult.IsSuccess)
+        {
+            _logger.LogWarning(
+                "Run {RunId} persisted as Pending but configurator failed: {Error}. AP5/AP6 will retry.",
+                run.Id, configResult.Error);
+        }
 
         var dto = RunDto.FromEntity(run);
         return CreatedAtAction(nameof(Get), new { id = run.Id }, dto);
