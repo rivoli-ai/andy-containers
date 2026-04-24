@@ -127,7 +127,16 @@ try
     var authority = builder.Configuration["AndyAuth:Authority"] ?? "";
     if (string.IsNullOrEmpty(authority))
     {
-        // No authority configured — permissive fallback for local dev
+        if (!builder.Environment.IsDevelopment())
+        {
+            throw new InvalidOperationException(
+                "AndyAuth:Authority is not configured. Authentication is required outside the " +
+                "Development environment — set AndyAuth:Authority in appsettings.json or via the " +
+                "AndyAuth__Authority environment variable.");
+        }
+
+        // Development only: no remote token validation. The dev-identity middleware below
+        // synthesizes an admin ClaimsPrincipal when no bearer token is presented.
         builder.Services.AddAuthentication("Bearer")
             .AddJwtBearer("Bearer", options =>
             {
@@ -135,9 +144,6 @@ try
             });
         builder.Services.AddAuthorization(options =>
         {
-            options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
-                .RequireAssertion(_ => true)
-                .Build();
             options.AddPolicy("Admin", policy => policy.RequireClaim("role", "admin"));
         });
     }
