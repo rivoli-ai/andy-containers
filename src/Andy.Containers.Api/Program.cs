@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Data;
 using Andy.Containers.Api.Services;
+using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
 using Microsoft.EntityFrameworkCore;
@@ -227,6 +228,15 @@ try
     // Messaging (ADR 0001) — registers IMessageBus (InMemory by default,
     // Nats when Messaging:Provider=Nats) and the OutboxDispatcher.
     builder.Services.AddContainersMessaging(builder.Configuration);
+
+    // AP3 (rivoli-ai/andy-containers#105). Configurator pipeline:
+    // andy-agents lookup (stubbed until Epic W lands) → headless-config
+    // builder → on-disk writer. RunsController invokes the facade after
+    // persisting a Pending Run. AP6 picks the file up to spawn andy-cli.
+    builder.Services.AddSingleton<IAndyAgentsClient, StubAndyAgentsClient>();
+    builder.Services.AddSingleton<IHeadlessConfigBuilder, HeadlessConfigBuilder>();
+    builder.Services.AddSingleton<IHeadlessConfigWriter, HeadlessConfigWriter>();
+    builder.Services.AddScoped<IRunConfigurator, RunConfigurator>();
 
     var app = builder.Build();
 

@@ -1,9 +1,12 @@
 using Andy.Containers.Api.Controllers;
 using Andy.Containers.Api.Tests.Helpers;
+using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Controllers;
@@ -18,11 +21,19 @@ public class RunsControllerTests : IDisposable
 {
     private readonly ContainersDbContext _db;
     private readonly RunsController _controller;
+    private readonly Mock<IRunConfigurator> _configurator;
 
     public RunsControllerTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _controller = new RunsController(_db);
+        // AP3 wires the configurator into Create. These tests focus on
+        // controller behaviour, not configurator behaviour, so stub it to a
+        // no-op success — the dedicated configurator tests cover its surface.
+        _configurator = new Mock<IRunConfigurator>();
+        _configurator
+            .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/noop/config.json"));
+        _controller = new RunsController(_db, _configurator.Object, NullLogger<RunsController>.Instance);
     }
 
     public void Dispose()
@@ -66,6 +77,32 @@ public class RunsControllerTests : IDisposable
         persisted.Should().NotBeNull();
         persisted!.Status.Should().Be(RunStatus.Pending);
         persisted.AgentRevision.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Create_InvokesConfiguratorAfterPersisting()
+    {
+        // AP3 wiring: the controller calls the configurator with the
+        // persisted Run (Id assigned, Status Pending). A configurator failure
+        // does NOT roll the row back; the row stays Pending so AP5/AP6 can
+        // retry on the next pass.
+        _configurator
+            .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RunConfiguratorResult.Fail("agent not found"));
+
+        var request = new CreateRunRequest
+        {
+            AgentId = "triage-agent",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+        };
+
+        var result = await _controller.Create(request, CancellationToken.None);
+
+        result.Should().BeOfType<CreatedAtActionResult>();
+        _configurator.Verify(c => c.ConfigureAsync(
+            It.Is<Run>(r => r.Id != Guid.Empty && r.Status == RunStatus.Pending),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
