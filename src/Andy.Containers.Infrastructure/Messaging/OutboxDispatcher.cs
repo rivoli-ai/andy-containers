@@ -76,11 +76,34 @@ public sealed class OutboxDispatcher : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<ContainersDbContext>();
         var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
 
-        var pending = await db.Set<OutboxEntry>()
+        // SQLite's EF Core provider can't translate `DateTimeOffset`
+        // in `ORDER BY`, so a server-side
+        // `OrderBy(e => e.CreatedAt)` crashes the dispatcher
+        // (`SqliteQueryableMethodTranslatingExpressionVisitor`:
+        // "SQLite does not support expressions of type
+        // 'DateTimeOffset' in ORDER BY clauses. Convert the values
+        // to a supported type, or use LINQ to Objects to order the
+        // results on the client side."). Before this fix, every
+        // dispatcher tick threw that exception, the background
+        // service backed off, and under Conductor's embedded
+        // service host the continued failures eventually took the
+        // whole service down.
+        //
+        // We pull a bounded batch of pending entries server-side
+        // (filtering only by `PublishedAt == null`, which SQLite
+        // handles fine), then order + trim client-side. The cap is
+        // generous enough that the FIFO property of the outbox is
+        // preserved in practice — if more than `_drainWindow`
+        // entries are pending we'd have bigger problems than
+        // ordering accuracy — and it keeps memory bounded.
+        var drainWindow = Math.Max(_batchSize * 4, 256);
+        var pending = (await db.Set<OutboxEntry>()
             .Where(e => e.PublishedAt == null)
+            .Take(drainWindow)
+            .ToListAsync(ct))
             .OrderBy(e => e.CreatedAt)
             .Take(_batchSize)
-            .ToListAsync(ct);
+            .ToList();
 
         if (pending.Count == 0)
         {
