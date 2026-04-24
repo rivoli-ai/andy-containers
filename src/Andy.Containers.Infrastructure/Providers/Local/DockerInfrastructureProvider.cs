@@ -217,7 +217,19 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             {
                 PortBindings = portBindings,
                 Memory = (long)(spec.Resources?.MemoryMb ?? 4096) * 1024 * 1024,
-                NanoCPUs = (long)((spec.Resources?.CpuCores ?? 2) * 1e9)
+                NanoCPUs = (long)((spec.Resources?.CpuCores ?? 2) * 1e9),
+                // Cap PID count so a fork bomb inside the container cannot DoS
+                // the host. 4096 leaves plenty of headroom for parallel builds
+                // and language servers.
+                PidsLimit = 4096,
+                // Block setuid-driven privilege escalation; closes the easiest
+                // post-exploitation path for an attacker who lands in the
+                // container.
+                SecurityOpt = new List<string> { "no-new-privileges:true" },
+                // Drop capabilities that are not needed by typical dev workloads
+                // and have known abuse paths: NET_RAW (ARP spoofing / raw
+                // packets), MKNOD (creating device nodes).
+                CapDrop = new List<string> { "NET_RAW", "MKNOD" }
             }
         }, ct);
 

@@ -65,8 +65,15 @@ public class SshDockerHelper : IDisposable
         var resources = spec.Resources ?? new ResourceSpec();
         var cpuLimit = $"--cpus={resources.CpuCores}";
         var memLimit = $"--memory={resources.MemoryMb}m";
+        // Mirror the local DockerInfrastructureProvider hardening: PID cap to
+        // resist fork bombs, no-new-privileges to block setuid escalation, and
+        // drop NET_RAW + MKNOD which dev workloads do not need.
+        const string hardening =
+            " --pids-limit 4096" +
+            " --security-opt no-new-privileges" +
+            " --cap-drop NET_RAW --cap-drop MKNOD";
 
-        var cmd = $"docker run -d --name {containerName} {cpuLimit} {memLimit}{envArgs}{portArgs} {spec.ImageReference}";
+        var cmd = $"docker run -d --name {containerName} {cpuLimit} {memLimit}{hardening}{envArgs}{portArgs} {spec.ImageReference}";
         if (!string.IsNullOrEmpty(spec.Command))
         {
             cmd += $" {spec.Command}";
@@ -147,7 +154,7 @@ public class SshDockerHelper : IDisposable
                 systemctl enable docker
                 systemctl start docker
                 docker pull {dockerImage}
-                docker run -d --name {containerName} --restart unless-stopped{portArgs} {dockerImage}
+                docker run -d --name {containerName} --restart unless-stopped --pids-limit 4096 --security-opt no-new-privileges --cap-drop NET_RAW --cap-drop MKNOD{portArgs} {dockerImage}
                 """;
     }
 
