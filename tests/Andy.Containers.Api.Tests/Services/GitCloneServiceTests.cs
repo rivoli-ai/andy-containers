@@ -362,7 +362,8 @@ public class GitCloneServiceTests : IDisposable
 
         await _service.CloneRepositoryAsync(container.Id, repo.Id);
 
-        cloneCommand.Should().Contain("--branch develop");
+        // Branch is POSIX-quoted (defense-in-depth — also rejected by validator)
+        cloneCommand.Should().Contain("--branch 'develop'");
     }
 
     [Fact]
@@ -532,7 +533,7 @@ public class GitCloneServiceTests : IDisposable
 
         await _service.PullRepositoryAsync(container.Id, repo.Id);
 
-        pullCommand.Should().Be("cd /home/dev/myproject && git pull");
+        pullCommand.Should().Be("cd '/home/dev/myproject' && git pull");
     }
 
     [Fact]

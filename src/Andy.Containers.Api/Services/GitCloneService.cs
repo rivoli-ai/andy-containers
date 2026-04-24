@@ -76,7 +76,7 @@ public class GitCloneService : IGitCloneService
             var container = await _db.Containers.FindAsync([containerId], ct)
                 ?? throw new KeyNotFoundException($"Container {containerId} not found");
 
-            var pullCommand = $"cd {repo.TargetPath} && git pull";
+            var pullCommand = $"cd {ShellQuote(repo.TargetPath)} && git pull";
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(CloneTimeout);
@@ -165,20 +165,32 @@ public class GitCloneService : IGitCloneService
                 cloneUrl = $"https://{Uri.EscapeDataString(token)}@{uri.Host}{uri.PathAndQuery}";
             }
 
-            // Build clone command
-            var cloneArgs = new List<string> { "git clone" };
+            // Build clone command. The command is exec'd through `sh -c` inside
+            // the container, so every dynamic value must be POSIX-quoted (and
+            // GitRepositoryValidator already rejects shell metacharacters in
+            // url / branch / target-path as a defense-in-depth gate).
+            var cloneArgs = new List<string> { "git", "clone" };
 
             if (repo.CloneDepth.HasValue)
-                cloneArgs.Add($"--depth {repo.CloneDepth.Value}");
+            {
+                cloneArgs.Add("--depth");
+                cloneArgs.Add(repo.CloneDepth.Value.ToString());
+            }
 
             if (!string.IsNullOrEmpty(repo.Branch))
-                cloneArgs.Add($"--branch {repo.Branch}");
+            {
+                cloneArgs.Add("--branch");
+                cloneArgs.Add(ShellQuote(repo.Branch));
+            }
 
             if (repo.Submodules)
                 cloneArgs.Add("--recurse-submodules");
 
-            cloneArgs.Add($"'{cloneUrl}'");
-            cloneArgs.Add($"'{repo.TargetPath}'");
+            // `--` ends git's option parsing so a URL starting with `-` cannot
+            // be re-interpreted as a flag.
+            cloneArgs.Add("--");
+            cloneArgs.Add(ShellQuote(cloneUrl));
+            cloneArgs.Add(ShellQuote(repo.TargetPath));
 
             var command = string.Join(" ", cloneArgs);
 
@@ -316,5 +328,16 @@ public class GitCloneService : IGitCloneService
             _logger.LogDebug(ex, "Failed to collect clone metadata for {TargetPath}", targetPath);
             return null;
         }
+    }
+
+    /// <summary>
+    /// POSIX-safe shell quoting: wrap in single quotes and escape any embedded
+    /// single quotes via the standard `'\''` dance. Defense-in-depth — values
+    /// passed here are already filtered by GitRepositoryValidator.
+    /// </summary>
+    internal static string ShellQuote(string value)
+    {
+        if (value is null) return "''";
+        return "'" + value.Replace("'", "'\\''") + "'";
     }
 }
