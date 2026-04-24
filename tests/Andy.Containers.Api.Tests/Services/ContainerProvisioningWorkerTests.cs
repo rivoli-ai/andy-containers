@@ -546,12 +546,17 @@ public class ContainerProvisioningWorkerTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessJob_WithEnvVars_ShouldExecExportCommands()
+    public async Task ProcessJob_WithEnvVars_PassesThemViaContainerSpec()
     {
+        // Regression test for #123: secrets must be passed via the provider's
+        // CreateContainer Env, not exec'd as `echo … >> /etc/environment` which
+        // wrote API keys to world-readable files inside the container.
         using var db = CreateDb();
         var (container, provider) = SeedContainerAndProvider(db);
 
+        ContainerSpec? capturedSpec = null;
         _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .Callback<ContainerSpec, CancellationToken>((spec, _) => capturedSpec = spec)
             .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
 
         var envVars = new Dictionary<string, string> { ["ANTHROPIC_API_KEY"] = "sk-test-123" };
@@ -570,11 +575,18 @@ public class ContainerProvisioningWorkerTests : IDisposable
         cts.Cancel();
         try { await workerTask; } catch (OperationCanceledException) { }
 
-        // Verify ExecAsync was called with export and persist commands containing the key
+        // Env vars travel via the spec to the provider…
+        capturedSpec.Should().NotBeNull();
+        capturedSpec!.EnvironmentVariables.Should().ContainKey("ANTHROPIC_API_KEY");
+        capturedSpec.EnvironmentVariables!["ANTHROPIC_API_KEY"].Should().Be("sk-test-123");
+
+        // …and are NEVER exec'd as `echo … >> /etc/environment` or similar.
         _mockContainerService.Verify(s => s.ExecAsync(
             container.Id,
-            It.Is<string>(cmd => cmd.Contains("ANTHROPIC_API_KEY") && cmd.Contains("export")),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<string>(cmd =>
+                cmd.Contains("ANTHROPIC_API_KEY") &&
+                (cmd.Contains("/etc/environment") || cmd.Contains(".bashrc") || cmd.Contains(".profile"))),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

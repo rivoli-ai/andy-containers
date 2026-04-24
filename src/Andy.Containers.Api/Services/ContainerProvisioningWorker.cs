@@ -104,7 +104,11 @@ public class ContainerProvisioningWorker : BackgroundService
                 Command = string.Equals(job.GuiType, "vnc", StringComparison.OrdinalIgnoreCase)
                     ? "/start.sh" : null,
                 // Always expose SSH (port 22) with a dynamic host port
-                PortMappings = portMappings
+                PortMappings = portMappings,
+                // Inject env vars (incl. API keys) at creation time so they propagate
+                // to every `docker exec` without being persisted to world-readable files
+                // inside the container (/etc/environment, /etc/profile.d, etc).
+                EnvironmentVariables = job.EnvironmentVariables
             };
 
             // Use a timeout so we don't hang forever
@@ -201,53 +205,6 @@ public class ContainerProvisioningWorker : BackgroundService
                 {
                     _logger.LogWarning(userEx, "Failed to create user {User} in container {ContainerId}",
                         job.ContainerUser, job.ContainerId);
-                }
-            }
-
-            // Inject environment variables (including API keys) into the container
-            if (job.EnvironmentVariables is { Count: > 0 })
-            {
-                try
-                {
-                    var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
-                    // Set env vars via export commands — values are not logged
-                    var exportCommands = string.Join(" && ",
-                        job.EnvironmentVariables.Select(kv => $"export {kv.Key}='{kv.Value.Replace("'", "'\\''")}'"));
-                    // Write to /etc/environment, .bashrc, and .profile for persistence across all session types
-                    var persistCmd = string.Join(" && ",
-                        job.EnvironmentVariables.Select(kv =>
-                        {
-                            var escaped = kv.Value.Replace("'", "'\\''");
-                            return $"echo '{kv.Key}={escaped}' >> /etc/environment && " +
-                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.bashrc && " +
-                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /root/.profile && " +
-                                   $"echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile && " +
-                                   $"mkdir -p /etc/profile.d && echo 'export {kv.Key}=\"{escaped}\"' >> /etc/profile.d/andy-env.sh";
-                        }));
-                    await containerService.ExecAsync(job.ContainerId, $"{exportCommands} && {persistCmd}", stoppingToken);
-
-                    // Also persist to user's home directory
-                    if (job.ContainerUser != "root")
-                    {
-                        var userHome = $"/home/{job.ContainerUser}";
-                        var userPersistCmd = string.Join(" && ",
-                            job.EnvironmentVariables.Select(kv =>
-                            {
-                                var escaped = kv.Value.Replace("'", "'\\''");
-                                return $"echo 'export {kv.Key}=\"{escaped}\"' >> {userHome}/.bashrc && " +
-                                       $"echo 'export {kv.Key}=\"{escaped}\"' >> {userHome}/.profile && " +
-                                       $"chown {job.ContainerUser}:{job.ContainerUser} {userHome}/.bashrc {userHome}/.profile";
-                            }));
-                        await containerService.ExecAsync(job.ContainerId, userPersistCmd, stoppingToken);
-                    }
-
-                    _logger.LogInformation("Injected {Count} environment variable(s) into container {ContainerId}",
-                        job.EnvironmentVariables.Count, job.ContainerId);
-                }
-                catch (Exception envEx)
-                {
-                    _logger.LogWarning(envEx, "Failed to inject environment variables into container {ContainerId}",
-                        job.ContainerId);
                 }
             }
 
