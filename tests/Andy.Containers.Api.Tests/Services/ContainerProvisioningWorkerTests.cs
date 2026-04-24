@@ -591,8 +591,14 @@ public class ContainerProvisioningWorkerTests : IDisposable
             .Returns("npm install -g @anthropic-ai/claude-code");
 
         var callOrder = new List<string>();
+        // Match the specific PostCreateScript payload rather than any command
+        // containing "apt-get". The welcome-banner script (worker line 302,
+        // added in commit 8102a15 for fastfetch) also runs `apt-get install
+        // -qq fastfetch`, so the old `Contains("apt-get")` matcher fired
+        // twice and produced a false-positive `{post_create, code_assistant,
+        // post_create}` order. See rivoli-ai/andy-containers#134.
         _mockContainerService.Setup(s => s.ExecAsync(
-                It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("apt-get")),
+                It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("apt-get install -y python3")),
                 It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .Callback(() => callOrder.Add("post_create"))
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
