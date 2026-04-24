@@ -101,6 +101,28 @@ public class AppleContainerProvider : IInfrastructureProvider
                 args += $" -m {spec.Resources.MemoryMb}M";
         }
 
+        // Pass env vars at creation time so secrets reach `container exec` without
+        // being persisted to world-readable files inside the container.
+        // ProcessStartInfo.Arguments is parsed by .NET (Win32-style: pairs of double
+        // quotes, no shell interpretation). API key values in practice contain no
+        // whitespace or quotes; reject anything that would tokenize incorrectly so
+        // we never silently truncate a secret. Tighter quoting arrives with #127.
+        if (spec.EnvironmentVariables is { Count: > 0 })
+        {
+            foreach (var (key, value) in spec.EnvironmentVariables)
+            {
+                var v = value ?? string.Empty;
+                if (v.Any(c => char.IsWhiteSpace(c) || c == '"' || c == '\''))
+                {
+                    _logger.LogWarning(
+                        "Skipping env var {Key} for Apple Container {Name}: value contains whitespace or quote",
+                        key, name);
+                    continue;
+                }
+                args += $" -e {key}={v}";
+            }
+        }
+
         args += $" -d {spec.ImageReference}";
 
         // Add command if specified, otherwise default to sleep infinity to keep the container alive
