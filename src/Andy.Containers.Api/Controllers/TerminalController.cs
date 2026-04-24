@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using System.Net.WebSockets;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Rbac.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,24 +12,45 @@ namespace Andy.Containers.Api.Controllers;
 
 [ApiController]
 [Route("api/containers/{id}/terminal")]
+[Authorize]
 public class TerminalController : ControllerBase
 {
     private readonly ContainersDbContext _db;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<TerminalController> _logger;
 
-    public TerminalController(ContainersDbContext db, ILogger<TerminalController> logger)
+    public TerminalController(
+        ContainersDbContext db,
+        ICurrentUserService currentUser,
+        IConfiguration configuration,
+        ILogger<TerminalController> logger)
     {
         _db = db;
+        _currentUser = currentUser;
+        _configuration = configuration;
         _logger = logger;
     }
 
     [HttpGet]
+    [RequirePermission("container:execute")]
     public async Task Connect(Guid id)
     {
         if (!HttpContext.WebSockets.IsWebSocketRequest)
         {
             HttpContext.Response.StatusCode = 400;
             await HttpContext.Response.WriteAsync("WebSocket connection required");
+            return;
+        }
+
+        // CSWSH defense: browsers always send Origin on WebSocket upgrade requests.
+        // Reject anything not on the configured Cors:Origins allowlist.
+        var origin = HttpContext.Request.Headers.Origin.ToString();
+        if (!IsOriginAllowed(origin))
+        {
+            _logger.LogWarning("Terminal WebSocket rejected — Origin '{Origin}' not in Cors:Origins allowlist", origin);
+            HttpContext.Response.StatusCode = 403;
+            await HttpContext.Response.WriteAsync("Origin not allowed");
             return;
         }
 
@@ -38,6 +62,13 @@ public class TerminalController : ControllerBase
         {
             HttpContext.Response.StatusCode = 404;
             await HttpContext.Response.WriteAsync("Container not found");
+            return;
+        }
+
+        if (!CanAccess(container))
+        {
+            HttpContext.Response.StatusCode = 403;
+            await HttpContext.Response.WriteAsync("Forbidden");
             return;
         }
 
@@ -385,6 +416,22 @@ public class TerminalController : ControllerBase
 
         process.Dispose();
         _logger.LogInformation("Terminal session ended for container {Name}", container.Name);
+    }
+
+    internal bool CanAccess(Container container)
+    {
+        if (_currentUser.IsAdmin()) return true;
+        return container.OwnerId == _currentUser.GetUserId();
+    }
+
+    internal bool IsOriginAllowed(string origin)
+    {
+        if (string.IsNullOrEmpty(origin))
+            return false;
+        var allowed = _configuration.GetSection("Cors:Origins").Get<string[]>();
+        if (allowed is null || allowed.Length == 0)
+            return false;
+        return Array.Exists(allowed, a => string.Equals(a, origin, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsResizeMessage(byte[] buffer, int count, out int cols, out int rows)
