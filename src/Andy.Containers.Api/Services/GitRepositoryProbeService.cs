@@ -107,16 +107,26 @@ public class GitRepositoryProbeService : IGitRepositoryProbeService
             var psi = new ProcessStartInfo
             {
                 FileName = "git",
-                // --heads limits output to branch refs only (faster, less output)
-                Arguments = $"ls-remote --exit-code --heads \"{probeUrl}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            // Build argv explicitly. `--` ends git's option parsing so a URL
+            // starting with `-` cannot be mis-parsed as a flag (CVE-2017-1000117
+            // class). ArgumentList also avoids the Win32-style quote parsing
+            // that ProcessStartInfo.Arguments performs.
+            psi.ArgumentList.Add("ls-remote");
+            psi.ArgumentList.Add("--exit-code");
+            psi.ArgumentList.Add("--heads");
+            psi.ArgumentList.Add("--");
+            psi.ArgumentList.Add(probeUrl);
             // Prevent git from prompting for credentials
             psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
             psi.Environment["GIT_ASKPASS"] = "echo";
+            // Belt and suspenders: also disable any user-configured protocol
+            // helpers that could be triggered by a crafted URL host.
+            psi.Environment["GIT_PROTOCOL_FROM_USER"] = "0";
 
             using var process = Process.Start(psi);
             if (process is null)
