@@ -132,6 +132,72 @@ public class OutboxDispatcherTests
         return (provider.GetRequiredService<IServiceScopeFactory>(), bus, dbName);
     }
 
+    /// <summary>
+    /// Regression guard for the production crash observed under the
+    /// embedded SQLite provider: the dispatcher used to
+    /// <c>OrderBy(e =&gt; e.CreatedAt)</c> against a
+    /// <see cref="DateTimeOffset"/> column, and the SQLite EF Core
+    /// translator rejects that with
+    /// &quot;SQLite does not support expressions of type
+    /// 'DateTimeOffset' in ORDER BY clauses&quot;. The in-memory
+    /// provider masks the bug (it can order any CLR type), so we
+    /// re-run the dispatcher against a real SQLite database here.
+    /// </summary>
+    [Fact]
+    public async Task DrainOnceAsync_DoesNotCrashUnderSqlite()
+    {
+        var connection = new Microsoft.Data.Sqlite.SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddDbContext<Andy.Containers.Infrastructure.Data.ContainersDbContext>(o =>
+                o.UseSqlite(connection));
+            var bus = new RecordingMessageBus();
+            services.AddSingleton<IMessageBus>(bus);
+            using var provider = services.BuildServiceProvider();
+
+            using (var scope = provider.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Andy.Containers.Infrastructure.Data.ContainersDbContext>();
+                await db.Database.EnsureCreatedAsync();
+                db.OutboxEntries.AddRange(
+                    new OutboxEntry
+                    {
+                        Id = Guid.NewGuid(),
+                        Subject = "s",
+                        PayloadJson = "{}",
+                        CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-10),
+                    },
+                    new OutboxEntry
+                    {
+                        Id = Guid.NewGuid(),
+                        Subject = "s",
+                        PayloadJson = "{}",
+                        CreatedAt = DateTimeOffset.UtcNow,
+                    });
+                await db.SaveChangesAsync();
+            }
+
+            var dispatcher = new OutboxDispatcher(
+                provider.GetRequiredService<IServiceScopeFactory>(),
+                NullLogger<OutboxDispatcher>.Instance,
+                Options.Create(new OutboxDispatcherOptions()));
+
+            // Pre-fix this call threw
+            // `System.NotSupportedException: SQLite does not support
+            // expressions of type 'DateTimeOffset' in ORDER BY
+            // clauses` and tore down the background service.
+            var drained = await dispatcher.DrainOnceAsync(CancellationToken.None);
+            drained.Should().Be(2);
+            bus.Published.Should().HaveCount(2);
+        }
+        finally
+        {
+            await connection.CloseAsync();
+        }
+    }
+
     private sealed class RecordingMessageBus : IMessageBus
     {
         public List<(string Subject, object Payload, MessageHeaders Headers, DateTimeOffset CreatedAt)> Published { get; } = new();
