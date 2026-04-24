@@ -1,10 +1,12 @@
 using Andy.Containers.Api.Controllers;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -23,15 +25,28 @@ public class TerminalControllerTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private TerminalController CreateController(DefaultHttpContext? httpContext = null)
+    private TerminalController CreateController(
+        DefaultHttpContext? httpContext = null,
+        Mock<ICurrentUserService>? currentUser = null,
+        IConfiguration? configuration = null)
     {
         httpContext ??= new DefaultHttpContext();
         var logger = new Mock<ILogger<TerminalController>>();
+        currentUser ??= new Mock<ICurrentUserService>();
+        configuration ??= new ConfigurationBuilder().Build();
         // Use a fresh context with the same DB name so EF tracks entities correctly
         var db = InMemoryDbHelper.CreateContext(_dbName);
-        var controller = new TerminalController(db, logger.Object);
+        var controller = new TerminalController(db, currentUser.Object, configuration, logger.Object);
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
         return controller;
+    }
+
+    private static IConfiguration ConfigWithOrigins(params string[] origins)
+    {
+        var dict = new Dictionary<string, string?>();
+        for (var i = 0; i < origins.Length; i++)
+            dict[$"Cors:Origins:{i}"] = origins[i];
+        return new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
     }
 
     private InfrastructureProvider CreateProvider()
@@ -129,11 +144,87 @@ public class TerminalControllerTests : IDisposable
     {
         var db = InMemoryDbHelper.CreateContext();
         var logger = new Mock<ILogger<TerminalController>>();
+        var currentUser = new Mock<ICurrentUserService>();
+        var configuration = new ConfigurationBuilder().Build();
 
-        var controller = new TerminalController(db, logger.Object);
+        var controller = new TerminalController(db, currentUser.Object, configuration, logger.Object);
 
         controller.Should().NotBeNull();
         db.Dispose();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_EmptyOrigin_ReturnsFalse()
+    {
+        var controller = CreateController(configuration: ConfigWithOrigins("https://localhost:5280"));
+        controller.IsOriginAllowed(string.Empty).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_NoAllowlistConfigured_ReturnsFalse()
+    {
+        // Fail-closed when Cors:Origins is missing or empty — preventing CSWSH
+        // from a misconfigured deployment.
+        var controller = CreateController(configuration: new ConfigurationBuilder().Build());
+        controller.IsOriginAllowed("https://localhost:5280").Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_OriginInAllowlist_ReturnsTrue()
+    {
+        var controller = CreateController(configuration: ConfigWithOrigins("https://localhost:5280", "https://localhost:3000"));
+        controller.IsOriginAllowed("https://localhost:5280").Should().BeTrue();
+        controller.IsOriginAllowed("https://localhost:3000").Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_OriginNotInAllowlist_ReturnsFalse()
+    {
+        var controller = CreateController(configuration: ConfigWithOrigins("https://localhost:5280"));
+        controller.IsOriginAllowed("https://evil.example.com").Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_OriginMatchesCaseInsensitive()
+    {
+        var controller = CreateController(configuration: ConfigWithOrigins("https://localhost:5280"));
+        controller.IsOriginAllowed("HTTPS://LOCALHOST:5280").Should().BeTrue();
+    }
+
+    [Fact]
+    public void CanAccess_Admin_AlwaysTrue()
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(u => u.IsAdmin()).Returns(true);
+        currentUser.Setup(u => u.GetUserId()).Returns("admin-user");
+        var controller = CreateController(currentUser: currentUser);
+
+        var container = new Container { OwnerId = "someone-else", Name = "c", ProviderId = Guid.NewGuid() };
+        controller.CanAccess(container).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CanAccess_OwnerMatches_True()
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(u => u.IsAdmin()).Returns(false);
+        currentUser.Setup(u => u.GetUserId()).Returns("user-1");
+        var controller = CreateController(currentUser: currentUser);
+
+        var container = new Container { OwnerId = "user-1", Name = "c", ProviderId = Guid.NewGuid() };
+        controller.CanAccess(container).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CanAccess_NonOwnerNonAdmin_False()
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(u => u.IsAdmin()).Returns(false);
+        currentUser.Setup(u => u.GetUserId()).Returns("user-1");
+        var controller = CreateController(currentUser: currentUser);
+
+        var container = new Container { OwnerId = "user-2", Name = "c", ProviderId = Guid.NewGuid() };
+        controller.CanAccess(container).Should().BeFalse();
     }
 
     [Theory]
