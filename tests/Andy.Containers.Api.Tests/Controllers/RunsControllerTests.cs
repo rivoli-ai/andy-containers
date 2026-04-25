@@ -1,7 +1,9 @@
 using Andy.Containers.Api.Controllers;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +24,7 @@ public class RunsControllerTests : IDisposable
     private readonly ContainersDbContext _db;
     private readonly RunsController _controller;
     private readonly Mock<IRunConfigurator> _configurator;
+    private readonly Mock<IHeadlessRunner> _runner;
 
     public RunsControllerTests()
     {
@@ -33,7 +36,19 @@ public class RunsControllerTests : IDisposable
         _configurator
             .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/noop/config.json"));
-        _controller = new RunsController(_db, _configurator.Object, NullLogger<RunsController>.Instance);
+        // AP6 wires the runner into Create. Default stub: no-op outcome.
+        // Runs without a ContainerId never invoke it (the controller skips
+        // the call), and the dedicated HeadlessRunnerTests cover its surface.
+        _runner = new Mock<IHeadlessRunner>();
+        _runner
+            .Setup(r => r.StartAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HeadlessRunOutcome
+            {
+                Kind = RunEventKind.Finished,
+                Status = RunStatus.Succeeded,
+                ExitCode = 0,
+            });
+        _controller = new RunsController(_db, _configurator.Object, _runner.Object, NullLogger<RunsController>.Instance);
     }
 
     public void Dispose()
@@ -103,6 +118,82 @@ public class RunsControllerTests : IDisposable
         _configurator.Verify(c => c.ConfigureAsync(
             It.Is<Run>(r => r.Id != Guid.Empty && r.Status == RunStatus.Pending),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Create_DoesNotInvokeRunner_WhenContainerIdNull()
+    {
+        // AP6 wiring: AP5 hasn't run yet, so ContainerId is null and the
+        // controller must not attempt to spawn — the runner needs a target.
+        var request = new CreateRunRequest
+        {
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+        };
+
+        await _controller.Create(request, CancellationToken.None);
+
+        _runner.Verify(r => r.StartAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Create_InvokesRunner_WhenConfiguratorSucceeds_AndContainerIdPresent()
+    {
+        // Once AP5 lands and assigns a ContainerId, the controller hands
+        // off to the runner with the configurator's path. We simulate that
+        // by intercepting the configurator and stamping ContainerId on the
+        // run before the runner check fires.
+        var containerId = Guid.NewGuid();
+        _configurator
+            .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
+            .Callback<Run, CancellationToken>((r, _) => r.ContainerId = containerId)
+            .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/runs/x/config.json"));
+
+        var request = new CreateRunRequest
+        {
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+        };
+
+        await _controller.Create(request, CancellationToken.None);
+
+        _runner.Verify(r => r.StartAsync(
+            It.Is<Run>(rn => rn.ContainerId == containerId),
+            "/tmp/runs/x/config.json",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Create_RunnerThrows_DoesNotRollBackRun()
+    {
+        // Spawn failures must not roll the row back — the configurator's
+        // existing failure semantics apply to AP6 too, so the Run row
+        // persists for inspection / cleanup.
+        var containerId = Guid.NewGuid();
+        _configurator
+            .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
+            .Callback<Run, CancellationToken>((r, _) => r.ContainerId = containerId)
+            .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/runs/x/config.json"));
+        _runner
+            .Setup(r => r.StartAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("kaboom"));
+
+        var request = new CreateRunRequest
+        {
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+        };
+
+        var result = await _controller.Create(request, CancellationToken.None);
+
+        var dto = result.Should().BeOfType<CreatedAtActionResult>().Subject.Value
+            .Should().BeOfType<RunDto>().Subject;
+        var persisted = await _db.Runs.FindAsync(dto.Id);
+        persisted.Should().NotBeNull();
     }
 
     [Fact]

@@ -23,16 +23,17 @@ public sealed record RunEventPayload(
     public int Schema_Version => SchemaVersion;
 }
 
-// Three terminal-lifecycle kinds are published. Mapping to container
-// status transitions:
-//   Finished  — StopContainerAsync (clean shutdown)
-//   Failed    — MarkFailedAsync in ProvisioningWorker (provision failure)
-//   Cancelled — DestroyContainerAsync (explicit teardown)
+// Terminal-lifecycle kinds published on andy.containers.events.run.{id}.<kind>.
+// Container provisioning emits Finished/Failed/Cancelled. AP6's agent-run
+// runner additionally emits Timeout, mapped from the AQ2 process exit code 4
+// — kept distinct from Failed so consumers (and the Run.Status enum, which
+// already has a Timeout member) don't lose the watchdog signal.
 public enum RunEventKind
 {
     Finished,
     Failed,
-    Cancelled
+    Cancelled,
+    Timeout
 }
 
 public static class RunEventKindExtensions
@@ -42,6 +43,7 @@ public static class RunEventKindExtensions
         RunEventKind.Finished => "finished",
         RunEventKind.Failed => "failed",
         RunEventKind.Cancelled => "cancelled",
+        RunEventKind.Timeout => "timeout",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }

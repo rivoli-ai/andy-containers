@@ -1,3 +1,4 @@
+using Andy.Containers.Api.Services;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -22,15 +23,18 @@ public class RunsController : ControllerBase
 {
     private readonly ContainersDbContext _db;
     private readonly IRunConfigurator _configurator;
+    private readonly IHeadlessRunner _runner;
     private readonly ILogger<RunsController> _logger;
 
     public RunsController(
         ContainersDbContext db,
         IRunConfigurator configurator,
+        IHeadlessRunner runner,
         ILogger<RunsController> logger)
     {
         _db = db;
         _configurator = configurator;
+        _runner = runner;
         _logger = logger;
     }
 
@@ -91,6 +95,25 @@ public class RunsController : ControllerBase
             _logger.LogWarning(
                 "Run {RunId} persisted as Pending but configurator failed: {Error}. AP5/AP6 will retry.",
                 run.Id, configResult.Error);
+        }
+        else if (run.ContainerId is not null)
+        {
+            // AP6 (rivoli-ai/andy-containers#108). Spawn andy-cli headless
+            // synchronously so the controller blocks until the run is
+            // terminal. AP5 will move this onto a background queue once
+            // ContainerId assignment is async; for now ContainerId is null
+            // until that lands, so this branch is effectively dormant in
+            // production traffic and exercised primarily by tests.
+            try
+            {
+                await _runner.StartAsync(run, configResult.Path!, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Run {RunId} headless spawn threw before terminal write: {Message}",
+                    run.Id, ex.Message);
+            }
         }
 
         var dto = RunDto.FromEntity(run);
