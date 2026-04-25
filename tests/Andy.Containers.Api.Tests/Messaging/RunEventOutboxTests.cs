@@ -80,6 +80,7 @@ public class RunEventOutboxTests
     [InlineData(RunEventKind.Finished, "finished")]
     [InlineData(RunEventKind.Failed, "failed")]
     [InlineData(RunEventKind.Cancelled, "cancelled")]
+    [InlineData(RunEventKind.Timeout, "timeout")]
     public async Task AppendRunEvent_SubjectKindMatchesEnum(RunEventKind kind, string expectedSuffix)
     {
         using var db = InMemoryDbHelper.CreateContext();
@@ -96,5 +97,61 @@ public class RunEventOutboxTests
 
         var entry = await db.OutboxEntries.SingleAsync();
         entry.Subject.Should().EndWith($".{expectedSuffix}");
+    }
+
+    [Fact]
+    public async Task AppendAgentRunEvent_KeyedOnRunIdNotContainerId()
+    {
+        // AP6 (rivoli-ai/andy-containers#108). Agent-run events live on
+        // andy.containers.events.run.{Run.Id}.<kind> — distinct from the
+        // container-lifecycle path that keys on Container.Id.
+        using var db = InMemoryDbHelper.CreateContext();
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "triage-agent",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            ContainerId = Guid.NewGuid(),
+            Status = RunStatus.Succeeded,
+        };
+
+        db.AppendAgentRunEvent(run, RunEventKind.Finished, exitCode: 0, durationSeconds: 12.3);
+        await db.SaveChangesAsync();
+
+        var entry = await db.OutboxEntries.SingleAsync();
+        entry.Subject.Should().Be($"andy.containers.events.run.{run.Id}.finished");
+        entry.Subject.Should().NotContain(run.ContainerId!.Value.ToString(),
+            "subject must key on Run.Id, not the assigned Container.Id");
+        entry.CorrelationId.Should().Be(run.CorrelationId);
+
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        var root = doc.RootElement;
+        root.GetProperty("run_id").GetString().Should().Be(run.Id.ToString());
+        root.GetProperty("status").GetString().Should().Be("Succeeded");
+        root.GetProperty("exit_code").GetInt32().Should().Be(0);
+        root.GetProperty("duration_seconds").GetDouble().Should().Be(12.3);
+    }
+
+    [Fact]
+    public async Task AppendAgentRunEvent_EmptyCorrelationFallsBackToRunId()
+    {
+        using var db = InMemoryDbHelper.CreateContext();
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.Empty,
+            Status = RunStatus.Failed,
+        };
+
+        db.AppendAgentRunEvent(run, RunEventKind.Failed);
+        await db.SaveChangesAsync();
+
+        var entry = await db.OutboxEntries.SingleAsync();
+        entry.CorrelationId.Should().Be(run.Id);
     }
 }

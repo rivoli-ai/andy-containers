@@ -244,6 +244,11 @@ try
     builder.Services.AddSingleton<IHeadlessConfigWriter, HeadlessConfigWriter>();
     builder.Services.AddScoped<IRunConfigurator, RunConfigurator>();
 
+    // AP6 (rivoli-ai/andy-containers#108). Headless runner: spawns
+    // andy-cli inside the run's container, captures exit code, publishes
+    // the terminal run.* event to the outbox.
+    builder.Services.AddScoped<IHeadlessRunner, HeadlessRunner>();
+
     var app = builder.Build();
 
     // Auto-migrate (PostgreSQL) or auto-create (SQLite) and seed.
