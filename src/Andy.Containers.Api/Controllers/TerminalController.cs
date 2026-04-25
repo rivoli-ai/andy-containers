@@ -156,7 +156,11 @@ public class TerminalController : ControllerBase
         // - default-terminal xterm-256color prevents arrow key / escape issues
         var tmuxSession = "web";
 
-        // Check if tmux session already exists (to decide whether to show banner)
+        // Check if tmux session already exists (to decide whether to show banner).
+        // Must run as the same user that owns the session — tmux uses a per-UID
+        // socket (/tmp/tmux-<uid>/default), so a check as root cannot see a session
+        // owned by `containerUser`. Without -u, hasExistingSession is always false
+        // and the banner is injected on every reconnect.
         var checkExisting = providerType == ProviderType.AppleContainer ? "container" : "docker";
         var hasExistingSession = false;
         try
@@ -164,7 +168,7 @@ public class TerminalController : ControllerBase
             var checkProcess = System.Diagnostics.Process.Start(new ProcessStartInfo
             {
                 FileName = checkExisting == "docker" ? "docker" : "container",
-                Arguments = $"exec {externalId} tmux has-session -t {tmuxSession}",
+                Arguments = $"exec -u {containerUser} {externalId} tmux has-session -t {tmuxSession}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
