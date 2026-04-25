@@ -327,7 +327,21 @@ public class TerminalController : ControllerBase
             }
         }, ct);
 
-        // Send welcome banner after tmux has initialized (only on new sessions)
+        // Post-attach injection: on a NEW session, run the welcome
+        // banner; on an EXISTING session (reattach), force a full
+        // server-side redraw so the user sees a complete frame
+        // immediately instead of a stale buffer until tmux's next
+        // status-interval (~15 s).
+        //
+        // Why force a redraw at all: the bytes tmux already drew on
+        // the server-side window are not replayed when a new client
+        // attaches. The renderer paints a blinking cursor and nothing
+        // else until tmux happens to repaint a region (status-interval
+        // tick, vim cursor move, etc.). `tmux refresh-client -S`
+        // serialises a fresh full-screen redraw through the tmux
+        // server, which is what we actually need.
+        //
+        // Conductor #838.
         var stdinStream = process.StandardInput.BaseStream;
         _ = Task.Run(async () =>
         {
@@ -335,13 +349,13 @@ public class TerminalController : ControllerBase
             {
                 // Wait for tmux to fully initialize and draw
                 await Task.Delay(1500, ct);
-                if (!hasExistingSession && !process.HasExited && ws.State == WebSocketState.Open)
+                if (process.HasExited || ws.State != WebSocketState.Open)
                 {
-                    // Clear screen, run banner silently (space prefix avoids bash history), then clear the command line
-                    var bannerCmd = System.Text.Encoding.UTF8.GetBytes(" clear && /usr/local/bin/andy-banner 2>/dev/null; true\n");
-                    await stdinStream.WriteAsync(bannerCmd, ct);
-                    await stdinStream.FlushAsync(ct);
+                    return;
                 }
+                var cmd = BuildPostAttachCommand(hasExistingSession);
+                await stdinStream.WriteAsync(cmd, ct);
+                await stdinStream.FlushAsync(ct);
             }
             catch { /* ignore */ }
         }, ct);
@@ -521,6 +535,32 @@ public class TerminalController : ControllerBase
         if (allowed is null || allowed.Length == 0)
             return false;
         return Array.Exists(allowed, a => string.Equals(a, origin, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Builds the bytes the controller injects into the inner shell's
+    /// stdin once tmux has initialised. New sessions get the welcome
+    /// banner; existing sessions get a forced full-screen redraw so
+    /// the reattached client doesn't show a stale buffer.
+    /// </summary>
+    /// <remarks>
+    /// Internal for unit tests. Conductor #838.
+    /// </remarks>
+    internal static byte[] BuildPostAttachCommand(bool hasExistingSession)
+    {
+        if (hasExistingSession)
+        {
+            // tmux refresh-client -S asks the server to issue a full
+            // redraw to every attached client of the current session.
+            // Cheaper and more reliable than \x0c (Ctrl-L), which a
+            // foreground program (vim, less) would intercept.
+            return System.Text.Encoding.UTF8.GetBytes("tmux refresh-client -S\n");
+        }
+        // New session: clear + welcome banner. Space prefix keeps the
+        // command out of bash history; trailing `; true` swallows the
+        // exit code so a missing andy-banner binary doesn't surface
+        // as a `1` exit on the prompt.
+        return System.Text.Encoding.UTF8.GetBytes(" clear && /usr/local/bin/andy-banner 2>/dev/null; true\n");
     }
 
     /// <summary>

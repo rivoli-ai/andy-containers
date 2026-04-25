@@ -293,4 +293,47 @@ public class TerminalControllerTests : IDisposable
     {
         TerminalController.IsValidTerminalSize(cols, rows).Should().BeFalse(reason);
     }
+
+    // MARK: - BuildPostAttachCommand (conductor #838)
+
+    [Fact]
+    public void BuildPostAttachCommand_NewSession_ReturnsWelcomeBanner()
+    {
+        var bytes = TerminalController.BuildPostAttachCommand(hasExistingSession: false);
+        var text = System.Text.Encoding.UTF8.GetString(bytes);
+        text.Should().StartWith(" clear", "space prefix keeps the command out of bash history");
+        text.Should().Contain("/usr/local/bin/andy-banner",
+            "new sessions show the welcome banner");
+        text.Should().Contain("2>/dev/null",
+            "banner failure is silenced — a missing binary should not break the shell");
+        text.Should().EndWith("\n",
+            "trailing newline submits the command line");
+    }
+
+    [Fact]
+    public void BuildPostAttachCommand_ExistingSession_ReturnsTmuxRefresh()
+    {
+        var bytes = TerminalController.BuildPostAttachCommand(hasExistingSession: true);
+        var text = System.Text.Encoding.UTF8.GetString(bytes);
+        text.Should().Be("tmux refresh-client -S\n",
+            "reattach forces a server-side redraw so the user sees a complete frame immediately");
+    }
+
+    [Fact]
+    public void BuildPostAttachCommand_DistinguishesNewVsExisting()
+    {
+        var newSession = TerminalController.BuildPostAttachCommand(hasExistingSession: false);
+        var existing = TerminalController.BuildPostAttachCommand(hasExistingSession: true);
+        newSession.Should().NotEqual(existing,
+            "new sessions and reattaches must inject different commands");
+    }
+
+    [Fact]
+    public void BuildPostAttachCommand_BothBranches_TerminateWithNewline()
+    {
+        var newBytes = TerminalController.BuildPostAttachCommand(hasExistingSession: false);
+        var existingBytes = TerminalController.BuildPostAttachCommand(hasExistingSession: true);
+        newBytes[^1].Should().Be((byte)'\n');
+        existingBytes[^1].Should().Be((byte)'\n');
+    }
 }
