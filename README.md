@@ -49,8 +49,12 @@ Development container management platform for the Andy ecosystem.
 ```bash
 git clone https://github.com/rivoli-ai/andy-containers.git
 cd andy-containers
+cp .env.example .env  # then edit to set POSTGRES_PASSWORD
 docker compose up --build
 ```
+
+`docker compose` will refuse to start until `POSTGRES_PASSWORD` is set in
+`.env` (or exported in the shell). No default password ships in the repo.
 
 This starts all services:
 

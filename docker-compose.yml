@@ -4,7 +4,7 @@ services:
     container_name: andy-containers-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
       POSTGRES_DB: andy_containers
     ports:
       - "7434:5432"
@@ -44,7 +44,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=https://+:8443;http://+:8080
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=postgres
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=andy_containers;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
       - AndyAuth__Authority=https://host.docker.internal:5001
       - AndyAuth__Audience=urn:andy-containers-api
       - AndyAuth__RequireHttpsMetadata=false

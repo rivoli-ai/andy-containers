@@ -92,16 +92,22 @@ public static class DatabaseProviderExtensions
         return provider switch
         {
             DatabaseProvider.Sqlite =>
-                configuration.GetConnectionString("Sqlite")
+                NotEmpty(configuration.GetConnectionString("Sqlite"))
                 ?? DefaultSqliteConnectionString(),
 
             DatabaseProvider.PostgreSql =>
-                configuration.GetConnectionString("DefaultConnection")
+                NotEmpty(configuration.GetConnectionString("DefaultConnection"))
                 ?? throw new InvalidOperationException(
-                    "ConnectionStrings:DefaultConnection is not configured"),
+                    "ConnectionStrings:DefaultConnection is not configured. " +
+                    "Set the connection string via env var (ConnectionStrings__DefaultConnection) " +
+                    "or appsettings.Development.json. appsettings.json ships with an empty value " +
+                    "so a Postgres password is never committed to the repo."),
 
             _ => throw new InvalidOperationException($"Unsupported database provider: {provider}")
         };
+
+        static string? NotEmpty(string? value) =>
+            string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static string DefaultSqliteConnectionString()
