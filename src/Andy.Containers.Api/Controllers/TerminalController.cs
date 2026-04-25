@@ -369,10 +369,32 @@ public class TerminalController : ControllerBase
                         // Check for resize messages: {"type":"resize","cols":N,"rows":N}
                         if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
                         {
-                            // Send Ctrl+L-style redraw hint: resize the outer PTY
-                            // by piping a stty command, then clear+redraw
-                            // tmux detects the PTY size change via SIGWINCH automatically
+                            // Forward the resize to the tmux server via a side
+                            // channel: a fresh `<provider> exec -u <user> tmux
+                            // resize-window -t <session> -x C -y R`. We can't
+                            // ioctl(TIOCSWINSZ) the inner PTY directly because
+                            // `script` owns it — `process.StandardInput` is a
+                            // pipe to script's stdin, not the PTY master FD.
+                            // tmux resize-window updates the server-side
+                            // window state and emits the SIGWINCH-equivalent
+                            // to the inner shell, which is what we actually
+                            // need.
+                            //
+                            // Without this, tmux keeps drawing its status bar
+                            // at the original column count; on every status
+                            // interval the bar overflows the renderer's
+                            // viewport and accumulates inline. See conductor
+                            // issue #836 for the byte-accumulation bug this
+                            // fixes.
                             _logger.LogDebug("Terminal resized to {Cols}x{Rows}", newCols, newRows);
+                            ForwardResizeToTmux(
+                                providerCommand: execCommand,
+                                externalId: externalId,
+                                containerUser: containerUser,
+                                tmuxSession: tmuxSession,
+                                cols: newCols,
+                                rows: newRows,
+                                ct: ct);
                             continue;
                         }
 
@@ -428,6 +450,69 @@ public class TerminalController : ControllerBase
         return container.OwnerId == _currentUser.GetUserId();
     }
 
+    /// <summary>
+    /// Tells the tmux server to resize the named window to the new
+    /// columns/rows. Runs as <paramref name="containerUser"/> so the
+    /// command lands on the same per-UID tmux socket that owns the
+    /// session — see <c>tmux has-session</c> probing for the same
+    /// reason. Best-effort: a failure to forward is logged but does
+    /// not interrupt the live WebSocket.
+    /// </summary>
+    /// <remarks>
+    /// Used by <see cref="RunExecSession"/> to handle client resize
+    /// messages. Fire-and-forget so a slow <c>docker exec</c> doesn't
+    /// stall the main relay loop.
+    /// </remarks>
+    private void ForwardResizeToTmux(
+        string providerCommand,
+        string externalId,
+        string containerUser,
+        string tmuxSession,
+        int cols,
+        int rows,
+        CancellationToken ct)
+    {
+        if (!IsValidTerminalSize(cols, rows))
+        {
+            _logger.LogWarning(
+                "Refusing tmux resize-window — out of range: {Cols}x{Rows}",
+                cols, rows);
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var args = $"exec -u {containerUser} {externalId} tmux resize-window -t {tmuxSession} -x {cols} -y {rows}";
+                using var p = System.Diagnostics.Process.Start(new ProcessStartInfo
+                {
+                    FileName = providerCommand,
+                    Arguments = args,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                });
+                if (p is null) return;
+                await p.WaitForExitAsync(ct);
+                if (p.ExitCode != 0)
+                {
+                    var stderr = await p.StandardError.ReadToEndAsync(ct);
+                    _logger.LogDebug(
+                        "tmux resize-window exited {Code}: {Stderr}",
+                        p.ExitCode,
+                        stderr.Trim());
+                }
+            }
+            catch (OperationCanceledException) { /* WS closed */ }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to forward terminal resize to tmux");
+            }
+        }, ct);
+    }
+
     internal bool IsOriginAllowed(string origin)
     {
         if (string.IsNullOrEmpty(origin))
@@ -436,6 +521,26 @@ public class TerminalController : ControllerBase
         if (allowed is null || allowed.Length == 0)
             return false;
         return Array.Exists(allowed, a => string.Equals(a, origin, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Validates a (columns, rows) pair against the bounds tmux accepts.
+    ///
+    /// xterm hardware limits are 1..999 for both axes; tmux silently
+    /// clamps to a stricter floor of 2, so a 1-column resize crashes
+    /// with "create window failed: size too small". Refuse pathological
+    /// input rather than passing it along — a malformed resize message
+    /// from a stale client should not break the live session.
+    /// </summary>
+    /// <remarks>
+    /// Public for unit tests. The full forwarding helper itself spawns
+    /// a child process and is harder to isolate; pinning the bounds
+    /// rule as a pure function lets tests cover the most error-prone
+    /// branch directly.
+    /// </remarks>
+    internal static bool IsValidTerminalSize(int cols, int rows)
+    {
+        return cols >= 2 && cols <= 1000 && rows >= 2 && rows <= 1000;
     }
 
     private static bool IsResizeMessage(byte[] buffer, int count, out int cols, out int rows)
