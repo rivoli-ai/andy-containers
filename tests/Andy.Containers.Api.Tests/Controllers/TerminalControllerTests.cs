@@ -265,4 +265,32 @@ public class TerminalControllerTests : IDisposable
         string.IsNullOrEmpty(container.ExternalId).Should().BeTrue(
             "a container with empty ExternalId should cause the controller to return 400");
     }
+
+    // MARK: - IsValidTerminalSize (conductor #836)
+
+    [Theory]
+    [InlineData(2, 2)]
+    [InlineData(80, 24)]
+    [InlineData(120, 40)]
+    [InlineData(1000, 1000)]
+    public void IsValidTerminalSize_ReturnsTrue_ForValidPairs(int cols, int rows)
+    {
+        TerminalController.IsValidTerminalSize(cols, rows).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(0, 24, "zero columns")]
+    [InlineData(80, 0, "zero rows")]
+    [InlineData(1, 24, "one column (tmux floor is 2)")]
+    [InlineData(80, 1, "one row (tmux floor is 2)")]
+    [InlineData(-1, 40, "negative columns")]
+    [InlineData(120, -10, "negative rows")]
+    [InlineData(1001, 40, "columns past xterm max")]
+    [InlineData(120, 1001, "rows past xterm max")]
+    [InlineData(int.MaxValue, 24, "overflow columns")]
+    [InlineData(120, int.MaxValue, "overflow rows")]
+    public void IsValidTerminalSize_ReturnsFalse_ForInvalidPairs(int cols, int rows, string reason)
+    {
+        TerminalController.IsValidTerminalSize(cols, rows).Should().BeFalse(reason);
+    }
 }
