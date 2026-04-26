@@ -394,6 +394,15 @@ public class TerminalController : ControllerBase
         // (e.g. arrow keys: \x1b[A, \x1b[B, etc.)
         // Also intercepts resize messages from the client to update the PTY size
         // via ioctl, which sends SIGWINCH to tmux so it redraws at the new size.
+        // Track the last (cols, rows) we forwarded to tmux so we can
+        // dedupe identical resize messages (the renderer fires one on
+        // every micro-layout change, not just on user resize). Without
+        // dedupe, every redraw-from-tmux triggered by a previous
+        // forwarder cascades into more forwards — terminal becomes
+        // unusable. Conductor #836 follow-up.
+        var lastForwardedCols = cols;
+        var lastForwardedRows = rows;
+
         var wsToProcess = Task.Run(async () =>
         {
             var buffer = new byte[4096];
@@ -411,24 +420,18 @@ public class TerminalController : ControllerBase
                         // Check for resize messages: {"type":"resize","cols":N,"rows":N}
                         if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
                         {
-                            // Forward the resize to the tmux server via a side
-                            // channel: a fresh `<provider> exec -u <user> tmux
-                            // resize-window -t <session> -x C -y R`. We can't
-                            // ioctl(TIOCSWINSZ) the inner PTY directly because
-                            // `script` owns it — `process.StandardInput` is a
-                            // pipe to script's stdin, not the PTY master FD.
-                            // tmux resize-window updates the server-side
-                            // window state and emits the SIGWINCH-equivalent
-                            // to the inner shell, which is what we actually
-                            // need.
-                            //
-                            // Without this, tmux keeps drawing its status bar
-                            // at the original column count; on every status
-                            // interval the bar overflows the renderer's
-                            // viewport and accumulates inline. See conductor
-                            // issue #836 for the byte-accumulation bug this
-                            // fixes.
-                            _logger.LogDebug("Terminal resized to {Cols}x{Rows}", newCols, newRows);
+                            // Dedupe: only spawn `tmux resize-window`
+                            // when the size actually changes from the
+                            // last value we sent. Otherwise we feed
+                            // back into the renderer which fires more
+                            // resize events, etc. Conductor #836.
+                            if (newCols == lastForwardedCols && newRows == lastForwardedRows)
+                            {
+                                continue;
+                            }
+                            lastForwardedCols = newCols;
+                            lastForwardedRows = newRows;
+
                             ForwardResizeToTmux(
                                 providerCommand: execCommand,
                                 externalId: externalId,
@@ -515,10 +518,7 @@ public class TerminalController : ControllerBase
             return;
         }
 
-        // Bumped to Information so the resize chain is visible in the
-        // diagnostics console without raising the global log level.
-        // Conductor #836 verification.
-        _logger.LogInformation(
+        _logger.LogDebug(
             "[CONTAINERS-TMUX] resize-window {Cols}x{Rows} on {Provider} {ExternalId} as {User}",
             cols, rows, providerCommand, externalId, containerUser);
 
