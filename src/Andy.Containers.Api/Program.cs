@@ -81,6 +81,11 @@ try
     // Container status sync worker — periodically checks running containers against provider
     builder.Services.AddHostedService<ContainerStatusSyncWorker>();
 
+    // Startup-only externalId reconciler (conductor #840) — closes the
+    // ~25 s cold-start window during which orphan rows show as Running
+    // before the periodic ContainerStatusSyncWorker catches them.
+    builder.Services.AddHostedService<ContainerExternalIdReconciler>();
+
     // Container screenshot capture worker
     builder.Services.AddHostedService<ContainerScreenshotWorker>();
 

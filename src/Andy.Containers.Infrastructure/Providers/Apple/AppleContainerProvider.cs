@@ -230,6 +230,70 @@ public class AppleContainerProvider : IInfrastructureProvider
         };
     }
 
+    /// <summary>
+    /// Lists every externalId currently known to the Apple `container`
+    /// runtime via <c>container ls -a</c>. Used by the startup
+    /// reconciler to detect rows whose containers were removed
+    /// out-of-band (host reboot, manual deletion). Conductor #840.
+    /// </summary>
+    public async Task<HashSet<string>?> ListExternalIdsAsync(CancellationToken ct = default)
+    {
+        // `container ls -a --format json` returns an array of records;
+        // extract every `id` field and collect into a HashSet.
+        var result = await RunCliAsync("ls -a --format json", ct, TimeSpan.FromSeconds(15));
+        if (result.ExitCode != 0)
+        {
+            _logger.LogWarning(
+                "[CONTAINERS-RECONCILE] container ls -a failed (exit {Exit}): {Stderr}",
+                result.ExitCode,
+                result.StdErr);
+            return null;
+        }
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(result.StdOut))
+        {
+            return ids;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(result.StdOut);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return ids;
+            }
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                // Apple's CLI uses `configuration.id` per the inspect schema;
+                // fall back to top-level `id` for forward-compat.
+                if (item.TryGetProperty("configuration", out var config) &&
+                    config.TryGetProperty("id", out var configId) &&
+                    configId.ValueKind == JsonValueKind.String)
+                {
+                    var id = configId.GetString();
+                    if (!string.IsNullOrEmpty(id))
+                        ids.Add(id);
+                }
+                else if (item.TryGetProperty("id", out var idProp) &&
+                         idProp.ValueKind == JsonValueKind.String)
+                {
+                    var id = idProp.GetString();
+                    if (!string.IsNullOrEmpty(id))
+                        ids.Add(id);
+                }
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex,
+                "[CONTAINERS-RECONCILE] Failed to parse container ls JSON output");
+            return null;
+        }
+
+        return ids;
+    }
+
     private async Task<InspectInfo> InspectAsync(string externalId, CancellationToken ct)
     {
         var result = await RunCliAsync($"inspect {externalId}", ct, TimeSpan.FromSeconds(10));
