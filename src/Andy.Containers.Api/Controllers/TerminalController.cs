@@ -353,9 +353,37 @@ public class TerminalController : ControllerBase
                 {
                     return;
                 }
-                var cmd = BuildPostAttachCommand(hasExistingSession);
-                await stdinStream.WriteAsync(cmd, ct);
-                await stdinStream.FlushAsync(ct);
+
+                if (hasExistingSession)
+                {
+                    // Reattach: force tmux to repaint via the side
+                    // channel — `<provider> exec -u <user> tmux
+                    // refresh-client -S` against the same per-UID
+                    // tmux socket the session uses. Going through
+                    // stdin here would type `tmux refresh-client -S`
+                    // into the user's foreground process (vim,
+                    // claude, even just bash), which is wrong: the
+                    // command would land in the user's shell history
+                    // and run as if they typed it. The side channel
+                    // talks directly to the tmux server and is
+                    // invisible to the user. Conductor #838.
+                    InvokeTmuxCommand(
+                        providerCommand: execCommand,
+                        externalId: externalId,
+                        containerUser: containerUser,
+                        tmuxArguments: $"refresh-client -S -t {tmuxSession}",
+                        ct: ct);
+                }
+                else
+                {
+                    // New session: the welcome banner runs INSIDE
+                    // the user's bash session because that's exactly
+                    // where it should print. Stdin injection is
+                    // correct here.
+                    var bannerCmd = BuildWelcomeBannerCommand();
+                    await stdinStream.WriteAsync(bannerCmd, ct);
+                    await stdinStream.FlushAsync(ct);
+                }
             }
             catch { /* ignore */ }
         }, ct);
@@ -468,15 +496,8 @@ public class TerminalController : ControllerBase
     /// Tells the tmux server to resize the named window to the new
     /// columns/rows. Runs as <paramref name="containerUser"/> so the
     /// command lands on the same per-UID tmux socket that owns the
-    /// session — see <c>tmux has-session</c> probing for the same
-    /// reason. Best-effort: a failure to forward is logged but does
-    /// not interrupt the live WebSocket.
+    /// session.
     /// </summary>
-    /// <remarks>
-    /// Used by <see cref="RunExecSession"/> to handle client resize
-    /// messages. Fire-and-forget so a slow <c>docker exec</c> doesn't
-    /// stall the main relay loop.
-    /// </remarks>
     private void ForwardResizeToTmux(
         string providerCommand,
         string externalId,
@@ -494,11 +515,50 @@ public class TerminalController : ControllerBase
             return;
         }
 
+        // Bumped to Information so the resize chain is visible in the
+        // diagnostics console without raising the global log level.
+        // Conductor #836 verification.
+        _logger.LogInformation(
+            "[CONTAINERS-TMUX] resize-window {Cols}x{Rows} on {Provider} {ExternalId} as {User}",
+            cols, rows, providerCommand, externalId, containerUser);
+
+        InvokeTmuxCommand(
+            providerCommand: providerCommand,
+            externalId: externalId,
+            containerUser: containerUser,
+            tmuxArguments: $"resize-window -t {tmuxSession} -x {cols} -y {rows}",
+            ct: ct);
+    }
+
+    /// <summary>
+    /// Spawns a <c>&lt;providerCommand&gt; exec -u &lt;user&gt; &lt;externalId&gt; tmux &lt;args&gt;</c>
+    /// against the container's per-UID tmux socket. Used for any
+    /// out-of-band tmux server command (resize-window, refresh-client,
+    /// kill-session, …) where stdin injection into the user's shell
+    /// would be wrong (they'd see the command typed in their session).
+    ///
+    /// Fire-and-forget: a slow <c>docker exec</c> spawn never stalls
+    /// the main WebSocket relay loop. Failures are logged at Debug
+    /// level so a transient error isn't surfaced as a banner.
+    /// </summary>
+    /// <remarks>
+    /// Conductor #838 — replaces the previous stdin-injection path
+    /// for the post-attach redraw, which typed
+    /// <c>tmux refresh-client -S</c> into the user's foreground
+    /// process.
+    /// </remarks>
+    private void InvokeTmuxCommand(
+        string providerCommand,
+        string externalId,
+        string containerUser,
+        string tmuxArguments,
+        CancellationToken ct)
+    {
         _ = Task.Run(async () =>
         {
             try
             {
-                var args = $"exec -u {containerUser} {externalId} tmux resize-window -t {tmuxSession} -x {cols} -y {rows}";
+                var args = $"exec -u {containerUser} {externalId} tmux {tmuxArguments}";
                 using var p = System.Diagnostics.Process.Start(new ProcessStartInfo
                 {
                     FileName = providerCommand,
@@ -514,15 +574,16 @@ public class TerminalController : ControllerBase
                 {
                     var stderr = await p.StandardError.ReadToEndAsync(ct);
                     _logger.LogDebug(
-                        "tmux resize-window exited {Code}: {Stderr}",
-                        p.ExitCode,
-                        stderr.Trim());
+                        "tmux {Args} exited {Code}: {Stderr}",
+                        tmuxArguments, p.ExitCode, stderr.Trim());
                 }
             }
             catch (OperationCanceledException) { /* WS closed */ }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Failed to forward terminal resize to tmux");
+                _logger.LogDebug(ex,
+                    "Failed to invoke tmux command: {Args}",
+                    tmuxArguments);
             }
         }, ct);
     }
@@ -567,29 +628,22 @@ public class TerminalController : ControllerBase
     }
 
     /// <summary>
-    /// Builds the bytes the controller injects into the inner shell's
-    /// stdin once tmux has initialised. New sessions get the welcome
-    /// banner; existing sessions get a forced full-screen redraw so
-    /// the reattached client doesn't show a stale buffer.
+    /// Builds the bytes injected into the inner shell's stdin on first
+    /// attach to display the welcome banner. Only invoked on new
+    /// sessions — reattach uses the tmux side channel
+    /// (<see cref="InvokeTmuxCommand"/>) so commands don't get typed
+    /// into the user's foreground process.
     /// </summary>
     /// <remarks>
-    /// Internal for unit tests. Conductor #838.
+    /// Internal for unit tests. Space prefix keeps the command out
+    /// of bash history; trailing <c>; true</c> swallows the exit code
+    /// so a missing andy-banner binary doesn't surface as a `1` exit
+    /// on the prompt.
     /// </remarks>
-    internal static byte[] BuildPostAttachCommand(bool hasExistingSession)
+    internal static byte[] BuildWelcomeBannerCommand()
     {
-        if (hasExistingSession)
-        {
-            // tmux refresh-client -S asks the server to issue a full
-            // redraw to every attached client of the current session.
-            // Cheaper and more reliable than \x0c (Ctrl-L), which a
-            // foreground program (vim, less) would intercept.
-            return System.Text.Encoding.UTF8.GetBytes("tmux refresh-client -S\n");
-        }
-        // New session: clear + welcome banner. Space prefix keeps the
-        // command out of bash history; trailing `; true` swallows the
-        // exit code so a missing andy-banner binary doesn't surface
-        // as a `1` exit on the prompt.
-        return System.Text.Encoding.UTF8.GetBytes(" clear && /usr/local/bin/andy-banner 2>/dev/null; true\n");
+        return System.Text.Encoding.UTF8.GetBytes(
+            " clear && /usr/local/bin/andy-banner 2>/dev/null; true\n");
     }
 
     /// <summary>
