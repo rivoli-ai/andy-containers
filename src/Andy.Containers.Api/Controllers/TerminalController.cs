@@ -179,13 +179,7 @@ public class TerminalController : ControllerBase
         var checkExisting = providerType == ProviderType.AppleContainer ? "container" : "docker";
         _ = checkExisting;
 
-        var shellCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
-                       $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
-                       $"[ -f /etc/profile ] && . /etc/profile 2>/dev/null; " +
-                       $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
-                       $"[ -f ~/.profile ] && . ~/.profile 2>/dev/null; " +
-                       $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
-                       $"exec bash -i";
+        var shellCmd = BuildContainerShellCommand(rows: rows, cols: cols);
 
         var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
@@ -641,6 +635,46 @@ public class TerminalController : ControllerBase
     internal static bool IsValidTerminalSize(int cols, int rows)
     {
         return cols >= 2 && cols <= 1000 && rows >= 2 && rows <= 1000;
+    }
+
+    /// <summary>
+    /// Builds the shell command piped into <c>docker exec -it … bash
+    /// -c '…'</c> to start a terminal session inside the container.
+    ///
+    /// Sets up the inner PTY (stty), exports a sensible TERM / locale,
+    /// sources rcfiles, then runs an interactive shell — wrapped in
+    /// <c>dtach</c> when available so the bash session survives across
+    /// WebSocket close/reopen. When dtach isn't installed (existing
+    /// containers, minimal images), the command falls back to bare
+    /// <c>bash -i</c> so the terminal still works without persistence.
+    ///
+    /// dtach replaced the previous tmux block (#154 / #842 preview).
+    /// Tmux's <c>resize-window</c> + script-PTY chain produced
+    /// rendering artifacts in TUI apps like claude code; dtach's
+    /// transparent SIGWINCH forwarding sidesteps those entirely.
+    /// </summary>
+    /// <remarks>
+    /// Internal for unit tests. Pure function — no side effects, no
+    /// DI dependencies. Tests pin the dtach-with-fallback shape so
+    /// future changes don't silently lose persistence.
+    /// </remarks>
+    internal static string BuildContainerShellCommand(int rows, int cols)
+    {
+        // Bound the shell socket name to the per-container filesystem.
+        // The container's /tmp is private to the container, so this
+        // path doesn't collide with anything on the host or other
+        // containers. Using a fixed name (not per-WS) is what gives
+        // us "close terminal, reopen, you're back" — every attach
+        // hits the same socket.
+        const string DtachSocket = "/tmp/conductor.sock";
+
+        return $"stty rows {rows} cols {cols} 2>/dev/null; " +
+               $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
+               $"[ -f /etc/profile ] && . /etc/profile 2>/dev/null; " +
+               $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
+               $"[ -f ~/.profile ] && . ~/.profile 2>/dev/null; " +
+               $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
+               $"command -v dtach >/dev/null 2>&1 && exec dtach -A {DtachSocket} -z bash -i || exec bash -i";
     }
 
     private static bool IsResizeMessage(byte[] buffer, int count, out int cols, out int rows)
