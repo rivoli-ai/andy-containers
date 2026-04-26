@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.WebSockets;
+using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
@@ -19,17 +20,20 @@ public class TerminalController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly IConfiguration _configuration;
     private readonly ILogger<TerminalController> _logger;
+    private readonly IInfrastructureProviderFactory _providerFactory;
 
     public TerminalController(
         ContainersDbContext db,
         ICurrentUserService currentUser,
         IConfiguration configuration,
-        ILogger<TerminalController> logger)
+        ILogger<TerminalController> logger,
+        IInfrastructureProviderFactory providerFactory)
     {
         _db = db;
         _currentUser = currentUser;
         _configuration = configuration;
         _logger = logger;
+        _providerFactory = providerFactory;
     }
 
     [HttpGet]
@@ -148,6 +152,57 @@ public class TerminalController : ControllerBase
         // Wait for client to send terminal dimensions before creating PTY
         var (cols, rows) = await WaitForTerminalSize(ws, ct);
         _logger.LogInformation("Terminal size: {Cols}x{Rows} for container {Name}", cols, rows, container.Name);
+
+        // Try the daemon-side PTY path first (#875 PR 1). Provider
+        // returns null when it doesn't support daemon-managed PTY
+        // (Apple Containers today; cloud providers permanently). On
+        // null we fall through to the legacy script-based path
+        // below. Behaviour-preserving: same shellCmd, same banner
+        // logic, only the PTY allocation strategy changes.
+        if (container.Provider is not null)
+        {
+            try
+            {
+                var infra = _providerFactory.GetProvider(container.Provider);
+                var ptyShellCmd = BuildContainerShellCommand(rows: rows, cols: cols);
+                var ptySession = await infra.OpenInteractiveExecAsync(
+                    externalId: externalId,
+                    command: ["bash", "-c", ptyShellCmd],
+                    user: containerUser,
+                    workingDirectory: homeDir,
+                    cols: cols,
+                    rows: rows,
+                    ct: ct);
+                if (ptySession is not null)
+                {
+                    var execCommandForProbe = providerType == ProviderType.AppleContainer ? "container" : "docker";
+                    var ptyHasExistingSession = await ProbeDtachSocketExistsAsync(
+                        providerCommand: execCommandForProbe,
+                        externalId: externalId,
+                        containerUser: containerUser,
+                        ct: ct);
+                    await using (ptySession)
+                    {
+                        await RunInteractiveExecSession(
+                            ws: ws,
+                            session: ptySession,
+                            hasExistingSession: ptyHasExistingSession,
+                            container: container,
+                            ct: ct);
+                    }
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "[PTY-EXEC] OpenInteractiveExecAsync threw — falling back to script-based path");
+            }
+        }
+
+        // Legacy fallback path (script + docker exec / container exec).
+        // Used when the provider doesn't support daemon-managed PTY,
+        // or when OpenInteractiveExecAsync threw above.
 
         // ⚠️ TEMPORARILY BYPASSING TMUX (#842 preview).
         //
@@ -472,6 +527,121 @@ public class TerminalController : ControllerBase
 
         process.Dispose();
         _logger.LogInformation("Terminal session ended for container {Name}", container.Name);
+    }
+
+    /// <summary>
+    /// PTY-backed terminal session loop (#875 PR 1). Identical
+    /// pump shape to the legacy script-based path but uses
+    /// <see cref="IInteractiveExecSession"/> for I/O so resize
+    /// propagates through the daemon's PTY API instead of a
+    /// side-channel <c>tmux resize-window</c> hack.
+    ///
+    /// Three concurrent tasks: session→WS read, WS→session write
+    /// (with resize-message detection), and a one-shot post-attach
+    /// banner injection identical to the legacy path.
+    /// </summary>
+    private async Task RunInteractiveExecSession(
+        WebSocket ws,
+        IInteractiveExecSession session,
+        bool hasExistingSession,
+        Container container,
+        CancellationToken ct)
+    {
+        // Relay: session → WS
+        var sessionToWs = Task.Run(async () =>
+        {
+            var buffer = new byte[4096];
+            while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
+            {
+                try
+                {
+                    var bytesRead = await session.ReadAsync(buffer, 0, buffer.Length, ct);
+                    if (bytesRead <= 0)
+                    {
+                        break;
+                    }
+                    await ws.SendAsync(
+                        new ArraySegment<byte>(buffer, 0, bytesRead),
+                        WebSocketMessageType.Binary,
+                        true,
+                        ct);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[PTY-EXEC] read error");
+                    break;
+                }
+            }
+        }, ct);
+
+        // Post-attach welcome-banner injection (#838 / #157). Same
+        // logic as the legacy path: only fire on first attach,
+        // detected via dtach-socket probe upstream.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(1500, ct);
+                if (ws.State != WebSocketState.Open) return;
+                if (ShouldInjectWelcomeBanner(hasExistingSession))
+                {
+                    var bannerCmd = BuildWelcomeBannerCommand();
+                    await session.WriteAsync(bannerCmd, ct);
+                }
+            }
+            catch { /* ignore */ }
+        }, ct);
+
+        // Relay: WS → session, with resize-message routing
+        var wsToSession = Task.Run(async () =>
+        {
+            var buffer = new byte[4096];
+            while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
+            {
+                try
+                {
+                    var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                    if (result.MessageType == WebSocketMessageType.Close) break;
+                    if (result.Count <= 0) continue;
+
+                    // Resize messages route to the daemon's PTY-size
+                    // API (provider-specific). The kernel propagates
+                    // SIGWINCH down to the inner shell.
+                    if (result.Count > 10
+                        && buffer[0] == '{'
+                        && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
+                    {
+                        if (IsValidTerminalSize(newCols, newRows))
+                        {
+                            await session.ResizeAsync(newCols, newRows, ct);
+                        }
+                        continue;
+                    }
+
+                    await session.WriteAsync(buffer.AsMemory(0, result.Count), ct);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (WebSocketException) { break; }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[PTY-EXEC] WS read error");
+                    break;
+                }
+            }
+        }, ct);
+
+        await Task.WhenAny(sessionToWs, wsToSession);
+
+        if (ws.State == WebSocketState.Open)
+        {
+            try
+            {
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+            }
+            catch { /* ignore */ }
+        }
+        _logger.LogInformation("[PTY-EXEC] terminal session ended for container {Name}", container.Name);
     }
 
     internal bool CanAccess(Container container)

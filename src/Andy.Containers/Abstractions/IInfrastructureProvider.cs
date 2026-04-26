@@ -49,6 +49,62 @@ public interface IInfrastructureProvider
     /// </summary>
     Task<HashSet<string>?> ListExternalIdsAsync(CancellationToken ct = default)
         => Task.FromResult<HashSet<string>?>(null);
+
+    /// <summary>
+    /// Opens an interactive PTY-backed exec session inside the
+    /// container. Conductor #875 PR 1.
+    ///
+    /// The returned <see cref="IInteractiveExecSession"/> exposes the
+    /// inner shell's stdin / stdout as a single multiplexed stream
+    /// plus a `Resize(cols, rows)` method that propagates SIGWINCH
+    /// down to the inner shell. This is what makes tmux / claude /
+    /// vim render correctly on window resize — the docker daemon (or
+    /// equivalent) owns the PTY and routes the size change through
+    /// the proper OS-level path.
+    ///
+    /// Returns <c>null</c> when the provider does not support
+    /// daemon-side PTY allocation. Callers fall back to a script-based
+    /// host-side PTY (the legacy path used by all providers before
+    /// this method existed).
+    /// </summary>
+    Task<IInteractiveExecSession?> OpenInteractiveExecAsync(
+        string externalId,
+        string[] command,
+        string user,
+        string workingDirectory,
+        int cols,
+        int rows,
+        CancellationToken ct = default)
+        => Task.FromResult<IInteractiveExecSession?>(null);
+}
+
+/// <summary>
+/// Interactive PTY-backed exec session. Read / write its single
+/// bidirectional byte stream and resize via <see cref="ResizeAsync"/>.
+/// Implementations route resize to the daemon's native PTY-size API
+/// so the inner shell receives SIGWINCH the canonical way.
+///
+/// Conductor #875 PR 1. Replaces the script-wrapped Process chain
+/// for providers that support daemon-side PTY allocation.
+/// </summary>
+public interface IInteractiveExecSession : IAsyncDisposable
+{
+    /// <summary>
+    /// Reads a chunk of bytes from the inner shell's stdout/stderr.
+    /// Returns 0 when the inner shell exits.
+    /// </summary>
+    Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct);
+
+    /// <summary>
+    /// Writes a chunk of bytes to the inner shell's stdin.
+    /// </summary>
+    Task WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct);
+
+    /// <summary>
+    /// Asks the daemon to resize the inner shell's PTY. The shell
+    /// receives SIGWINCH and re-renders at the new size.
+    /// </summary>
+    Task ResizeAsync(int cols, int rows, CancellationToken ct);
 }
 
 public class ProviderCapabilities

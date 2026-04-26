@@ -36,7 +36,8 @@ public class TerminalControllerTests : IDisposable
         configuration ??= new ConfigurationBuilder().Build();
         // Use a fresh context with the same DB name so EF tracks entities correctly
         var db = InMemoryDbHelper.CreateContext(_dbName);
-        var controller = new TerminalController(db, currentUser.Object, configuration, logger.Object);
+        var providerFactory = new Mock<IInfrastructureProviderFactory>();
+        var controller = new TerminalController(db, currentUser.Object, configuration, logger.Object, providerFactory.Object);
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
         return controller;
     }
@@ -147,7 +148,8 @@ public class TerminalControllerTests : IDisposable
         var currentUser = new Mock<ICurrentUserService>();
         var configuration = new ConfigurationBuilder().Build();
 
-        var controller = new TerminalController(db, currentUser.Object, configuration, logger.Object);
+        var providerFactory = new Mock<IInfrastructureProviderFactory>();
+        var controller = new TerminalController(db, currentUser.Object, configuration, logger.Object, providerFactory.Object);
 
         controller.Should().NotBeNull();
         db.Dispose();
