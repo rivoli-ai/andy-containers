@@ -384,6 +384,32 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     }
 
     /// <summary>
+    /// Lists every externalId currently known to the Docker daemon
+    /// (running OR stopped). Used by the startup reconciler to detect
+    /// rows whose containers were removed out-of-band (host reboot,
+    /// manual <c>docker rm -f</c>). Conductor #840.
+    /// </summary>
+    public async Task<HashSet<string>?> ListExternalIdsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var containers = await _client.Containers.ListContainersAsync(
+                new ContainersListParameters { All = true },
+                ct);
+            // Docker returns full 64-char IDs in `ID`. Andy stores the
+            // same full form (see CreateContainerAsync), so a direct
+            // string compare is correct — no truncation needed.
+            return new HashSet<string>(containers.Select(c => c.ID), StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[CONTAINERS-RECONCILE] Docker ListContainers failed");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Builds a desktop image from local Dockerfiles using docker CLI.
     /// </summary>
     private async Task BuildDesktopImageAsync(string imageReference, CancellationToken ct)

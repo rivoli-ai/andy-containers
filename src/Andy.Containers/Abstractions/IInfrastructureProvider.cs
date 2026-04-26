@@ -33,6 +33,22 @@ public interface IInfrastructureProvider
     // Execution
     Task<ExecResult> ExecAsync(string externalId, string command, CancellationToken ct = default);
     Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the set of container externalIds currently known to the
+    /// provider, or <c>null</c> if this provider does not support bulk
+    /// enumeration. Used by the startup reconciler (conductor #840) to
+    /// detect rows whose containers were removed out-of-band (host
+    /// reboot, manual <c>docker rm -f</c>, etc.) without paying the
+    /// per-row cost of <see cref="GetContainerInfoAsync"/>.
+    ///
+    /// Cloud providers (AWS, Azure, GCP, Fly, etc.) typically return
+    /// <c>null</c> — the existing periodic <c>ContainerStatusSyncWorker</c>
+    /// covers them via per-row probes. Local providers (Docker, Apple
+    /// Containers) override this to issue a single CLI call.
+    /// </summary>
+    Task<HashSet<string>?> ListExternalIdsAsync(CancellationToken ct = default)
+        => Task.FromResult<HashSet<string>?>(null);
 }
 
 public class ProviderCapabilities
