@@ -149,38 +149,35 @@ public class TerminalController : ControllerBase
         var (cols, rows) = await WaitForTerminalSize(ws, ct);
         _logger.LogInformation("Terminal size: {Cols}x{Rows} for container {Name}", cols, rows, container.Name);
 
-        // Use tmux for session persistence with full screen redraw on reattach.
-        // - Create with explicit -x/-y to match client terminal exactly
-        // - On reconnect, resize-window BEFORE attach to fix stale dimensions
-        // - attach -d detaches dead/stale clients so tmux uses current PTY size
-        // - default-terminal xterm-256color prevents arrow key / escape issues
-        var tmuxSession = "web";
-
-        // Check if tmux session already exists (to decide whether to show banner).
-        // Must run as the same user that owns the session — tmux uses a per-UID
-        // socket (/tmp/tmux-<uid>/default), so a check as root cannot see a session
-        // owned by `containerUser`. Without -u, hasExistingSession is always false
-        // and the banner is injected on every reconnect.
+        // ⚠️ TEMPORARILY BYPASSING TMUX (#842 preview).
+        //
+        // tmux + script + docker-exec PTY chain has been the source
+        // of every recent rendering regression (#836, #838, #863):
+        // resize-window doesn't propagate the size to the script
+        // PTY's inner client, claude code / vim drawn at the wrong
+        // width, stale cells past the apparent right edge,
+        // refresh-client races with TUI app writes, etc.
+        //
+        // Skip tmux entirely and run plain interactive bash. Costs:
+        //   - No session persistence: closing the terminal ends
+        //     the bash session (ssh-style, not screen-style).
+        //   - No status bar: free real estate at the bottom of the
+        //     terminal.
+        // Wins:
+        //   - claude code / vim / less render at the actual terminal
+        //     width (the script PTY's stty was set above to match
+        //     the client).
+        //   - No tmux refresh-client races, no resize-window
+        //     side-channel, no per-UID-socket gotchas.
+        //
+        // Reverting: restore the previous tmux block from git history.
+        // Conductor #842 will land a proper multiplexer-mode picker
+        // so users can choose tmux / screen / none / custom.
+        var tmuxSession = "web"; // unused; kept for diff size only
+        _ = tmuxSession;
+        var hasExistingSession = false; // bash sessions don't persist
         var checkExisting = providerType == ProviderType.AppleContainer ? "container" : "docker";
-        var hasExistingSession = false;
-        try
-        {
-            var checkProcess = System.Diagnostics.Process.Start(new ProcessStartInfo
-            {
-                FileName = checkExisting == "docker" ? "docker" : "container",
-                Arguments = $"exec -u {containerUser} {externalId} tmux has-session -t {tmuxSession}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            if (checkProcess is not null)
-            {
-                await checkProcess.WaitForExitAsync(ct);
-                hasExistingSession = checkProcess.ExitCode == 0;
-            }
-        }
-        catch { /* assume new session */ }
+        _ = checkExisting;
 
         var shellCmd = $"stty rows {rows} cols {cols} 2>/dev/null; " +
                        $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
@@ -188,14 +185,7 @@ public class TerminalController : ControllerBase
                        $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
                        $"[ -f ~/.profile ] && . ~/.profile 2>/dev/null; " +
                        $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
-                       $"command -v tmux >/dev/null 2>&1 && {{ " +
-                       $"tmux set-option -g default-terminal xterm-256color 2>/dev/null; " +
-                       $"if tmux has-session -t {tmuxSession} 2>/dev/null; then " +
-                       $"tmux resize-window -t {tmuxSession} -x {cols} -y {rows} 2>/dev/null; " +
-                       $"exec tmux attach -d -t {tmuxSession}; " +
-                       $"else " +
-                       $"exec tmux new-session -s {tmuxSession} -x {cols} -y {rows}; " +
-                       $"fi; }} || exec sh";
+                       $"exec bash -i";
 
         var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
@@ -386,44 +376,31 @@ public class TerminalController : ControllerBase
         // (e.g. arrow keys: \x1b[A, \x1b[B, etc.)
         // Also intercepts resize messages from the client to update the PTY size
         // via ioctl, which sends SIGWINCH to tmux so it redraws at the new size.
-        // Debounced resize forwarder (#863).
+        // Drop client resize messages on the floor.
         //
-        // The Ghostty renderer fires `onSurfaceResize` on every
-        // SwiftUI frame change — during a 200 ms inspector-collapse
-        // animation that's a dozen events at slightly different
-        // sizes. The previous "forward every resize" approach caused
-        // visible artifacts in TUI apps (claude, vim) because each
-        // forwarded `tmux resize-window` raced with the app's own
-        // writes.
+        // We've now tried three approaches to forward resizes to
+        // tmux via `tmux resize-window`: forward every event (#145),
+        // dedupe by exact size (#151), debounce after a quiet period
+        // (#153). All three either flood tmux with redundant work
+        // or ship a resize that tmux's CLIENT-SIZE constraint
+        // silently rejects — the script PTY's stty was set at
+        // attach time and tmux clamps the window to the smallest
+        // attached client. The net result is the same: TUI apps
+        // (claude, vim) keep drawing at the OLD width, the
+        // renderer's grid is wider, cells past the OLD edge are
+        // never overwritten, and the user sees stale content as
+        // visible artifacts.
         //
-        // Strategy: collect resize messages, but only spawn the
-        // side-channel `tmux resize-window` AFTER a quiet period
-        // (250 ms with no new resize) AND only if the size actually
-        // changed since the last forwarded value. The animation's
-        // mid-frames are absorbed; tmux sees one resize at the end.
+        // The proper fix needs either (a) ownership of the script
+        // PTY's master FD so `ioctl(TIOCSWINSZ)` actually changes
+        // the inner client size, or (b) the no-multiplexer mode
+        // from #842 so heavy TUIs don't go through tmux at all.
+        // Until one of those lands, we drop resize messages and
+        // accept the pre-existing "no reflow on window resize"
+        // limitation. It's strictly less broken than the
+        // mismatch-and-stale-cells current state.
         //
-        // Conductor #836 / #863. Pre-existing "status bar wraps
-        // inline at status-interval" is the alternative — strictly
-        // worse than this debounced approach for users on smaller
-        // displays.
-        var resizeDebouncer = new ResizeDebouncer(
-            providerCommand: execCommand,
-            externalId: externalId,
-            containerUser: containerUser,
-            tmuxSession: tmuxSession,
-            initialCols: cols,
-            initialRows: rows,
-            quietPeriod: TimeSpan.FromMilliseconds(250),
-            forward: (newCols, newRows) => ForwardResizeToTmux(
-                providerCommand: execCommand,
-                externalId: externalId,
-                containerUser: containerUser,
-                tmuxSession: tmuxSession,
-                cols: newCols,
-                rows: newRows,
-                ct: ct),
-            ct: ct);
-
+        // Conductor #836 / #863 reopened.
         var wsToProcess = Task.Run(async () =>
         {
             var buffer = new byte[4096];
@@ -438,9 +415,8 @@ public class TerminalController : ControllerBase
 
                     if (result.Count > 0)
                     {
-                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
+                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out _, out _))
                         {
-                            resizeDebouncer.Observe(newCols, newRows);
                             continue;
                         }
 
