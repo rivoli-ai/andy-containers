@@ -340,46 +340,58 @@ public class TerminalControllerTests : IDisposable
         TerminalController.IsValidTerminalSize(cols, rows).Should().BeFalse(reason);
     }
 
-    // MARK: - BuildPostAttachCommand (conductor #838)
+    // MARK: - BuildWelcomeBannerCommand (conductor #838 corrective)
 
     [Fact]
-    public void BuildPostAttachCommand_NewSession_ReturnsWelcomeBanner()
+    public void BuildWelcomeBannerCommand_StartsWithSpaceClear()
     {
-        var bytes = TerminalController.BuildPostAttachCommand(hasExistingSession: false);
+        var bytes = TerminalController.BuildWelcomeBannerCommand();
         var text = System.Text.Encoding.UTF8.GetString(bytes);
-        text.Should().StartWith(" clear", "space prefix keeps the command out of bash history");
+        text.Should().StartWith(" clear",
+            "space prefix keeps the command out of bash history");
+    }
+
+    [Fact]
+    public void BuildWelcomeBannerCommand_RunsAndyBanner()
+    {
+        var bytes = TerminalController.BuildWelcomeBannerCommand();
+        var text = System.Text.Encoding.UTF8.GetString(bytes);
         text.Should().Contain("/usr/local/bin/andy-banner",
             "new sessions show the welcome banner");
+    }
+
+    [Fact]
+    public void BuildWelcomeBannerCommand_SilencesBannerErrors()
+    {
+        var bytes = TerminalController.BuildWelcomeBannerCommand();
+        var text = System.Text.Encoding.UTF8.GetString(bytes);
         text.Should().Contain("2>/dev/null",
             "banner failure is silenced — a missing binary should not break the shell");
-        text.Should().EndWith("\n",
+        text.Should().Contain("; true",
+            "trailing `; true` swallows the exit code");
+    }
+
+    [Fact]
+    public void BuildWelcomeBannerCommand_TerminatesWithNewline()
+    {
+        var bytes = TerminalController.BuildWelcomeBannerCommand();
+        bytes[^1].Should().Be((byte)'\n',
             "trailing newline submits the command line");
     }
 
     [Fact]
-    public void BuildPostAttachCommand_ExistingSession_ReturnsTmuxRefresh()
+    public void BuildWelcomeBannerCommand_DoesNotInjectTmuxCommands()
     {
-        var bytes = TerminalController.BuildPostAttachCommand(hasExistingSession: true);
+        // Regression guard: the previous version had a
+        // hasExistingSession=true branch that returned
+        // "tmux refresh-client -S\n", which got TYPED into the user's
+        // foreground process (bash → ran it; vim/claude → keystrokes
+        // landed in their input). Existing sessions now go through
+        // the tmux side channel via InvokeTmuxCommand. The banner
+        // helper must never embed a `tmux` command.
+        var bytes = TerminalController.BuildWelcomeBannerCommand();
         var text = System.Text.Encoding.UTF8.GetString(bytes);
-        text.Should().Be("tmux refresh-client -S\n",
-            "reattach forces a server-side redraw so the user sees a complete frame immediately");
-    }
-
-    [Fact]
-    public void BuildPostAttachCommand_DistinguishesNewVsExisting()
-    {
-        var newSession = TerminalController.BuildPostAttachCommand(hasExistingSession: false);
-        var existing = TerminalController.BuildPostAttachCommand(hasExistingSession: true);
-        newSession.Should().NotEqual(existing,
-            "new sessions and reattaches must inject different commands");
-    }
-
-    [Fact]
-    public void BuildPostAttachCommand_BothBranches_TerminateWithNewline()
-    {
-        var newBytes = TerminalController.BuildPostAttachCommand(hasExistingSession: false);
-        var existingBytes = TerminalController.BuildPostAttachCommand(hasExistingSession: true);
-        newBytes[^1].Should().Be((byte)'\n');
-        existingBytes[^1].Should().Be((byte)'\n');
+        text.Should().NotContain("tmux ",
+            "post-attach injection must not type tmux commands into the user's shell — those go through the side channel");
     }
 }
