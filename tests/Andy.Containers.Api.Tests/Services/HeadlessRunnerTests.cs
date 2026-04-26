@@ -189,6 +189,74 @@ public class HeadlessRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task StartAsync_ReadsLimitsTimeoutSecondsFromConfig_AddsGrace()
+    {
+        // AP6's outer ExecAsync ceiling is config-driven: limits.timeout_seconds
+        // + a 30s grace. The grace gives AQ3 a head start so its own internal
+        // CTS fires first (mapping to exit code 4 → RunEventKind.Timeout)
+        // before our outer watchdog kicks in. Without it, both fire
+        // simultaneously and we lose the ability to distinguish a self-timeout
+        // from a hung process.
+        var run = SeedRun();
+        var configPath = WriteRealConfig(timeoutSeconds: 120);
+
+        TimeSpan? capturedTimeout = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, _, t, _) => capturedTimeout = t)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await _runner.StartAsync(run, configPath);
+
+        capturedTimeout.Should().Be(TimeSpan.FromSeconds(150),
+            "120s inner + 30s grace should land at ExecAsync.");
+    }
+
+    [Fact]
+    public async Task StartAsync_ConfigUnreadable_FallsBackToFifteenMinuteDefault()
+    {
+        // A missing/malformed config file must not crash the runner — fall
+        // back to the legacy 15-min ceiling so a misconfigured run still
+        // terminates instead of hanging on the inner CTS that AQ3 also
+        // refuses to set up.
+        var run = SeedRun();
+        var missingPath = Path.Combine(Path.GetTempPath(), $"never-existed-{Guid.NewGuid():N}.json");
+
+        TimeSpan? capturedTimeout = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, _, t, _) => capturedTimeout = t)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await _runner.StartAsync(run, missingPath);
+
+        capturedTimeout.Should().Be(TimeSpan.FromMinutes(15));
+    }
+
+    [Fact]
+    public async Task StartAsync_ConfigTimeoutZero_FallsBackToFifteenMinuteDefault()
+    {
+        // A schema-valid config can still carry a non-positive timeout;
+        // fall back rather than calling ExecAsync with a zero / negative
+        // ceiling that the underlying provider would interpret unpredictably.
+        var run = SeedRun();
+        var configPath = WriteRealConfig(timeoutSeconds: 0);
+
+        TimeSpan? capturedTimeout = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, _, t, _) => capturedTimeout = t)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await _runner.StartAsync(run, configPath);
+
+        capturedTimeout.Should().Be(TimeSpan.FromMinutes(15));
+    }
+
+    [Fact]
     public async Task StartAsync_OutboxRowCarriesCorrelationIdFromRun()
     {
         var correlation = Guid.NewGuid();
@@ -200,6 +268,27 @@ public class HeadlessRunnerTests : IDisposable
         var entry = await _db.OutboxEntries.SingleAsync();
         entry.CorrelationId.Should().Be(correlation,
             "ADR-0001 root-causation chain must propagate from the Run");
+    }
+
+    // Writes a real headless config to a temp file so the runner can
+    // parse limits.timeout_seconds. Other fields are placeholders — only
+    // the limits block is exercised by these tests, but a complete object
+    // round-trips through HeadlessConfigJson.Options without touching the
+    // schema validator (validation is andy-cli's job).
+    private static string WriteRealConfig(int timeoutSeconds, int maxIterations = 4)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"ap6-test-{Guid.NewGuid():N}.json");
+        var config = new Andy.Containers.Configurator.HeadlessRunConfig
+        {
+            RunId = Guid.NewGuid(),
+            Limits = new Andy.Containers.Configurator.HeadlessLimits
+            {
+                MaxIterations = maxIterations,
+                TimeoutSeconds = timeoutSeconds,
+            },
+        };
+        File.WriteAllText(path, Andy.Containers.Configurator.HeadlessConfigJson.Serialize(config));
+        return path;
     }
 
     private void SetupExec(Guid containerId, int exitCode, string? stdOut = null, string? stdErr = null)

@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
@@ -14,11 +16,18 @@ public sealed class HeadlessRunner : IHeadlessRunner
     private readonly ContainersDbContext _db;
     private readonly ILogger<HeadlessRunner> _logger;
 
-    // Generous upper bound on a single headless run. AQ3 will wire
-    // limits.timeout_seconds-aware spawning; until then this is the only
-    // ceiling between us and a hung process. ExecAsync surfaces a timeout
-    // by throwing OperationCanceledException, which we map to Failed.
-    private static readonly TimeSpan DefaultExecTimeout = TimeSpan.FromMinutes(15);
+    // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
+    // and exits with code 4 (→ RunEventKind.Timeout) when its CTS fires.
+    // We let it have a head start before our outer ExecAsync ceiling so
+    // the AQ3 self-timeout is what we observe — the outer one is reserved
+    // for genuinely hung processes that don't honour their own deadline.
+    private static readonly TimeSpan OuterGrace = TimeSpan.FromSeconds(30);
+
+    // Fallback when the config file isn't readable or doesn't pin a
+    // positive timeout. Pre-AQ3, this was the only ceiling. Now it's
+    // a defensive default — every well-formed config carries
+    // limits.timeout_seconds.
+    private static readonly TimeSpan FallbackExecTimeout = TimeSpan.FromMinutes(15);
 
     public HeadlessRunner(
         IContainerService containers,
@@ -64,14 +73,15 @@ public sealed class HeadlessRunner : IHeadlessRunner
         await _db.SaveChangesAsync(ct);
 
         var command = $"andy-cli run --headless --config {ShellEscape(configPath)}";
+        var execTimeout = await ResolveExecTimeoutAsync(configPath, ct);
         ExecResult result;
         try
         {
             _logger.LogInformation(
-                "Spawning headless agent for Run {RunId} in container {ContainerId} with config {ConfigPath}",
-                run.Id, containerId, configPath);
+                "Spawning headless agent for Run {RunId} in container {ContainerId} with config {ConfigPath} (outer timeout {Seconds}s)",
+                run.Id, containerId, configPath, (int)execTimeout.TotalSeconds);
 
-            result = await _containers.ExecAsync(containerId, command, DefaultExecTimeout, ct);
+            result = await _containers.ExecAsync(containerId, command, execTimeout, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -192,6 +202,38 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 "Run {RunId} could not transition {From} → {To}: {Message}",
                 run.Id, run.Status, next, ex.Message);
         }
+    }
+
+    // Read the config AP3 just wrote and pull limits.timeout_seconds so
+    // our outer ExecAsync ceiling is config-driven (with a small grace
+    // period above AQ3's internal deadline). On any read/parse failure
+    // we fall back to FallbackExecTimeout — a malformed config is
+    // surfaced as an exit-code mismatch from andy-cli rather than as a
+    // timeout-resolution crash here.
+    private async Task<TimeSpan> ResolveExecTimeoutAsync(string configPath, CancellationToken ct)
+    {
+        try
+        {
+            var json = await File.ReadAllTextAsync(configPath, ct);
+            var config = JsonSerializer.Deserialize<HeadlessRunConfig>(json, HeadlessConfigJson.Options);
+            var inner = config?.Limits?.TimeoutSeconds ?? 0;
+            if (inner > 0)
+            {
+                return TimeSpan.FromSeconds(inner) + OuterGrace;
+            }
+
+            _logger.LogWarning(
+                "Config at {Path} has limits.timeout_seconds={Inner}; using fallback {Fallback}s",
+                configPath, inner, (int)FallbackExecTimeout.TotalSeconds);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Could not read limits.timeout_seconds from {Path}; using fallback {Fallback}s",
+                configPath, (int)FallbackExecTimeout.TotalSeconds);
+        }
+
+        return FallbackExecTimeout;
     }
 
     // POSIX single-quote escape — safe for /bin/sh -c "...". Single quotes
