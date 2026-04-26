@@ -384,6 +384,64 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     }
 
     /// <summary>
+    /// Opens a PTY-backed exec session via Docker's exec API with
+    /// <c>Tty=true</c>. The Docker daemon allocates the PTY inside
+    /// the container; we own the wire (the multiplexed stream) and
+    /// the resize API call. Conductor #875 PR 1.
+    ///
+    /// Replaces the previous chain
+    /// <c>script + docker exec -it + bash</c> with
+    /// <c>Docker.DotNet exec API + tty=true</c>. SIGWINCH propagates
+    /// because the daemon manages the PTY end-to-end.
+    /// </summary>
+    public async Task<IInteractiveExecSession?> OpenInteractiveExecAsync(
+        string externalId,
+        string[] command,
+        string user,
+        string workingDirectory,
+        int cols,
+        int rows,
+        CancellationToken ct = default)
+    {
+        var exec = await _client.Exec.ExecCreateContainerAsync(externalId, new ContainerExecCreateParameters
+        {
+            Cmd = command,
+            User = user,
+            WorkingDir = workingDirectory,
+            AttachStdin = true,
+            AttachStdout = true,
+            AttachStderr = true,
+            Tty = true,
+        }, ct);
+
+        var stream = await _client.Exec.StartAndAttachContainerExecAsync(exec.ID, tty: true, ct);
+
+        // ExecCreateContainerParameters has no size field, so the
+        // PTY starts at 80x24. Resize immediately to the renderer's
+        // reported size to avoid an initial mismatch flash.
+        try
+        {
+            await _client.Exec.ResizeContainerExecTtyAsync(exec.ID, new ContainerResizeParameters
+            {
+                Height = (long)rows,
+                Width = (long)cols,
+            }, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[PTY-EXEC] Initial resize to {Cols}x{Rows} failed for exec {ExecId}",
+                cols, rows, exec.ID);
+        }
+
+        _logger.LogInformation(
+            "[PTY-EXEC] opened container={Container} exec={ExecId} cols={Cols} rows={Rows} user={User} cwd={Cwd}",
+            externalId, exec.ID, cols, rows, user, workingDirectory);
+
+        return new DockerInteractiveExecSession(_client, exec.ID, stream, _logger);
+    }
+
+    /// <summary>
     /// Lists every externalId currently known to the Docker daemon
     /// (running OR stopped). Used by the startup reconciler to detect
     /// rows whose containers were removed out-of-band (host reboot,
