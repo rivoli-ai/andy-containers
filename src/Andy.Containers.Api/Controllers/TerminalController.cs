@@ -386,6 +386,44 @@ public class TerminalController : ControllerBase
         // (e.g. arrow keys: \x1b[A, \x1b[B, etc.)
         // Also intercepts resize messages from the client to update the PTY size
         // via ioctl, which sends SIGWINCH to tmux so it redraws at the new size.
+        // Debounced resize forwarder (#863).
+        //
+        // The Ghostty renderer fires `onSurfaceResize` on every
+        // SwiftUI frame change — during a 200 ms inspector-collapse
+        // animation that's a dozen events at slightly different
+        // sizes. The previous "forward every resize" approach caused
+        // visible artifacts in TUI apps (claude, vim) because each
+        // forwarded `tmux resize-window` raced with the app's own
+        // writes.
+        //
+        // Strategy: collect resize messages, but only spawn the
+        // side-channel `tmux resize-window` AFTER a quiet period
+        // (250 ms with no new resize) AND only if the size actually
+        // changed since the last forwarded value. The animation's
+        // mid-frames are absorbed; tmux sees one resize at the end.
+        //
+        // Conductor #836 / #863. Pre-existing "status bar wraps
+        // inline at status-interval" is the alternative — strictly
+        // worse than this debounced approach for users on smaller
+        // displays.
+        var resizeDebouncer = new ResizeDebouncer(
+            providerCommand: execCommand,
+            externalId: externalId,
+            containerUser: containerUser,
+            tmuxSession: tmuxSession,
+            initialCols: cols,
+            initialRows: rows,
+            quietPeriod: TimeSpan.FromMilliseconds(250),
+            forward: (newCols, newRows) => ForwardResizeToTmux(
+                providerCommand: execCommand,
+                externalId: externalId,
+                containerUser: containerUser,
+                tmuxSession: tmuxSession,
+                cols: newCols,
+                rows: newRows,
+                ct: ct),
+            ct: ct);
+
         var wsToProcess = Task.Run(async () =>
         {
             var buffer = new byte[4096];
@@ -400,27 +438,9 @@ public class TerminalController : ControllerBase
 
                     if (result.Count > 0)
                     {
-                        // Drop client resize messages on the floor.
-                        //
-                        // Forwarding them via `tmux resize-window`
-                        // (the previous attempt) caused a feedback
-                        // cascade with the macOS Ghostty renderer,
-                        // and even with dedupe the side-channel
-                        // resize created visible artifacts in TUI
-                        // apps running inside tmux (claude code, vim)
-                        // — duplicated frames, partial redraws,
-                        // status bar wrapping inline.
-                        //
-                        // The pre-existing "status bar wraps at
-                        // status-interval" annoyance returns, but
-                        // it's strictly less broken than the
-                        // resize cascade. The proper fix lives in
-                        // #842 (multiplexer-aware mode) and a
-                        // ground-up rework of the script ↔ docker
-                        // exec ↔ bash ↔ tmux PTY chain. Conductor
-                        // #836 follow-up.
-                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out _, out _))
+                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
                         {
+                            resizeDebouncer.Observe(newCols, newRows);
                             continue;
                         }
 
