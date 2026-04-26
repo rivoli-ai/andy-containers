@@ -154,10 +154,56 @@ public class TerminalControllerTests : IDisposable
     }
 
     [Fact]
-    public void IsOriginAllowed_EmptyOrigin_ReturnsFalse()
+    public void IsOriginAllowed_EmptyOrigin_NonLoopbackRemote_ReturnsFalse()
     {
+        // Empty Origin from an external IP is still rejected (CSWSH
+        // defence preserved for browser traffic that arrives over the
+        // network).
+        var httpContext = new DefaultHttpContext();
+        httpContext.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("203.0.113.42");
+        var controller = CreateController(
+            httpContext: httpContext,
+            configuration: ConfigWithOrigins("https://localhost:5280"));
+        controller.IsOriginAllowed(string.Empty).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_EmptyOrigin_NoRemoteAddress_ReturnsFalse()
+    {
+        // DefaultHttpContext.Connection.RemoteIpAddress defaults to
+        // null. Treat that as "we don't know where this came from" and
+        // refuse — fail-closed when ambiguous.
         var controller = CreateController(configuration: ConfigWithOrigins("https://localhost:5280"));
         controller.IsOriginAllowed(string.Empty).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_EmptyOrigin_LoopbackRemote_ReturnsTrue()
+    {
+        // Native WebSocket clients (macOS NSURLSession in particular)
+        // don't send an Origin header — Origin is a browser-only CSWSH
+        // defence. Conductor's terminal session connects over a local
+        // proxy, so the upgrade arrives at andy-containers from
+        // 127.0.0.1 with no Origin. This used to fail 403 Forbidden;
+        // post-fix it succeeds because loopback traffic is not
+        // browser-cross-site-attackable.
+        var httpContext = new DefaultHttpContext();
+        httpContext.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+        var controller = CreateController(
+            httpContext: httpContext,
+            configuration: ConfigWithOrigins("https://localhost:5280"));
+        controller.IsOriginAllowed(string.Empty).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsOriginAllowed_EmptyOrigin_IPv6LoopbackRemote_ReturnsTrue()
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.Connection.RemoteIpAddress = System.Net.IPAddress.IPv6Loopback;
+        var controller = CreateController(
+            httpContext: httpContext,
+            configuration: ConfigWithOrigins("https://localhost:5280"));
+        controller.IsOriginAllowed(string.Empty).Should().BeTrue();
     }
 
     [Fact]

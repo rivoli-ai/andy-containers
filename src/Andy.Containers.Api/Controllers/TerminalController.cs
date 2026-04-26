@@ -530,11 +530,40 @@ public class TerminalController : ControllerBase
     internal bool IsOriginAllowed(string origin)
     {
         if (string.IsNullOrEmpty(origin))
-            return false;
+        {
+            // Native WebSocket clients (macOS NSURLSession's
+            // URLSessionWebSocketTask, in particular) do not send an
+            // Origin header for ws:// schemes — Origin is a
+            // browser-only CSWSH defence, and natively-launched
+            // requests aren't subject to that attack vector.
+            //
+            // When the upgrade comes from loopback we treat empty
+            // Origin as a same-origin local request and allow it.
+            // Cross-host requests that arrive without Origin are still
+            // rejected, so the CSWSH guarantee for browser traffic
+            // (which always sends Origin) is preserved.
+            //
+            // Conductor regression: terminal WebSocket from the
+            // bundled Conductor app over the local proxy never
+            // populates Origin, so every WS upgrade was failing 403.
+            return IsRemoteLoopback();
+        }
         var allowed = _configuration.GetSection("Cors:Origins").Get<string[]>();
         if (allowed is null || allowed.Length == 0)
             return false;
         return Array.Exists(allowed, a => string.Equals(a, origin, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// True when the upgrade request arrived from a loopback address
+    /// (127.0.0.0/8, ::1). HttpContext is null in unit-test contexts
+    /// that don't drive the controller through ASP.NET; treat that as
+    /// non-loopback so tests cover the strict path.
+    /// </summary>
+    internal virtual bool IsRemoteLoopback()
+    {
+        var remote = HttpContext?.Connection?.RemoteIpAddress;
+        return remote is not null && System.Net.IPAddress.IsLoopback(remote);
     }
 
     /// <summary>
