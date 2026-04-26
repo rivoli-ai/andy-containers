@@ -457,6 +457,171 @@ public class TerminalControllerTests : IDisposable
             "tmux must not appear in the shell command — use dtach for persistence");
     }
 
+    // MARK: - dtach socket path / banner contract (conductor #836-#842)
+    //
+    // The dtach socket path is the SHARED contract between the shell
+    // command (which CREATES the socket) and the probe (which DETECTS
+    // the socket on reattach to suppress the welcome banner). If
+    // anyone changes one constant without the other, banner detection
+    // silently breaks — banner re-injects on every reattach,
+    // overwriting the user's prompt.
+    //
+    // These tests pin the contract.
+
+    [Fact]
+    public void DtachSocketPath_IsTheStableConstant()
+    {
+        // Pin the literal so unrelated edits to BuildContainerShellCommand
+        // or BuildDtachProbeArguments don't accidentally divert to a
+        // different path.
+        TerminalController.DtachSocketPath.Should().Be("/tmp/conductor.sock");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_UsesDtachSocketPathConstant()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain(TerminalController.DtachSocketPath,
+            "the shell command must reference the same socket path the probe checks");
+    }
+
+    [Fact]
+    public void BuildDtachProbeArguments_UsesDtachSocketPathConstant()
+    {
+        var args = TerminalController.BuildDtachProbeArguments("test-user", "ext-123");
+        args.Should().Contain(TerminalController.DtachSocketPath,
+            "the probe must reference the same socket path the shell command creates");
+    }
+
+    [Fact]
+    public void BuildDtachProbeArguments_UsesTestDashSForSocketSemantics()
+    {
+        // `test -e` matches any file (including stale regular files);
+        // `test -f` matches regular files only; `test -S` matches
+        // Unix domain sockets specifically. dtach creates a socket,
+        // so we use -S — the precise signal that a dtach session is
+        // already running (not just leftover garbage at the path).
+        var args = TerminalController.BuildDtachProbeArguments("test-user", "ext-123");
+        args.Should().Contain("test -S",
+            "use -S not -e/-f so we don't false-positive on stale non-socket files at the path");
+    }
+
+    [Fact]
+    public void BuildDtachProbeArguments_RunsAsContainerUser()
+    {
+        // dtach's socket has user-private permissions (srwx------ owned
+        // by the container user). Probing as root would fail
+        // permission-wise on some filesystems and succeed misleadingly
+        // on others. Always probe as the same user that owns the
+        // session.
+        var args = TerminalController.BuildDtachProbeArguments("alice", "ext-abc");
+        args.Should().Contain("-u alice",
+            "probe must run as the container user, not root");
+    }
+
+    [Fact]
+    public void BuildDtachProbeArguments_TargetsTheCorrectContainer()
+    {
+        var args = TerminalController.BuildDtachProbeArguments("alice", "ext-12345");
+        args.Should().Contain("ext-12345");
+    }
+
+    // MARK: - ShouldInjectWelcomeBanner decision matrix
+
+    [Fact]
+    public void ShouldInjectWelcomeBanner_FiresOnFirstAttach()
+    {
+        // No existing dtach session → first attach → banner welcomes
+        // the user. This is the user's introduction to the container
+        // (template name, OS, etc.).
+        TerminalController.ShouldInjectWelcomeBanner(hasExistingSession: false)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldInjectWelcomeBanner_DoesNotFireOnReattach()
+    {
+        // dtach session already exists → reattach → user already saw
+        // the banner. Repeating it overwrites whatever they were
+        // looking at (the bug the user reported when verifying
+        // dtach persistence: closing the terminal mid-session and
+        // reopening showed the banner header on top of their bash
+        // prompt).
+        TerminalController.ShouldInjectWelcomeBanner(hasExistingSession: true)
+            .Should().BeFalse();
+    }
+
+    // MARK: - Cross-module contract: shell + probe agree on path
+
+    [Fact]
+    public void ShellCommandAndProbeAgreeOnSocketPath()
+    {
+        // Belt-and-suspenders test: even if someone fixes a typo in
+        // both call sites separately and keeps them in sync, this
+        // test asserts they reference the SAME constant.
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        var args = TerminalController.BuildDtachProbeArguments("test-user", "ext-123");
+
+        cmd.Should().Contain(TerminalController.DtachSocketPath);
+        args.Should().Contain(TerminalController.DtachSocketPath);
+    }
+
+    [Fact]
+    public void ShellCommand_DtachInvocationCreatesTheProbedSocket()
+    {
+        // Specifically check the dtach invocation form, not just
+        // path-presence. dtach's `-A` flag is the one that "attaches
+        // if exists OR creates if not" — the right semantic for
+        // first-attach + reattach. Other forms (-c, -n) would create
+        // a NEW socket every time and break persistence even if dtach
+        // is in PATH.
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain($"dtach -A {TerminalController.DtachSocketPath} -z bash -i",
+            "must use `-A` for attach-or-create, `-z` to suppress dtach's escape sequences");
+    }
+
+    // MARK: - Reattach-without-banner end-to-end contract
+    //
+    // The full chain we want to lock:
+    //   1. First attach: probe → false → ShouldInject → true → banner fires
+    //   2. dtach creates the socket; bash runs.
+    //   3. Reattach: probe → true (socket still there) → ShouldInject → false → no banner
+    //
+    // We can't easily run a real container in unit tests, but we can
+    // simulate the decision arms:
+
+    [Fact]
+    public void Decision_FirstAttachNoSocket_BannerFires()
+    {
+        // Arm 1: container has dtach installed but no socket yet.
+        // Probe would return false (socket absent). hasExistingSession
+        // = false. Banner fires.
+        var probeResult = false; // simulating: socket doesn't exist
+        TerminalController.ShouldInjectWelcomeBanner(probeResult).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Decision_SecondAttachSocketExists_BannerSkipped()
+    {
+        // Arm 2: socket exists from a prior attach. Probe returns
+        // true. Banner is skipped — the user is reattaching, not
+        // visiting fresh.
+        var probeResult = true; // simulating: dtach session running
+        TerminalController.ShouldInjectWelcomeBanner(probeResult).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Decision_NoDtachInstalled_FallbackBareShellAlwaysGetsBanner()
+    {
+        // Arm 3: container has no dtach. The shell command falls back
+        // to `exec bash -i` (no socket). Probe always returns false
+        // (no socket exists). hasExistingSession = false. Banner
+        // fires every attach — same as the bare-bash baseline before
+        // dtach was introduced. No regression.
+        var probeResult = false; // no dtach → no socket → probe false
+        TerminalController.ShouldInjectWelcomeBanner(probeResult).Should().BeTrue();
+    }
+
     [Fact]
     public void BuildWelcomeBannerCommand_DoesNotInjectTmuxCommands()
     {
