@@ -379,6 +379,84 @@ public class TerminalControllerTests : IDisposable
             "trailing newline submits the command line");
     }
 
+    // MARK: - BuildContainerShellCommand (dtach + fallback)
+
+    [Fact]
+    public void BuildContainerShellCommand_SetsPtySize()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("stty rows 40 cols 120",
+            "the inner PTY's reported size must match what the renderer asked for");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_ExportsXTermAndLocale()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("TERM=xterm-256color",
+            "256-color is what claude / vim / less expect");
+        cmd.Should().Contain("LANG=C.UTF-8");
+        cmd.Should().Contain("LC_ALL=C.UTF-8",
+            "UTF-8 locale is needed for emoji / box-drawing characters");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_SourcesRcfiles()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("/etc/profile");
+        cmd.Should().Contain("/etc/bash.bashrc");
+        cmd.Should().Contain("~/.profile");
+        cmd.Should().Contain("~/.bashrc");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_PrefersDtachWhenAvailable()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("command -v dtach",
+            "must check for dtach before invoking it");
+        cmd.Should().Contain("exec dtach -A /tmp/conductor.sock -z bash -i",
+            "dtach gets a fixed socket per container so reattach works");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_FallsBackToBareBashWhenDtachMissing()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("|| exec bash -i",
+            "containers without dtach installed must still get a working terminal");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_DtachUsesAttachOrCreate()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("dtach -A",
+            "the -A flag means 'attach if exists, create if not' — what gives us persistence across reconnects");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_DtachUsesQuietMode()
+    {
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("dtach -A /tmp/conductor.sock -z bash",
+            "the -z flag suppresses dtach's own escape sequences so the terminal output is clean");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_DoesNotMentionTmux()
+    {
+        // Regression guard: tmux was removed in #154 / #842 preview
+        // because it caused rendering artifacts in TUI apps. dtach
+        // is the replacement. If anyone re-introduces tmux into the
+        // shell command without going through #842's per-mode
+        // picker, this test fires.
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().NotContain("tmux ",
+            "tmux must not appear in the shell command — use dtach for persistence");
+    }
+
     [Fact]
     public void BuildWelcomeBannerCommand_DoesNotInjectTmuxCommands()
     {

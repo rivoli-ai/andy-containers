@@ -392,6 +392,16 @@ command -v fastfetch >/dev/null 2>&1 || {{
     command -v apt-get >/dev/null 2>&1 && apt-get install -y -qq fastfetch >/dev/null 2>&1
 }} || true
 
+# Install dtach for terminal session persistence (#tmux-replacement).
+# Tiny C tool (~600 lines) that lets a bash session survive across
+# WebSocket close/reopen without tmux's resize/redraw quirks.
+# TerminalController falls back to plain bash when dtach is missing,
+# so existing containers still work — they just lose persistence.
+command -v dtach >/dev/null 2>&1 || {{
+    command -v apk >/dev/null 2>&1 && apk add --no-cache dtach >/dev/null 2>&1
+    command -v apt-get >/dev/null 2>&1 && apt-get install -y -qq dtach >/dev/null 2>&1
+}} || true
+
 # Create custom fastfetch config for Andy Containers
 mkdir -p /etc/fastfetch
 cat > /etc/fastfetch/config.jsonc << 'FFCONF'
