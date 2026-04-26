@@ -669,26 +669,58 @@ public class TerminalController : ControllerBase
         string containerUser,
         CancellationToken ct)
     {
+        var args = BuildDtachProbeArguments(containerUser, externalId);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
         try
         {
             var psi = new ProcessStartInfo
             {
                 FileName = providerCommand,
-                Arguments = BuildDtachProbeArguments(containerUser, externalId),
+                Arguments = args,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
             using var process = Process.Start(psi);
-            if (process is null) return false;
+            if (process is null)
+            {
+                _logger.LogInformation(
+                    "[DTACH-PROBE] Process.Start returned null — provider={Provider} args={Args}",
+                    providerCommand, args);
+                return false;
+            }
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(3));
-            await process.WaitForExitAsync(cts.Token);
-            return process.ExitCode == 0;
+
+            string stderr;
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+                stderr = (await process.StandardError.ReadToEndAsync(ct)).Trim();
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                _logger.LogInformation(
+                    "[DTACH-PROBE] timed out after 3s — provider={Provider} args={Args} elapsed={ElapsedMs}ms",
+                    providerCommand, args, sw.ElapsedMilliseconds);
+                try { process.Kill(true); } catch { /* ignore */ }
+                return false;
+            }
+
+            var hasSession = process.ExitCode == 0;
+            _logger.LogInformation(
+                "[DTACH-PROBE] provider={Provider} args={Args} exit={ExitCode} elapsed={ElapsedMs}ms hasSession={HasSession} stderr={Stderr}",
+                providerCommand, args, process.ExitCode, sw.ElapsedMilliseconds, hasSession,
+                stderr.Length > 200 ? stderr[..200] : stderr);
+            return hasSession;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogInformation(
+                "[DTACH-PROBE] threw — provider={Provider} args={Args} elapsed={ElapsedMs}ms exception={Exception}",
+                providerCommand, args, sw.ElapsedMilliseconds, ex.GetType().Name + ": " + ex.Message);
             return false;
         }
     }
