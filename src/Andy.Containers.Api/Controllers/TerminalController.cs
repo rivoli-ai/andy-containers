@@ -157,9 +157,16 @@ public class TerminalController : ControllerBase
         // returns null when it doesn't support daemon-managed PTY
         // (Apple Containers today; cloud providers permanently). On
         // null we fall through to the legacy script-based path
-        // below. Behaviour-preserving: same shellCmd, same banner
-        // logic, only the PTY allocation strategy changes.
-        if (container.Provider is not null)
+        // below.
+        //
+        // Gated behind ANDY_USE_DAEMON_PTY=1. The new code path is
+        // wired but the integration showed an issue: user couldn't
+        // see characters echo back in the terminal. Defaulting to
+        // the legacy script-based path until we've debugged the
+        // daemon-PTY I/O loop. Re-enable for testing by setting the
+        // env var before launching andy-containers.
+        var useDaemonPty = Environment.GetEnvironmentVariable("ANDY_USE_DAEMON_PTY") == "1";
+        if (useDaemonPty && container.Provider is not null)
         {
             try
             {
