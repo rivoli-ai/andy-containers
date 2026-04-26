@@ -354,32 +354,24 @@ public class TerminalController : ControllerBase
                     return;
                 }
 
-                if (hasExistingSession)
+                // Existing sessions: do nothing. The previous
+                // attempt to force a redraw via `tmux refresh-client
+                // -S` (#838) caused visible artifacts in TUI apps
+                // (claude code, vim) running inside the session —
+                // the redraw raced with the app's own writes and
+                // produced duplicated / partial frames. Until we
+                // have a clean mechanism (#842 multiplexer-aware
+                // mode, or replacing the script chain), reattach
+                // simply lets the user's first keystroke prompt
+                // tmux to repaint. The original "stale frame on
+                // reattach" annoyance returns, but it's strictly
+                // less broken than the redraw-cascade.
+                //
+                // New sessions still get the welcome banner — that
+                // injection runs inside the user's fresh bash
+                // session and doesn't race with anything.
+                if (!hasExistingSession)
                 {
-                    // Reattach: force tmux to repaint via the side
-                    // channel — `<provider> exec -u <user> tmux
-                    // refresh-client -S` against the same per-UID
-                    // tmux socket the session uses. Going through
-                    // stdin here would type `tmux refresh-client -S`
-                    // into the user's foreground process (vim,
-                    // claude, even just bash), which is wrong: the
-                    // command would land in the user's shell history
-                    // and run as if they typed it. The side channel
-                    // talks directly to the tmux server and is
-                    // invisible to the user. Conductor #838.
-                    InvokeTmuxCommand(
-                        providerCommand: execCommand,
-                        externalId: externalId,
-                        containerUser: containerUser,
-                        tmuxArguments: $"refresh-client -S -t {tmuxSession}",
-                        ct: ct);
-                }
-                else
-                {
-                    // New session: the welcome banner runs INSIDE
-                    // the user's bash session because that's exactly
-                    // where it should print. Stdin injection is
-                    // correct here.
                     var bannerCmd = BuildWelcomeBannerCommand();
                     await stdinStream.WriteAsync(bannerCmd, ct);
                     await stdinStream.FlushAsync(ct);
@@ -394,15 +386,6 @@ public class TerminalController : ControllerBase
         // (e.g. arrow keys: \x1b[A, \x1b[B, etc.)
         // Also intercepts resize messages from the client to update the PTY size
         // via ioctl, which sends SIGWINCH to tmux so it redraws at the new size.
-        // Track the last (cols, rows) we forwarded to tmux so we can
-        // dedupe identical resize messages (the renderer fires one on
-        // every micro-layout change, not just on user resize). Without
-        // dedupe, every redraw-from-tmux triggered by a previous
-        // forwarder cascades into more forwards — terminal becomes
-        // unusable. Conductor #836 follow-up.
-        var lastForwardedCols = cols;
-        var lastForwardedRows = rows;
-
         var wsToProcess = Task.Run(async () =>
         {
             var buffer = new byte[4096];
@@ -417,29 +400,27 @@ public class TerminalController : ControllerBase
 
                     if (result.Count > 0)
                     {
-                        // Check for resize messages: {"type":"resize","cols":N,"rows":N}
-                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
+                        // Drop client resize messages on the floor.
+                        //
+                        // Forwarding them via `tmux resize-window`
+                        // (the previous attempt) caused a feedback
+                        // cascade with the macOS Ghostty renderer,
+                        // and even with dedupe the side-channel
+                        // resize created visible artifacts in TUI
+                        // apps running inside tmux (claude code, vim)
+                        // — duplicated frames, partial redraws,
+                        // status bar wrapping inline.
+                        //
+                        // The pre-existing "status bar wraps at
+                        // status-interval" annoyance returns, but
+                        // it's strictly less broken than the
+                        // resize cascade. The proper fix lives in
+                        // #842 (multiplexer-aware mode) and a
+                        // ground-up rework of the script ↔ docker
+                        // exec ↔ bash ↔ tmux PTY chain. Conductor
+                        // #836 follow-up.
+                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out _, out _))
                         {
-                            // Dedupe: only spawn `tmux resize-window`
-                            // when the size actually changes from the
-                            // last value we sent. Otherwise we feed
-                            // back into the renderer which fires more
-                            // resize events, etc. Conductor #836.
-                            if (newCols == lastForwardedCols && newRows == lastForwardedRows)
-                            {
-                                continue;
-                            }
-                            lastForwardedCols = newCols;
-                            lastForwardedRows = newRows;
-
-                            ForwardResizeToTmux(
-                                providerCommand: execCommand,
-                                externalId: externalId,
-                                containerUser: containerUser,
-                                tmuxSession: tmuxSession,
-                                cols: newCols,
-                                rows: newRows,
-                                ct: ct);
                             continue;
                         }
 
