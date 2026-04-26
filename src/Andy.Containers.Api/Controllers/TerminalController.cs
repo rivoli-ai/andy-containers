@@ -175,13 +175,27 @@ public class TerminalController : ControllerBase
         // so users can choose tmux / screen / none / custom.
         var tmuxSession = "web"; // unused; kept for diff size only
         _ = tmuxSession;
-        var hasExistingSession = false; // bash sessions don't persist
-        var checkExisting = providerType == ProviderType.AppleContainer ? "container" : "docker";
-        _ = checkExisting;
+
+        // Detect whether we're reattaching by probing for the dtach
+        // socket. When dtach is installed, the first attach creates
+        // /tmp/conductor.sock (see BuildContainerShellCommand);
+        // subsequent attaches join that same socket. The welcome
+        // banner should only fire on the FIRST attach — repeating it
+        // on every reconnect overwrites the user's prompt with the
+        // banner header (the bug the user reported when verifying
+        // dtach persistence).
+        //
+        // For containers without dtach, the socket never exists and
+        // every attach gets the banner — same as before this change,
+        // since each attach is a fresh bash anyway.
+        var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
+        var hasExistingSession = await ProbeDtachSocketExistsAsync(
+            providerCommand: execCommand,
+            externalId: externalId,
+            containerUser: containerUser,
+            ct: ct);
 
         var shellCmd = BuildContainerShellCommand(rows: rows, cols: cols);
-
-        var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
 
         // Wrap in bash so we can resize script's PTY BEFORE starting container exec.
         // Without this, script creates an 80x24 PTY (no parent terminal to inherit from),
@@ -354,7 +368,7 @@ public class TerminalController : ControllerBase
                 // New sessions still get the welcome banner — that
                 // injection runs inside the user's fresh bash
                 // session and doesn't race with anything.
-                if (!hasExistingSession)
+                if (ShouldInjectWelcomeBanner(hasExistingSession))
                 {
                     var bannerCmd = BuildWelcomeBannerCommand();
                     await stdinStream.WriteAsync(bannerCmd, ct);
@@ -638,6 +652,48 @@ public class TerminalController : ControllerBase
     }
 
     /// <summary>
+    /// Checks whether the dtach socket already exists in the
+    /// container — the signal that we're reattaching to an existing
+    /// session and shouldn't re-emit the welcome banner.
+    /// </summary>
+    /// <remarks>
+    /// Best-effort: a failure to probe is interpreted as
+    /// "no session", which means the worst case is a redundant
+    /// banner injection on a borderline-broken container. The path
+    /// matches <see cref="BuildContainerShellCommand(int, int)"/>'s
+    /// <c>/tmp/conductor.sock</c> constant.
+    /// </remarks>
+    private async Task<bool> ProbeDtachSocketExistsAsync(
+        string providerCommand,
+        string externalId,
+        string containerUser,
+        CancellationToken ct)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = providerCommand,
+                Arguments = BuildDtachProbeArguments(containerUser, externalId),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var process = Process.Start(psi);
+            if (process is null) return false;
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3));
+            await process.WaitForExitAsync(cts.Token);
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Builds the shell command piped into <c>docker exec -it … bash
     /// -c '…'</c> to start a terminal session inside the container.
     ///
@@ -660,22 +716,47 @@ public class TerminalController : ControllerBase
     /// </remarks>
     internal static string BuildContainerShellCommand(int rows, int cols)
     {
-        // Bound the shell socket name to the per-container filesystem.
-        // The container's /tmp is private to the container, so this
-        // path doesn't collide with anything on the host or other
-        // containers. Using a fixed name (not per-WS) is what gives
-        // us "close terminal, reopen, you're back" — every attach
-        // hits the same socket.
-        const string DtachSocket = "/tmp/conductor.sock";
-
         return $"stty rows {rows} cols {cols} 2>/dev/null; " +
                $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
                $"[ -f /etc/profile ] && . /etc/profile 2>/dev/null; " +
                $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
                $"[ -f ~/.profile ] && . ~/.profile 2>/dev/null; " +
                $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
-               $"command -v dtach >/dev/null 2>&1 && exec dtach -A {DtachSocket} -z bash -i || exec bash -i";
+               $"command -v dtach >/dev/null 2>&1 && exec dtach -A {DtachSocketPath} -z bash -i || exec bash -i";
     }
+
+    /// <summary>
+    /// Path to the dtach socket inside each container's filesystem.
+    /// Bound to <c>/tmp/conductor.sock</c> — the container's /tmp is
+    /// private so this doesn't collide with anything on the host or
+    /// other containers. Using a fixed name (not per-WS) is what
+    /// gives us "close terminal, reopen, you're back" — every attach
+    /// hits the same socket.
+    ///
+    /// Internal so unit tests can pin both the shell command and the
+    /// probe argv against the same constant — if anyone changes one
+    /// without the other, banner detection breaks silently.
+    /// </summary>
+    internal const string DtachSocketPath = "/tmp/conductor.sock";
+
+    /// <summary>
+    /// Pure decision: does the post-attach injection block need to
+    /// inject the welcome banner? Banner fires only on FIRST attach
+    /// (no existing session). Reattaches must NOT inject — repeating
+    /// the banner overwrites whatever the user was looking at.
+    /// </summary>
+    internal static bool ShouldInjectWelcomeBanner(bool hasExistingSession) => !hasExistingSession;
+
+    /// <summary>
+    /// Builds the argv for probing the dtach socket via
+    /// <c>&lt;providerCommand&gt; exec -u &lt;user&gt; &lt;externalId&gt; test -S /tmp/conductor.sock</c>.
+    /// <c>test -S</c> succeeds (exit 0) iff the path is a Unix
+    /// domain socket — the precise signal that a dtach session is
+    /// already running. Using <c>-e</c> or <c>-f</c> would also
+    /// match a stale regular file at the same path.
+    /// </summary>
+    internal static string BuildDtachProbeArguments(string containerUser, string externalId)
+        => $"exec -u {containerUser} {externalId} test -S {DtachSocketPath}";
 
     private static bool IsResizeMessage(byte[] buffer, int count, out int cols, out int rows)
     {
