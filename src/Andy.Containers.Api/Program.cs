@@ -249,6 +249,15 @@ try
     builder.Services.AddSingleton<IHeadlessConfigWriter, HeadlessConfigWriter>();
     builder.Services.AddScoped<IRunConfigurator, RunConfigurator>();
 
+    // AP10 (rivoli-ai/andy-containers#112). Run-scoped token issuer +
+    // secrets-scope settings. Singleton issuer so the runId→token map
+    // survives across configurator + runner request scopes; the
+    // configurator mints, the runner revokes on terminal observation.
+    // Replace StubTokenIssuer with the Y6 HTTP client when that ships.
+    builder.Services.Configure<SecretsOptions>(
+        builder.Configuration.GetSection(SecretsOptions.SectionName));
+    builder.Services.AddSingleton<ITokenIssuer, StubTokenIssuer>();
+
     // AP7 (rivoli-ai/andy-containers#109). In-process registry of active
     // runs so the cancel endpoint can signal the AP6 runner across
     // request scopes. Singleton — runner registrations span requests.
