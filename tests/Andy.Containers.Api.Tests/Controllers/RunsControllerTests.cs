@@ -3,6 +3,7 @@ using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
@@ -25,6 +26,7 @@ public class RunsControllerTests : IDisposable
     private readonly RunsController _controller;
     private readonly Mock<IRunConfigurator> _configurator;
     private readonly Mock<IRunModeDispatcher> _dispatcher;
+    private readonly RunCancellationRegistry _cancellation;
 
     public RunsControllerTests()
     {
@@ -48,7 +50,13 @@ public class RunsControllerTests : IDisposable
                 Status = RunStatus.Succeeded,
                 ExitCode = 0,
             }));
-        _controller = new RunsController(_db, _configurator.Object, _dispatcher.Object, NullLogger<RunsController>.Instance);
+        // AP7 wires the cancellation registry into Cancel. Use the real
+        // implementation — it's a leaf class with no other deps and
+        // mocking it would just duplicate its surface.
+        _cancellation = new RunCancellationRegistry();
+        _controller = new RunsController(
+            _db, _configurator.Object, _dispatcher.Object, _cancellation,
+            NullLogger<RunsController>.Instance);
     }
 
     public void Dispose()
@@ -262,8 +270,12 @@ public class RunsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task Cancel_PendingRun_TransitionsToCancelled_ReturnsOk()
+    public async Task Cancel_PendingRun_TransitionsToCancelled_EmitsCancelledEvent_ReturnsOk()
     {
+        // AP7 (#109): the cancel endpoint emits run.cancelled regardless
+        // of whether a runner was active. For a Pending row no runner
+        // has registered yet, so the controller flips the row directly
+        // and writes the outbox row from there.
         var run = SeedRun(RunStatus.Pending);
 
         var result = await _controller.Cancel(run.Id, CancellationToken.None);
@@ -276,6 +288,11 @@ public class RunsControllerTests : IDisposable
 
         var persisted = await _db.Runs.FindAsync(run.Id);
         persisted!.Status.Should().Be(RunStatus.Cancelled);
+
+        var entry = _db.OutboxEntries.Should().ContainSingle(
+            "AP7 emits exactly one run.cancelled event for the no-runner path").Subject;
+        entry.Subject.Should().Be($"andy.containers.events.run.{run.Id}.cancelled");
+        entry.CorrelationId.Should().Be(run.CorrelationId);
     }
 
     [Fact]
@@ -286,7 +303,9 @@ public class RunsControllerTests : IDisposable
         var result = await _controller.Cancel(run.Id, CancellationToken.None);
 
         result.Should().BeOfType<ConflictObjectResult>(
-            "Run.TransitionTo throws on illegal transitions and the controller maps to 409");
+            "Cancelled is unreachable from terminal states; the controller maps to 409");
+        _db.OutboxEntries.Should().BeEmpty(
+            "a 409 must not emit a phantom cancelled event");
     }
 
     [Fact]
@@ -295,6 +314,80 @@ public class RunsControllerTests : IDisposable
         var result = await _controller.Cancel(Guid.NewGuid(), CancellationToken.None);
 
         result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task Cancel_ActiveRunner_SignalsRegistry_AwaitsTerminal_ReturnsOk()
+    {
+        // AP7 (#109). When a runner is registered, the controller signals
+        // its linked CTS and awaits the runner's terminal write. We
+        // simulate the runner by registering then disposing the entry —
+        // disposal is what the real runner does in its `using` finally
+        // block once TerminateAsync has committed.
+        var run = SeedRun(RunStatus.Running);
+        var registration = _cancellation.Register(run.Id, CancellationToken.None);
+
+        // Schedule the "runner" to dispose its registration shortly after
+        // the cancel POST observes the signal. Use a minimal delay so
+        // the test exercises the wait + reload path, not the immediate
+        // dispose-before-wait shortcut.
+        _ = Task.Run(async () =>
+        {
+            // Give the controller a beat to call WaitForTerminalAsync.
+            await Task.Delay(10);
+            // Real runner would have written the terminal row + outbox
+            // event in TerminateAsync; mirror that here.
+            run.TransitionTo(RunStatus.Cancelled);
+            _db.AppendAgentRunEvent(run, RunEventKind.Cancelled);
+            await _db.SaveChangesAsync();
+            registration.Dispose();
+        });
+
+        var result = await _controller.Cancel(run.Id, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<RunDto>().Subject;
+        dto.Status.Should().Be(RunStatus.Cancelled);
+
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.Status.Should().Be(RunStatus.Cancelled);
+
+        var entry = _db.OutboxEntries.Should().ContainSingle(
+            "the runner's TerminateAsync emits the cancelled event; the controller doesn't double-emit").Subject;
+        entry.Subject.Should().EndWith($".{run.Id}.cancelled");
+    }
+
+    [Fact]
+    public async Task Cancel_GraceExpires_ForcesCancelledTransition_EmitsEvent()
+    {
+        // AP7 (#109). If the runner doesn't observe its CTS within the
+        // grace window, the controller forces the row to Cancelled and
+        // emits the outbox event itself so the row never strands in
+        // Running. Use a mock registry to flip WaitForTerminalAsync
+        // to false synchronously — clock-independent.
+        var run = SeedRun(RunStatus.Running);
+        var registry = new Mock<IRunCancellationRegistry>();
+        registry.Setup(r => r.TryCancel(run.Id)).Returns(true);
+        registry.Setup(r => r.WaitForTerminalAsync(
+                run.Id, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var controller = new RunsController(
+            _db, _configurator.Object, _dispatcher.Object, registry.Object,
+            NullLogger<RunsController>.Instance);
+
+        var result = await controller.Cancel(run.Id, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<RunDto>().Subject;
+        dto.Status.Should().Be(RunStatus.Cancelled);
+
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.Status.Should().Be(RunStatus.Cancelled);
+
+        var entry = _db.OutboxEntries.Should().ContainSingle(
+            "grace-expired path must still produce a terminal subject for downstream consumers").Subject;
+        entry.Subject.Should().EndWith($".{run.Id}.cancelled");
     }
 
     private Run SeedRun(RunStatus status)

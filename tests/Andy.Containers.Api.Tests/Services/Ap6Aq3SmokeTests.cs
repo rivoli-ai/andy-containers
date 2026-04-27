@@ -80,7 +80,8 @@ public class Ap6Aq3SmokeTests : IDisposable
         await _db.SaveChangesAsync();
 
         var hostExec = new HostSubprocessContainerService(cliDll);
-        var runner = new HeadlessRunner(hostExec, _db, NullLoggerForRunner());
+        var runner = new HeadlessRunner(
+            hostExec, _db, new RunCancellationRegistry(), NullLoggerForRunner());
 
         var outcome = await runner.StartAsync(run, configPath);
 

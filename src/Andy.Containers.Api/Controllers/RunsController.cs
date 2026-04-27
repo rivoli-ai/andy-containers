@@ -1,6 +1,8 @@
 using Andy.Containers.Api.Services;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -21,20 +23,30 @@ namespace Andy.Containers.Api.Controllers;
 [Authorize]
 public class RunsController : ControllerBase
 {
+    // AP7 (rivoli-ai/andy-containers#109). Grace window for awaiting the
+    // runner's terminal write after we signal cancellation. The headless
+    // runner's catch-OperationCanceledException path calls TerminateAsync
+    // immediately, so most cancels resolve in <100ms — the 30s ceiling is
+    // for hung Docker exec streams that don't honour the linked CTS.
+    internal static readonly TimeSpan CancelGrace = TimeSpan.FromSeconds(30);
+
     private readonly ContainersDbContext _db;
     private readonly IRunConfigurator _configurator;
     private readonly IRunModeDispatcher _dispatcher;
+    private readonly IRunCancellationRegistry _cancellation;
     private readonly ILogger<RunsController> _logger;
 
     public RunsController(
         ContainersDbContext db,
         IRunConfigurator configurator,
         IRunModeDispatcher dispatcher,
+        IRunCancellationRegistry cancellation,
         ILogger<RunsController> logger)
     {
         _db = db;
         _configurator = configurator;
         _dispatcher = dispatcher;
+        _cancellation = cancellation;
         _logger = logger;
     }
 
@@ -139,22 +151,82 @@ public class RunsController : ControllerBase
             return NotFound();
         }
 
-        try
+        // AP1 state-machine guard. Cancelled is reachable from Pending,
+        // Provisioning, and Running; terminal states map to 409 so callers
+        // can distinguish "too late" from "no such run".
+        if (!RunStatusTransitions.CanTransition(run.Status, RunStatus.Cancelled))
         {
-            // Run.TransitionTo enforces the AP1 state-machine. Pending,
-            // Provisioning, and Running can all move to Cancelled; terminal
-            // states cannot — that's the 409 path below.
-            run.TransitionTo(RunStatus.Cancelled);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Conflict(new { error = ex.Message });
+            return Conflict(new
+            {
+                error = $"Run {run.Id} is in terminal status {run.Status}; cannot cancel.",
+            });
         }
 
+        // AP7 (rivoli-ai/andy-containers#109). Two paths:
+        //
+        // (a) An AP6 runner is active for this Run. We signal its linked
+        //     CTS via the registry; the runner's catch-OCE path calls
+        //     TerminateAsync, which transitions to Cancelled and appends
+        //     the cancelled outbox event. We await that terminal write
+        //     up to CancelGrace so the response reflects committed state.
+        //
+        // (b) No runner is registered (Pending row not yet picked up by
+        //     AP5, or runner already exited). We flip the row ourselves
+        //     and emit the cancelled outbox event so subscribers see a
+        //     terminal subject either way.
+        if (_cancellation.TryCancel(run.Id))
+        {
+            bool terminal;
+            try
+            {
+                terminal = await _cancellation.WaitForTerminalAsync(run.Id, CancelGrace, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Caller hung up. Don't escalate — the runner will still
+                // observe its own cancellation and write terminal state.
+                throw;
+            }
+
+            await _db.Entry(run).ReloadAsync(ct);
+
+            if (!terminal)
+            {
+                // Runner ignored its CTS for 30s. Force the transition
+                // and emit the event ourselves so the row doesn't stay
+                // Running forever; AP9 metrics can flag this on the
+                // outbox side via a duplicate subject if the runner
+                // eventually wakes up.
+                _logger.LogWarning(
+                    "Run {RunId} cancel grace ({GraceSeconds}s) expired before runner terminal write; forcing Cancelled.",
+                    run.Id, (int)CancelGrace.TotalSeconds);
+                ForceCancel(run);
+                await _db.SaveChangesAsync(ct);
+            }
+
+            return Ok(RunDto.FromEntity(run));
+        }
+
+        // Pending-row path: no active runner to signal, flip directly.
+        ForceCancel(run);
         await _db.SaveChangesAsync(ct);
 
-        // AP3+ also needs to publish a cancel command so the running container
-        // actually stops; AP2 only flips the DB row. Document at the boundary.
         return Ok(RunDto.FromEntity(run));
+    }
+
+    // Best-effort transition + outbox emit. Used for the no-runner Pending
+    // path and the grace-expired escalation. CanTransition guards against
+    // the rare race where the runner's TerminateAsync committed between
+    // our reload and our save — in that case the row is already Cancelled
+    // and we leave it alone, but we still emit the outbox event so the
+    // caller's API contract ("cancel emits run.cancelled") holds.
+    private void ForceCancel(Run run)
+    {
+        if (RunStatusTransitions.CanTransition(run.Status, RunStatus.Cancelled))
+        {
+            run.TransitionTo(RunStatus.Cancelled);
+        }
+
+        _db.AppendAgentRunEvent(run, RunEventKind.Cancelled);
     }
 }

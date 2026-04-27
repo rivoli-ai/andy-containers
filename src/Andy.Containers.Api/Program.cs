@@ -249,6 +249,11 @@ try
     builder.Services.AddSingleton<IHeadlessConfigWriter, HeadlessConfigWriter>();
     builder.Services.AddScoped<IRunConfigurator, RunConfigurator>();
 
+    // AP7 (rivoli-ai/andy-containers#109). In-process registry of active
+    // runs so the cancel endpoint can signal the AP6 runner across
+    // request scopes. Singleton — runner registrations span requests.
+    builder.Services.AddSingleton<IRunCancellationRegistry, RunCancellationRegistry>();
+
     // AP6 (rivoli-ai/andy-containers#108). Headless runner: spawns
     // andy-cli inside the run's container, captures exit code, publishes
     // the terminal run.* event to the outbox.
