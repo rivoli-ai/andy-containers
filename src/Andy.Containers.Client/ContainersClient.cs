@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Andy.Containers.Messaging;
+using Andy.Containers.Models;
 
 namespace Andy.Containers.Client;
 
@@ -103,6 +106,88 @@ public sealed class ContainersClient
         var r = await _http.GetAsync("api/providers", ct);
         await EnsureSuccessAsync(r, ct);
         return (await r.Content.ReadFromJsonAsync<ProviderDto[]>(_json, ct))!;
+    }
+
+    // Runs (AP9 — rivoli-ai/andy-containers#111).
+    //
+    // Wire shapes are the server-side DTOs from Andy.Containers.Models:
+    // RunDto and RunEventDto. Deserializing those keeps the client and
+    // server schemas in lockstep at compile time — schema drift becomes
+    // a build break instead of a runtime KeyNotFoundException. The
+    // client lib already references Andy.Containers for Permissions
+    // constants, so this is no extra dependency.
+
+    public async Task<RunDto> CreateRunAsync(CreateRunRequest request, CancellationToken ct = default)
+    {
+        var r = await _http.PostAsJsonAsync("api/runs", request, _json, ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<RunDto>(_json, ct))!;
+    }
+
+    public async Task<RunDto> GetRunAsync(string id, CancellationToken ct = default)
+    {
+        var r = await _http.GetAsync($"api/runs/{id}", ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<RunDto>(_json, ct))!;
+    }
+
+    public async Task<RunDto> CancelRunAsync(string id, CancellationToken ct = default)
+    {
+        var r = await _http.PostAsync($"api/runs/{id}/cancel", null, ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<RunDto>(_json, ct))!;
+    }
+
+    /// <summary>
+    /// Stream lifecycle events for a run from
+    /// <c>GET /api/runs/{id}/events</c>. The server writes NDJSON
+    /// (one <see cref="RunEventDto"/> per line) and closes the
+    /// response when the run reaches a terminal status. Caller cancels
+    /// by disposing the enumerator or signalling <paramref name="ct"/>.
+    /// </summary>
+    public async IAsyncEnumerable<RunEventDto> StreamRunEventsAsync(
+        string id,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // HttpCompletionOption.ResponseHeadersRead unblocks Send before
+        // the body arrives so we can iterate as bytes land — without it
+        // HttpClient buffers the whole response and the streaming UX
+        // collapses to one batch at terminal.
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"api/runs/{id}/events");
+        using var response = await _http.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, ct);
+        await EnsureSuccessAsync(response, ct);
+
+        // EventJson is the canonical wire-shape options (snake_case +
+        // ADR-0001-aligned converters). Using the server-side shared
+        // options keeps the client deserialization aligned with what
+        // the server actually wrote.
+        var jsonOptions = EventJson.Options;
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+
+        while (!ct.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(ct);
+            if (line is null) yield break;
+            if (line.Length == 0) continue;
+
+            RunEventDto? evt;
+            try
+            {
+                evt = JsonSerializer.Deserialize<RunEventDto>(line, jsonOptions);
+            }
+            catch (JsonException)
+            {
+                // Skip malformed lines rather than killing the stream;
+                // the server should never produce them, but a partial
+                // line at disconnect would otherwise blow up the CLI.
+                continue;
+            }
+
+            if (evt is not null) yield return evt;
+        }
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)

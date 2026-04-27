@@ -31,6 +31,9 @@ rootCommand.AddCommand(ContainerCommands.CreateExecCommand());
 rootCommand.AddCommand(ContainerCommands.CreateStatsCommand());
 rootCommand.AddCommand(ConnectCommand.Create());
 
+// Run commands (AP9 — rivoli-ai/andy-containers#111).
+rootCommand.AddCommand(RunCommands.Create());
+
 // Workspace commands (stubs for future)
 var workspaceCommand = new Command("workspace", "Manage workspaces");
 workspaceCommand.AddCommand(new Command("create", "Create a workspace"));
