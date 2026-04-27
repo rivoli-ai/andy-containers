@@ -1,0 +1,20 @@
+# X2 (rivoli-ai/andy-containers#91). Desktop profile — full GUI
+# (X server / VNC) for agents that need to drive a browser, IDE, or
+# graphical tool. SSO-scoped credentials because long-lived desktop
+# sessions outlive single runs and need org-broad auth.
+code: desktop
+display_name: Desktop session
+kind: Desktop
+base_image_ref: ghcr.io/rivoli-ai/andy-desktop:latest
+
+capabilities:
+  # Wildcard egress — desktop sessions are interactive; a browser
+  # alone needs the open web. Audit defaults to Standard since the
+  # human in the loop is the primary control.
+  network_allowlist:
+    - "*"
+  # SSO-scoped per the issue contract; OrganizationScoped is the
+  # closest enum value (org-broad credentials, not per-run-scoped).
+  secrets_scope: OrganizationScoped
+  has_gui: true
+  audit_mode: Standard
