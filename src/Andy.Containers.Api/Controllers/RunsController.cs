@@ -12,9 +12,9 @@ namespace Andy.Containers.Api.Controllers;
 /// <summary>
 /// AP2 (rivoli-ai/andy-containers#104). Entry point for agent runs:
 /// submit a run spec, observe its state, request cancellation. Container
-/// provisioning / selection is AP5's job — at AP2 the run lands as
-/// <see cref="RunStatus.Pending"/> with <see cref="Run.ContainerId"/> null,
-/// and the dispatcher (when it lands) takes over.
+/// selection and mode-routing are owned by <see cref="IRunModeDispatcher"/>
+/// (AP5); the controller persists the run as <see cref="RunStatus.Pending"/>,
+/// runs the configurator, then hands off.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
@@ -23,18 +23,18 @@ public class RunsController : ControllerBase
 {
     private readonly ContainersDbContext _db;
     private readonly IRunConfigurator _configurator;
-    private readonly IHeadlessRunner _runner;
+    private readonly IRunModeDispatcher _dispatcher;
     private readonly ILogger<RunsController> _logger;
 
     public RunsController(
         ContainersDbContext db,
         IRunConfigurator configurator,
-        IHeadlessRunner runner,
+        IRunModeDispatcher dispatcher,
         ILogger<RunsController> logger)
     {
         _db = db;
         _configurator = configurator;
-        _runner = runner;
+        _dispatcher = dispatcher;
         _logger = logger;
     }
 
@@ -93,26 +93,22 @@ public class RunsController : ControllerBase
         if (!configResult.IsSuccess)
         {
             _logger.LogWarning(
-                "Run {RunId} persisted as Pending but configurator failed: {Error}. AP5/AP6 will retry.",
+                "Run {RunId} persisted as Pending but configurator failed: {Error}. Skipping dispatch; row stays Pending.",
                 run.Id, configResult.Error);
         }
-        else if (run.ContainerId is not null)
+        else
         {
-            // AP6 (rivoli-ai/andy-containers#108). Spawn andy-cli headless
-            // synchronously so the controller blocks until the run is
-            // terminal. AP5 will move this onto a background queue once
-            // ContainerId assignment is async; for now ContainerId is null
-            // until that lands, so this branch is effectively dormant in
-            // production traffic and exercised primarily by tests.
-            try
+            // AP5 (rivoli-ai/andy-containers#107). Hand off to the mode
+            // dispatcher, which selects the container, transitions to
+            // Provisioning, and (for headless runs) drives the run to a
+            // terminal event. Failures are logged and the row stays as the
+            // dispatcher left it; nothing is rolled back.
+            var dispatch = await _dispatcher.DispatchAsync(run, configResult.Path!, ct);
+            if (dispatch.Kind is RunDispatchKind.Failed or RunDispatchKind.NotImplemented)
             {
-                await _runner.StartAsync(run, configResult.Path!, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "Run {RunId} headless spawn threw before terminal write: {Message}",
-                    run.Id, ex.Message);
+                _logger.LogWarning(
+                    "Run {RunId} dispatch returned {Kind}: {Error}",
+                    run.Id, dispatch.Kind, dispatch.Error);
             }
         }
 

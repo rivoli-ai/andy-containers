@@ -24,7 +24,7 @@ public class RunsControllerTests : IDisposable
     private readonly ContainersDbContext _db;
     private readonly RunsController _controller;
     private readonly Mock<IRunConfigurator> _configurator;
-    private readonly Mock<IHeadlessRunner> _runner;
+    private readonly Mock<IRunModeDispatcher> _dispatcher;
 
     public RunsControllerTests()
     {
@@ -36,19 +36,19 @@ public class RunsControllerTests : IDisposable
         _configurator
             .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/noop/config.json"));
-        // AP6 wires the runner into Create. Default stub: no-op outcome.
-        // Runs without a ContainerId never invoke it (the controller skips
-        // the call), and the dedicated HeadlessRunnerTests cover its surface.
-        _runner = new Mock<IHeadlessRunner>();
-        _runner
-            .Setup(r => r.StartAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HeadlessRunOutcome
+        // AP5 wires the dispatcher into Create. Default stub: Started outcome
+        // (the controller doesn't act on the result besides logging). The
+        // dedicated RunModeDispatcherTests cover routing/container selection.
+        _dispatcher = new Mock<IRunModeDispatcher>();
+        _dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RunDispatchOutcome.Started(new HeadlessRunOutcome
             {
                 Kind = RunEventKind.Finished,
                 Status = RunStatus.Succeeded,
                 ExitCode = 0,
-            });
-        _controller = new RunsController(_db, _configurator.Object, _runner.Object, NullLogger<RunsController>.Instance);
+            }));
+        _controller = new RunsController(_db, _configurator.Object, _dispatcher.Object, NullLogger<RunsController>.Instance);
     }
 
     public void Dispose()
@@ -81,7 +81,7 @@ public class RunsControllerTests : IDisposable
 
         dto.Id.Should().NotBeEmpty();
         dto.Status.Should().Be(RunStatus.Pending);
-        dto.ContainerId.Should().BeNull("AP5 mode dispatcher hasn't run yet");
+        dto.ContainerId.Should().BeNull("the dispatcher mock here doesn't simulate container selection");
         dto.AgentId.Should().Be("triage-agent");
         dto.WorkspaceRef.Branch.Should().Be("main");
         dto.CorrelationId.Should().NotBeEmpty("controller mints a root id when caller doesn't supply one");
@@ -121,10 +121,12 @@ public class RunsControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task Create_DoesNotInvokeRunner_WhenContainerIdNull()
+    public async Task Create_InvokesDispatcher_AfterConfiguratorSuccess()
     {
-        // AP6 wiring: AP5 hasn't run yet, so ContainerId is null and the
-        // controller must not attempt to spawn — the runner needs a target.
+        // AP5 wiring: configurator success hands off to the dispatcher with
+        // the persisted Run + the config path. Container selection lives in
+        // the dispatcher; the controller no longer cares whether ContainerId
+        // is set when Create returns.
         var request = new CreateRunRequest
         {
             AgentId = "x",
@@ -134,52 +136,43 @@ public class RunsControllerTests : IDisposable
 
         await _controller.Create(request, CancellationToken.None);
 
-        _runner.Verify(r => r.StartAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task Create_InvokesRunner_WhenConfiguratorSucceeds_AndContainerIdPresent()
-    {
-        // Once AP5 lands and assigns a ContainerId, the controller hands
-        // off to the runner with the configurator's path. We simulate that
-        // by intercepting the configurator and stamping ContainerId on the
-        // run before the runner check fires.
-        var containerId = Guid.NewGuid();
-        _configurator
-            .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
-            .Callback<Run, CancellationToken>((r, _) => r.ContainerId = containerId)
-            .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/runs/x/config.json"));
-
-        var request = new CreateRunRequest
-        {
-            AgentId = "x",
-            Mode = RunMode.Headless,
-            EnvironmentProfileId = Guid.NewGuid(),
-        };
-
-        await _controller.Create(request, CancellationToken.None);
-
-        _runner.Verify(r => r.StartAsync(
-            It.Is<Run>(rn => rn.ContainerId == containerId),
-            "/tmp/runs/x/config.json",
+        _dispatcher.Verify(d => d.DispatchAsync(
+            It.Is<Run>(rn => rn.Id != Guid.Empty),
+            "/tmp/noop/config.json",
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task Create_RunnerThrows_DoesNotRollBackRun()
+    public async Task Create_DoesNotInvokeDispatcher_WhenConfiguratorFails()
     {
-        // Spawn failures must not roll the row back — the configurator's
-        // existing failure semantics apply to AP6 too, so the Run row
-        // persists for inspection / cleanup.
-        var containerId = Guid.NewGuid();
+        // No config path means nothing to hand off — the row stays Pending
+        // and the dispatcher is skipped entirely.
         _configurator
             .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
-            .Callback<Run, CancellationToken>((r, _) => r.ContainerId = containerId)
-            .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/runs/x/config.json"));
-        _runner
-            .Setup(r => r.StartAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("kaboom"));
+            .ReturnsAsync(RunConfiguratorResult.Fail("agent not found"));
+
+        var request = new CreateRunRequest
+        {
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+        };
+
+        await _controller.Create(request, CancellationToken.None);
+
+        _dispatcher.Verify(d => d.DispatchAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Create_DispatcherFails_DoesNotRollBackRun()
+    {
+        // A Failed/NotImplemented dispatch must not roll the row back — the
+        // run is persisted for inspection / retry. The controller logs and
+        // returns 201; observability comes from the persisted row + outbox.
+        _dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RunDispatchOutcome.Failed("workspace not found"));
 
         var request = new CreateRunRequest
         {
