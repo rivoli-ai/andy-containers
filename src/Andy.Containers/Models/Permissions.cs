@@ -30,6 +30,13 @@ public static class Permissions
     public const string RunWrite = "run:write";
     public const string RunRead = "run:read";
     public const string RunExecute = "run:execute";
+
+    // Environment-profile permissions (Epic X). Catalog is read-only
+    // today (X3) — write/manage scopes will land if/when an operator
+    // UI requires CRUD on the seeded profiles. EnvironmentRead is
+    // granted to every role since the catalog is governance metadata
+    // every authenticated user benefits from seeing.
+    public const string EnvironmentRead = "environment:read";
 }
 
 public static class OrgRoles
@@ -47,18 +54,21 @@ public static class OrgRoles
             Permissions.TemplatePublish, Permissions.TemplateManage,
             Permissions.ProviderRead, Permissions.ProviderManage,
             Permissions.ApiKeyManage, Permissions.ApiKeyAdmin,
-            Permissions.RunWrite, Permissions.RunRead, Permissions.RunExecute
+            Permissions.RunWrite, Permissions.RunRead, Permissions.RunExecute,
+            Permissions.EnvironmentRead
         ],
         Editor => [
             Permissions.ImageCreate, Permissions.ImageRead, Permissions.ImageBuild,
             Permissions.TemplateCreate, Permissions.TemplateRead, Permissions.TemplateManage,
             Permissions.ApiKeyManage,
-            Permissions.RunWrite, Permissions.RunRead, Permissions.RunExecute
+            Permissions.RunWrite, Permissions.RunRead, Permissions.RunExecute,
+            Permissions.EnvironmentRead
         ],
         Viewer => [
             Permissions.ImageRead, Permissions.TemplateRead, Permissions.ProviderRead,
             Permissions.ApiKeyManage,
-            Permissions.RunRead
+            Permissions.RunRead,
+            Permissions.EnvironmentRead
         ],
         _ => []
     };
