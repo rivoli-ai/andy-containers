@@ -25,6 +25,7 @@ public class ContainersDbContext : DbContext
     public DbSet<ImageBuildRecord> ImageBuildRecords => Set<ImageBuildRecord>();
     public DbSet<OutboxEntry> OutboxEntries => Set<OutboxEntry>();
     public DbSet<Run> Runs => Set<Run>();
+    public DbSet<EnvironmentProfile> EnvironmentProfiles => Set<EnvironmentProfile>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -272,6 +273,26 @@ public class ContainersDbContext : DbContext
             {
                 wr.Property(w => w.WorkspaceId).HasColumnName("WorkspaceRef_WorkspaceId");
                 wr.Property(w => w.Branch).HasColumnName("WorkspaceRef_Branch").HasMaxLength(200);
+            });
+        });
+
+        // EnvironmentProfile — catalog of runtime shapes (X1, rivoli-ai/andy-containers#90).
+        // Capabilities is stored as JSON via OwnsOne(...).ToJson() so the envelope can
+        // grow without a per-field migration; Postgres uses native jsonb, SQLite stores
+        // it as TEXT — both round-trip the same CLR object.
+        modelBuilder.Entity<EnvironmentProfile>(e =>
+        {
+            e.HasKey(p => p.Id);
+            e.Property(p => p.Name).IsRequired().HasMaxLength(100);
+            e.Property(p => p.DisplayName).IsRequired().HasMaxLength(200);
+            e.Property(p => p.BaseImageRef).IsRequired().HasMaxLength(500);
+            e.Property(p => p.Kind).HasConversion<string>().HasMaxLength(32);
+            e.HasIndex(p => p.Name).IsUnique();
+            e.OwnsOne(p => p.Capabilities, c =>
+            {
+                c.ToJson();
+                c.Property(x => x.SecretsScope).HasConversion<string>();
+                c.Property(x => x.AuditMode).HasConversion<string>();
             });
         });
     }
