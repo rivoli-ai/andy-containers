@@ -51,6 +51,17 @@ public class CreateContainerRequest
     // run.* lifecycle events (finished/failed/cancelled) carry this id so
     // the caller (e.g. andy-issues) can tie the run back to a UserStory.
     public Guid? StoryId { get; set; }
+
+    /// <summary>
+    /// X4 (rivoli-ai/andy-containers#93). When set, the bound
+    /// <c>EnvironmentProfile</c> overrides the template's base image
+    /// (with <c>profile.BaseImageRef</c>) and the GUI sidecar
+    /// behaviour (Headless/Terminal → no VNC; Desktop → VNC). The
+    /// template still supplies resources, scripts, and dependencies.
+    /// X5 wires this from the workspace-create surface; here the
+    /// pipeline just propagates whatever the caller sets.
+    /// </summary>
+    public Guid? EnvironmentProfileId { get; set; }
 }
 
 public class GitRepositoryConfig

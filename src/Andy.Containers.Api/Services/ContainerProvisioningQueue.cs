@@ -20,7 +20,14 @@ public record ContainerProvisionJob(
     string? OwnerEmail = null,
     string? OwnerPreferredUsername = null,
     string? TemplateName = null,
-    string? ProviderName = null);
+    string? ProviderName = null,
+    // X4 (rivoli-ai/andy-containers#93). EnvironmentProfile context for
+    // observability — TemplateBaseImage and GuiType are already resolved
+    // by the orchestration service when the request bound a profile, so
+    // the worker doesn't need to re-evaluate. These fields land in log
+    // lines and let downstream events carry the profile correlation.
+    Guid? EnvironmentProfileId = null,
+    string? EnvironmentKind = null);
 
 public class ContainerProvisioningQueue
 {
