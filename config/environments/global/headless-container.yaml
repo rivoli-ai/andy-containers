@@ -1,0 +1,20 @@
+# X2 (rivoli-ai/andy-containers#91). Headless container profile — the
+# default for triage / plan / execute agents that don't need a TTY or
+# GUI. Strict audit because every tool call is captured pre-redaction.
+code: headless-container
+display_name: Headless container
+kind: HeadlessContainer
+base_image_ref: ghcr.io/rivoli-ai/andy-headless:latest
+
+capabilities:
+  # Restricted egress for unattended agents — only platform services and
+  # canonical package mirrors. Operators can broaden this per-deployment
+  # via X3 once the catalog endpoint lands.
+  network_allowlist:
+    - registry.rivoli.ai
+    - api.github.com
+    - pypi.org
+    - nuget.org
+  secrets_scope: WorkspaceScoped
+  has_gui: false
+  audit_mode: Strict

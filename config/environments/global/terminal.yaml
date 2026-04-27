@@ -1,0 +1,18 @@
+# X2 (rivoli-ai/andy-containers#91). Terminal profile — the user
+# attaches via TTY (PTY exec) and drives the agent interactively.
+# Standard audit; broader network because human-in-the-loop sessions
+# routinely reach arbitrary documentation and registries.
+code: terminal
+display_name: Terminal session
+kind: Terminal
+base_image_ref: ghcr.io/rivoli-ai/andy-terminal:latest
+
+capabilities:
+  # Wildcard egress: a TTY session is bounded by a human, not by an
+  # agent loop, so the network policy is permissive. Workspaces that
+  # need locked-down profiles override this via X3 / X5.
+  network_allowlist:
+    - "*"
+  secrets_scope: WorkspaceScoped
+  has_gui: false
+  audit_mode: Standard

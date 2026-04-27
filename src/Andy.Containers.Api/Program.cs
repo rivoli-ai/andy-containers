@@ -298,6 +298,15 @@ try
         else
             await db.Database.EnsureCreatedAsync();
         await DataSeeder.SeedAsync(db);
+
+        // X2 (rivoli-ai/andy-containers#91). Load the EnvironmentProfile
+        // catalog from config/environments/global/*.yaml. Idempotent —
+        // existing rows are left alone so operator hand-edits via the
+        // X3 catalog API are preserved across restarts.
+        var seederLogger = scope.ServiceProvider
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger(typeof(EnvironmentProfileSeeder));
+        await EnvironmentProfileSeeder.SeedAsync(db, app.Environment, seederLogger);
     }
 
     app.UseHttpsRedirection();
