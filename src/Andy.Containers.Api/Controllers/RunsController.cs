@@ -1,7 +1,9 @@
+using System.Text.Json;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Andy.Rbac.Authorization;
@@ -228,5 +230,45 @@ public class RunsController : ControllerBase
         }
 
         _db.AppendAgentRunEvent(run, RunEventKind.Cancelled);
+    }
+
+    /// <summary>
+    /// AP9 (rivoli-ai/andy-containers#111). Stream lifecycle events for a
+    /// run as newline-delimited JSON. Each line is a serialised
+    /// <see cref="RunEventDto"/>; the response closes when the run reaches
+    /// a terminal status (after a final drain pass) or the caller
+    /// disconnects. Used by <c>andy-containers-cli runs events</c>.
+    /// </summary>
+    /// <remarks>
+    /// We write the response body directly rather than returning
+    /// <c>IAsyncEnumerable&lt;RunEventDto&gt;</c> so each event is flushed
+    /// to the wire as it lands — the default JSON streaming serializer
+    /// buffers and would only flush at chunk boundaries, which defeats
+    /// the live-stream UX. Returns 404 if the run is unknown so callers
+    /// don't sit on an empty stream forever.
+    /// </remarks>
+    [HttpGet("{id:guid}/events")]
+    [RequirePermission("run:read")]
+    public async Task Events(Guid id, CancellationToken ct)
+    {
+        var exists = await _db.Runs.AsNoTracking().AnyAsync(r => r.Id == id, ct);
+        if (!exists)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        Response.StatusCode = StatusCodes.Status200OK;
+        Response.ContentType = "application/x-ndjson";
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        await foreach (var evt in RunEventStream.AsyncEnumerate(_db, id, ct: ct))
+        {
+            var json = JsonSerializer.Serialize(evt, EventJson.Options);
+            await Response.WriteAsync(json, ct);
+            await Response.WriteAsync("\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
     }
 }

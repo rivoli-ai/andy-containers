@@ -4,6 +4,7 @@ using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
@@ -388,6 +389,64 @@ public class RunsControllerTests : IDisposable
         var entry = _db.OutboxEntries.Should().ContainSingle(
             "grace-expired path must still produce a terminal subject for downstream consumers").Subject;
         entry.Subject.Should().EndWith($".{run.Id}.cancelled");
+    }
+
+    // AP9 (#111). NDJSON events endpoint: 404 for missing runs, otherwise
+    // streams one RunEventDto per line. We exercise it directly against
+    // a MemoryStream-backed Response.Body — no WebApplicationFactory needed.
+
+    [Fact]
+    public async Task Events_NonexistentRun_ReturnsNotFound_NoBody()
+    {
+        var responseStream = new MemoryStream();
+        _controller.ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+        {
+            HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+            {
+                Response = { Body = responseStream },
+            },
+        };
+
+        await _controller.Events(Guid.NewGuid(), CancellationToken.None);
+
+        _controller.Response.StatusCode.Should().Be(404);
+        responseStream.Length.Should().Be(0,
+            "404 must not stream NDJSON; the CLI distinguishes 'unknown run' from 'no events yet'");
+    }
+
+    [Fact]
+    public async Task Events_TerminalRunWithBackfill_WritesNdjson()
+    {
+        var run = SeedRun(RunStatus.Succeeded);
+        _db.AppendAgentRunEvent(run, RunEventKind.Finished, exitCode: 0, durationSeconds: 0.25);
+        await _db.SaveChangesAsync();
+
+        var responseStream = new MemoryStream();
+        _controller.ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+        {
+            HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+            {
+                Response = { Body = responseStream },
+            },
+        };
+
+        await _controller.Events(run.Id, CancellationToken.None);
+
+        _controller.Response.StatusCode.Should().Be(200);
+        _controller.Response.ContentType.Should().Be("application/x-ndjson");
+
+        responseStream.Seek(0, SeekOrigin.Begin);
+        using var reader = new StreamReader(responseStream);
+        var body = await reader.ReadToEndAsync();
+        var lines = body.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        lines.Should().ContainSingle();
+
+        var evt = System.Text.Json.JsonSerializer.Deserialize<RunEventDto>(
+            lines[0], EventJson.Options);
+        evt.Should().NotBeNull();
+        evt!.RunId.Should().Be(run.Id);
+        evt.Kind.Should().Be("finished");
+        evt.ExitCode.Should().Be(0);
     }
 
     private Run SeedRun(RunStatus status)

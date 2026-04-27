@@ -232,76 +232,12 @@ public class RunsMcpTools
         if (!await EnsurePermission(Permissions.RunRead, ct)) yield break;
         if (!Guid.TryParse(runId, out var id)) yield break;
 
-        var subjectPrefix = $"andy.containers.events.run.{id}.";
-        DateTimeOffset? cursor = null;
-        var sawTerminal = false;
-
-        while (!ct.IsCancellationRequested)
+        // AP9 (rivoli-ai/andy-containers#111). Shared outbox-poll loop —
+        // identical semantics to the HTTP NDJSON endpoint and the CLI
+        // events command.
+        await foreach (var evt in RunEventStream.AsyncEnumerate(_db, id, EventsPollInterval, ct))
         {
-            // Fetch any new outbox rows for this run, ordered by creation.
-            // We key the cursor on CreatedAt + ascending id ordering by
-            // pulling a bounded batch and ordering client-side — same
-            // constraint OutboxDispatcher hits with SQLite (DateTimeOffset
-            // ORDER BY isn't translatable). 64 rows / tick is plenty for
-            // a single-run view.
-            var query = _db.OutboxEntries
-                .AsNoTracking()
-                .Where(e => e.Subject.StartsWith(subjectPrefix));
-            if (cursor is not null)
-            {
-                query = query.Where(e => e.CreatedAt > cursor.Value);
-            }
-
-            var batch = (await query.Take(64).ToListAsync(ct))
-                .OrderBy(e => e.CreatedAt)
-                .ToList();
-
-            foreach (var entry in batch)
-            {
-                var dto = RunEventDto.FromOutbox(entry);
-                if (dto is null) continue;
-                cursor = entry.CreatedAt;
-                yield return dto;
-            }
-
-            if (sawTerminal && batch.Count == 0)
-            {
-                // We saw the terminal status on a prior tick AND this
-                // tick produced nothing new — every event committed
-                // before the terminal write has been delivered.
-                yield break;
-            }
-
-            // Re-check the row's status. Reading the OutboxEntry alone
-            // isn't sufficient because the controller's force-cancel
-            // path may flip the row before its outbox row appears
-            // (they commit together, but the read-fan-out can interleave).
-            var current = await _db.Runs
-                .AsNoTracking()
-                .Where(r => r.Id == id)
-                .Select(r => (RunStatus?)r.Status)
-                .FirstOrDefaultAsync(ct);
-            if (current is null)
-            {
-                // Run was deleted out from under us — close cleanly.
-                yield break;
-            }
-            if (RunStatusTransitions.IsTerminal(current.Value))
-            {
-                sawTerminal = true;
-                // One more pass to drain any event that landed between
-                // this cursor and the terminal write before we exit.
-                continue;
-            }
-
-            try
-            {
-                await Task.Delay(EventsPollInterval, ct);
-            }
-            catch (OperationCanceledException)
-            {
-                yield break;
-            }
+            yield return evt;
         }
     }
 
@@ -334,60 +270,3 @@ public class RunsMcpTools
     }
 }
 
-/// <summary>
-/// AP8 wire-shape for an event yielded by <c>run.events</c>. One DTO per
-/// outbox row. Carries the parsed <see cref="RunEventPayload"/> fields plus
-/// the wire metadata MCP consumers want without making them re-parse JSON.
-/// </summary>
-public sealed record RunEventDto
-{
-    public required Guid RunId { get; init; }
-    public required string Subject { get; init; }
-    /// <summary>One of <c>finished</c>, <c>failed</c>, <c>cancelled</c>, <c>timeout</c>.</summary>
-    public required string Kind { get; init; }
-    /// <summary>Mirrors the run's status at emission (e.g. <c>Cancelled</c>, <c>Succeeded</c>).</summary>
-    public required string Status { get; init; }
-    public int? ExitCode { get; init; }
-    public double? DurationSeconds { get; init; }
-    public required DateTimeOffset Timestamp { get; init; }
-    public required Guid CorrelationId { get; init; }
-
-    /// <summary>
-    /// Parse an <see cref="OutboxEntry"/> into a <see cref="RunEventDto"/>.
-    /// Returns null on a malformed payload — callers skip rather than
-    /// surfacing a parse error mid-stream.
-    /// </summary>
-    public static RunEventDto? FromOutbox(OutboxEntry entry)
-    {
-        RunEventPayload? payload;
-        try
-        {
-            payload = JsonSerializer.Deserialize<RunEventPayload>(entry.PayloadJson, EventJson.Options);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-
-        if (payload is null) return null;
-
-        // Subject suffix after the last '.' is the kind: e.g.
-        // andy.containers.events.run.{id}.cancelled → "cancelled".
-        var lastDot = entry.Subject.LastIndexOf('.');
-        var kind = lastDot >= 0 && lastDot < entry.Subject.Length - 1
-            ? entry.Subject[(lastDot + 1)..]
-            : entry.Subject;
-
-        return new RunEventDto
-        {
-            RunId = payload.RunId,
-            Subject = entry.Subject,
-            Kind = kind,
-            Status = payload.Status,
-            ExitCode = payload.ExitCode,
-            DurationSeconds = payload.DurationSeconds,
-            Timestamp = entry.CreatedAt,
-            CorrelationId = entry.CorrelationId,
-        };
-    }
-}
