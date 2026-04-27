@@ -1007,4 +1007,140 @@ public class ContainerOrchestrationServiceTests : IDisposable
         var container = await service.CreateContainerAsync(request, CancellationToken.None);
         container.Name.Should().Be("still-allowed");
     }
+
+    // X4 (rivoli-ai/andy-containers#93). EnvironmentProfile resolution.
+    // Pin the contract: when a profile is bound, its BaseImageRef wins
+    // over the template's image and Kind dictates GuiType. Without a
+    // profile, behaviour matches the template (back-compat).
+
+    [Fact]
+    public async Task CreateContainer_HeadlessProfile_OverridesImage_AndSkipsVnc()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        // Template has a desktop GuiType so the profile override has
+        // something to flip — proves profile beats template, not just
+        // adds when the template is silent.
+        template.GuiType = "vnc";
+        var profile = await SeedProfile(
+            "headless-container",
+            EnvironmentKind.HeadlessContainer,
+            "ghcr.io/rivoli-ai/andy-headless:2026.04");
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "h1",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            EnvironmentProfileId = profile.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be("ghcr.io/rivoli-ai/andy-headless:2026.04");
+        job.GuiType.Should().Be("none",
+            "headless profile must drop the VNC sidecar even when the template asked for one");
+        job.EnvironmentProfileId.Should().Be(profile.Id);
+        job.EnvironmentKind.Should().Be("HeadlessContainer");
+    }
+
+    [Fact]
+    public async Task CreateContainer_TerminalProfile_KeepsNoVnc_UsesProfileImage()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.GuiType = "vnc";
+        var profile = await SeedProfile(
+            "terminal", EnvironmentKind.Terminal, "ghcr.io/rivoli-ai/andy-terminal:latest");
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "t1",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            EnvironmentProfileId = profile.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be("ghcr.io/rivoli-ai/andy-terminal:latest");
+        job.GuiType.Should().Be("none");
+        job.EnvironmentKind.Should().Be("Terminal");
+    }
+
+    [Fact]
+    public async Task CreateContainer_DesktopProfile_SetsVncGuiType()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        // Template has no GUI on its own; profile is what flips on VNC.
+        template.GuiType = "none";
+        var profile = await SeedProfile(
+            "desktop", EnvironmentKind.Desktop, "ghcr.io/rivoli-ai/andy-desktop:latest");
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "d1",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            EnvironmentProfileId = profile.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be("ghcr.io/rivoli-ai/andy-desktop:latest");
+        job.GuiType.Should().Be("vnc",
+            "desktop profile must enable the VNC sidecar even when the template was non-GUI");
+    }
+
+    [Fact]
+    public async Task CreateContainer_NoProfile_KeepsTemplateImageAndGui()
+    {
+        // Back-compat: callers that don't bind a profile see exactly
+        // the pre-X4 behaviour — template drives image + GUI.
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.GuiType = "vnc";
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "t1",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be(template.BaseImage);
+        job.GuiType.Should().Be("vnc");
+        job.EnvironmentProfileId.Should().BeNull();
+        job.EnvironmentKind.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CreateContainer_UnknownProfileId_Throws()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var act = () => _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "x",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            EnvironmentProfileId = Guid.NewGuid(),
+        }, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .Where(e => e.Message.Contains("EnvironmentProfile"));
+        _queue.Reader.TryRead(out _).Should().BeFalse(
+            "a missing profile must short-circuit before any provisioning is enqueued");
+    }
+
+    private async Task<EnvironmentProfile> SeedProfile(
+        string code, EnvironmentKind kind, string baseImageRef)
+    {
+        var profile = new EnvironmentProfile
+        {
+            Id = Guid.NewGuid(),
+            Name = code,
+            DisplayName = code,
+            Kind = kind,
+            BaseImageRef = baseImageRef,
+        };
+        _db.EnvironmentProfiles.Add(profile);
+        await _db.SaveChangesAsync();
+        return profile;
+    }
 }

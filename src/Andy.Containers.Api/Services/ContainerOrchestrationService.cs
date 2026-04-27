@@ -103,6 +103,24 @@ public class ContainerOrchestrationService : IContainerService
         if (template is null)
             throw new ArgumentException("Template not found");
 
+        // X4 (rivoli-ai/andy-containers#93). Resolve the bound profile
+        // (if any). When set, the profile's BaseImageRef and Kind
+        // override the template's image and GUI behaviour: Headless /
+        // Terminal kinds skip the VNC sidecar entirely; Desktop keeps
+        // it. The template still drives resources, scripts, and
+        // dependencies — only image + sidecar surface flip.
+        EnvironmentProfile? profile = null;
+        if (request.EnvironmentProfileId.HasValue)
+        {
+            profile = await _db.EnvironmentProfiles
+                .FirstOrDefaultAsync(p => p.Id == request.EnvironmentProfileId.Value, ct);
+            if (profile is null)
+            {
+                throw new ArgumentException(
+                    $"EnvironmentProfile '{request.EnvironmentProfileId.Value}' not found.");
+            }
+        }
+
         // Resolve or route to provider
         InfrastructureProvider provider;
         if (request.ProviderId.HasValue)
@@ -388,12 +406,22 @@ public class ContainerOrchestrationService : IContainerService
                 envVars[kv.Key] = kv.Value;
         }
 
+        // X4: profile-driven overrides. When a profile is bound, its
+        // BaseImageRef wins over the template's BaseImage, and the
+        // sidecar GuiType is derived from profile.Kind (Desktop → "vnc",
+        // Headless / Terminal → "none"). Without a profile, fall back
+        // to the template's existing values for full back-compat.
+        var effectiveImage = profile?.BaseImageRef ?? template.BaseImage;
+        var effectiveGuiType = profile is null
+            ? template.GuiType
+            : (profile.Kind == EnvironmentKind.Desktop ? "vnc" : "none");
+
         // Enqueue the provisioning job for the background worker
         var job = new ContainerProvisionJob(
             ContainerId: container.Id,
             ProviderId: provider.Id,
             ProviderCode: provider.Code,
-            TemplateBaseImage: template.BaseImage,
+            TemplateBaseImage: effectiveImage,
             ContainerName: container.Name,
             OwnerId: container.OwnerId,
             Resources: request.Resources,
@@ -402,12 +430,14 @@ public class ContainerOrchestrationService : IContainerService
             PostCreateScripts: postCreateScripts,
             CodeAssistant: codeAssistant,
             EnvironmentVariables: envVars,
-            GuiType: template.GuiType,
+            GuiType: effectiveGuiType,
             ContainerUser: container.ContainerUser ?? "root",
             OwnerEmail: request.OwnerEmail,
             OwnerPreferredUsername: request.OwnerPreferredUsername,
             TemplateName: template.Name,
-            ProviderName: provider.Name);
+            ProviderName: provider.Name,
+            EnvironmentProfileId: profile?.Id,
+            EnvironmentKind: profile?.Kind.ToString());
 
         await _queue.EnqueueAsync(job, ct);
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",
