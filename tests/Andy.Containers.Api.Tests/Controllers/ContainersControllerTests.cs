@@ -266,4 +266,39 @@ public class ContainersControllerTests : IDisposable
 
         result.Should().BeOfType<BadRequestObjectResult>();
     }
+
+    // MARK: Conductor #878 — quota → 422 mapping
+
+    [Fact]
+    public async Task Create_WhenQuotaExceeded_Returns422WithStructuredEnvelope()
+    {
+        // The Conductor side switches on the `code` field, not
+        // the human message. This test pins the envelope shape:
+        // - HTTP 422
+        // - code = "QUOTA_EXCEEDED_PER_USER_CONTAINERS"
+        // - limit + current + ownerId + message all present
+        var request = new CreateContainerRequest { Name = "would-be-33rd" };
+        _mockService
+            .Setup(s => s.CreateContainerAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new QuotaExceededException(limit: 32, current: 32, ownerId: "alice"));
+
+        var result = await _controller.Create(request, CancellationToken.None);
+
+        var unprocessable = result.Should().BeOfType<UnprocessableEntityObjectResult>().Subject;
+        unprocessable.StatusCode.Should().Be(422);
+
+        // Reflect the anonymous payload — what the wire format
+        // actually carries. Using reflection here (rather than
+        // a dedicated DTO) keeps the controller's payload shape
+        // free to evolve, while still pinning the contract that
+        // the Conductor side reads.
+        var payload = unprocessable.Value!;
+        var type = payload.GetType();
+        type.GetProperty("code")!.GetValue(payload).Should().Be(QuotaExceededException.Code);
+        type.GetProperty("limit")!.GetValue(payload).Should().Be(32);
+        type.GetProperty("current")!.GetValue(payload).Should().Be(32);
+        type.GetProperty("ownerId")!.GetValue(payload).Should().Be("alice");
+        type.GetProperty("message")!.GetValue(payload).Should().BeOfType<string>()
+            .Which.Should().Contain("32 containers");
+    }
 }

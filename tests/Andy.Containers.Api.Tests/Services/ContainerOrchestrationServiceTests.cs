@@ -6,6 +6,7 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -21,6 +22,8 @@ public class ContainerOrchestrationServiceTests : IDisposable
     private readonly ContainerProvisioningQueue _queue;
     private readonly Mock<IGitRepositoryProbeService> _mockProbeService;
     private readonly ContainerOrchestrationService _service;
+
+    private readonly IConfiguration _configuration;
 
     public ContainerOrchestrationServiceTests()
     {
@@ -39,7 +42,12 @@ public class ContainerOrchestrationServiceTests : IDisposable
         _mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string>());
 
-        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, new Mock<IApiKeyService>().Object, logger.Object);
+        // Conductor #878. Default test config — empty so the
+        // service falls back to DefaultPerUserSimultaneousLimit.
+        // Quota tests build their own with a tighter cap.
+        _configuration = new ConfigurationBuilder().Build();
+
+        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, new Mock<IApiKeyService>().Object, _configuration, logger.Object);
     }
 
     public void Dispose()
@@ -713,6 +721,12 @@ public class ContainerOrchestrationServiceTests : IDisposable
         // proves the orchestrator threads `taken` correctly into
         // GenerateAvoiding — without that wiring the generator
         // would happily re-pick a colliding name.
+        //
+        // OwnerId on the seeds is intentionally NOT "system":
+        // the friendly-name avoidance set is global (across all
+        // owners) but the #878 quota is per-owner, so seeding
+        // these with a different owner exhausts the namespace
+        // without tripping the requesting user's quota.
         foreach (var adj in Andy.Containers.FriendlyNameGenerator.Adjectives)
         foreach (var animal in Andy.Containers.FriendlyNameGenerator.Animals)
         {
@@ -721,7 +735,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
                 Name = $"seed-{adj}-{animal}",
                 TemplateId = template.Id,
                 ProviderId = provider.Id,
-                OwnerId = "system",
+                OwnerId = "namespace-occupier",
                 Status = ContainerStatus.Running,
                 FriendlyName = $"{adj}-{animal}"
             });
@@ -779,5 +793,218 @@ public class ContainerOrchestrationServiceTests : IDisposable
         // Suffix-free: the destroyed names didn't block the picker.
         container.FriendlyName.Should().NotEndWith("-2");
         container.FriendlyName.Should().MatchRegex("^[a-z]+-[a-z]+$");
+    }
+
+    // MARK: Conductor #878 — per-user simultaneous-container quota
+
+    /// <summary>
+    /// Builds a service that respects a custom per-user cap.
+    /// Mirrors the production constructor exactly — the only
+    /// difference is the IConfiguration we hand it.
+    /// </summary>
+    private ContainerOrchestrationService BuildServiceWithLimit(int limit)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Containers:PerUserSimultaneousLimit"] = limit.ToString()
+            })
+            .Build();
+        return new ContainerOrchestrationService(
+            _db, _mockRouting.Object, _mockFactory.Object, _queue,
+            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            config, new Mock<ILogger<ContainerOrchestrationService>>().Object);
+    }
+
+    private async Task SeedContainersFor(string ownerId, int count, ContainerStatus status, ContainerTemplate template, InfrastructureProvider provider)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            _db.Containers.Add(new Container
+            {
+                Name = $"seed-{ownerId}-{i}",
+                TemplateId = template.Id,
+                ProviderId = provider.Id,
+                OwnerId = ownerId,
+                Status = status
+            });
+        }
+        await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task CreateContainer_AtLimit_ThrowsQuotaExceeded()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext", Status = ContainerStatus.Running });
+
+        var service = BuildServiceWithLimit(3);
+        await SeedContainersFor("alice", 3, ContainerStatus.Running, template, provider);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "would-be-fourth",
+            OwnerId = "alice",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var act = () => service.CreateContainerAsync(request, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<QuotaExceededException>();
+        ex.Which.Limit.Should().Be(3);
+        ex.Which.Current.Should().Be(3);
+        ex.Which.OwnerId.Should().Be("alice");
+    }
+
+    [Fact]
+    public async Task CreateContainer_OneBelowLimit_Succeeds()
+    {
+        // Boundary: at limit-1 you should be allowed to create
+        // exactly one more. This pins the off-by-one — the check
+        // is `>= limit`, not `> limit`.
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext", Status = ContainerStatus.Running });
+
+        var service = BuildServiceWithLimit(3);
+        await SeedContainersFor("alice", 2, ContainerStatus.Running, template, provider);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "the-third-one",
+            OwnerId = "alice",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await service.CreateContainerAsync(request, CancellationToken.None);
+        container.Name.Should().Be("the-third-one");
+    }
+
+    [Fact]
+    public async Task CreateContainer_DestroyedRowsDoNotCountTowardsLimit()
+    {
+        // Destroyed containers no longer hold provider resources
+        // and aren't visible to the user, so their slots should
+        // recycle. Otherwise a user who hits the cap once and
+        // destroys everything is still locked out forever.
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext", Status = ContainerStatus.Running });
+
+        var service = BuildServiceWithLimit(3);
+        await SeedContainersFor("alice", 10, ContainerStatus.Destroyed, template, provider);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "rises-again",
+            OwnerId = "alice",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await service.CreateContainerAsync(request, CancellationToken.None);
+        container.Name.Should().Be("rises-again");
+    }
+
+    [Fact]
+    public async Task CreateContainer_PendingAndCreatingCountTowardsLimit()
+    {
+        // Pending / Creating rows are mid-provision but still
+        // consume a friendly name and (for Creating) a provider
+        // slot. They MUST count or a user could spam Create
+        // faster than the worker drains and burst past the cap.
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var service = BuildServiceWithLimit(3);
+        await SeedContainersFor("alice", 2, ContainerStatus.Pending, template, provider);
+        await SeedContainersFor("alice", 1, ContainerStatus.Creating, template, provider);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "would-be-fourth",
+            OwnerId = "alice",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var act = () => service.CreateContainerAsync(request, CancellationToken.None);
+        await act.Should().ThrowAsync<QuotaExceededException>();
+    }
+
+    [Fact]
+    public async Task CreateContainer_QuotaIsScopedPerOwnerId()
+    {
+        // Bob's containers must NOT count against Alice's cap.
+        // Otherwise the limit becomes a global limit, which is a
+        // separate concern (out of scope for #878).
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext", Status = ContainerStatus.Running });
+
+        var service = BuildServiceWithLimit(3);
+        await SeedContainersFor("bob", 100, ContainerStatus.Running, template, provider);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "alices-first",
+            OwnerId = "alice",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await service.CreateContainerAsync(request, CancellationToken.None);
+        container.Name.Should().Be("alices-first");
+    }
+
+    [Fact]
+    public async Task CreateContainer_DefaultLimitAppliesWhenConfigMissing()
+    {
+        // No config key set → service falls back to 32. Verify
+        // by seeding 32 then asserting the 33rd create fails.
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        // _service in the constructor uses an empty IConfiguration.
+        await SeedContainersFor("alice", ContainerOrchestrationService.DefaultPerUserSimultaneousLimit,
+            ContainerStatus.Running, template, provider);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "one-too-many",
+            OwnerId = "alice",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var act = () => _service.CreateContainerAsync(request, CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<QuotaExceededException>();
+        ex.Which.Limit.Should().Be(ContainerOrchestrationService.DefaultPerUserSimultaneousLimit);
+    }
+
+    [Fact]
+    public async Task CreateContainer_NegativeOrZeroConfigFallsBackToDefault()
+    {
+        // Defensive: if someone fat-fingers the config to 0 or
+        // -1, that would mean "no creates allowed at all" which
+        // is almost certainly not intended. Treat as default
+        // rather than locking everyone out.
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext", Status = ContainerStatus.Running });
+
+        var service = BuildServiceWithLimit(0);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "still-allowed",
+            OwnerId = "alice",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await service.CreateContainerAsync(request, CancellationToken.None);
+        container.Name.Should().Be("still-allowed");
     }
 }

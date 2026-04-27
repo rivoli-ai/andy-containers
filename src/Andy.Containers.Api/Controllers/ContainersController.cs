@@ -143,6 +143,22 @@ public class ContainersController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (QuotaExceededException ex)
+        {
+            // Conductor #878. 422 carries a stable machine-readable
+            // code so the Conductor side can switch on it rather
+            // than parsing the human message. The structured payload
+            // (limit + current + ownerId) lets the UI render an
+            // accurate alert without a second round-trip.
+            return UnprocessableEntity(new
+            {
+                code = QuotaExceededException.Code,
+                message = $"You already have {ex.Current} containers running. Destroy one before creating another.",
+                limit = ex.Limit,
+                current = ex.Current,
+                ownerId = ex.OwnerId
+            });
+        }
     }
 
     [HttpPost("{id:guid}/start")]
