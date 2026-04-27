@@ -7,6 +7,7 @@ using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ConnectionInfo = Andy.Containers.Abstractions.ConnectionInfo;
 
@@ -20,7 +21,17 @@ public class ContainerOrchestrationService : IContainerService
     private readonly ContainerProvisioningQueue _queue;
     private readonly IGitRepositoryProbeService _probeService;
     private readonly IApiKeyService _apiKeyService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<ContainerOrchestrationService> _logger;
+
+    /// <summary>
+    /// Conductor #878. Default per-user simultaneous-container
+    /// cap when the config key is missing or unparseable. Sized
+    /// at 32 to keep friendly-name collision probability under
+    /// 0.5% (the wordlist has ~4K combinations) and to flag at
+    /// roughly the host RAM ceiling for a typical dev workstation.
+    /// </summary>
+    public const int DefaultPerUserSimultaneousLimit = 32;
 
     public ContainerOrchestrationService(
         ContainersDbContext db,
@@ -29,6 +40,7 @@ public class ContainerOrchestrationService : IContainerService
         ContainerProvisioningQueue queue,
         IGitRepositoryProbeService probeService,
         IApiKeyService apiKeyService,
+        IConfiguration configuration,
         ILogger<ContainerOrchestrationService> logger)
     {
         _db = db;
@@ -37,7 +49,27 @@ public class ContainerOrchestrationService : IContainerService
         _queue = queue;
         _probeService = probeService;
         _apiKeyService = apiKeyService;
+        _configuration = configuration;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Reads the current per-user simultaneous-container cap.
+    /// Re-read on every call (no caching) so an admin bumping
+    /// the setting takes effect on the next CreateContainer
+    /// request — matches the spec for #878.
+    /// </summary>
+    private int GetPerUserSimultaneousLimit()
+    {
+        var configured = _configuration.GetValue<int?>("Containers:PerUserSimultaneousLimit");
+        // Reject zero / negative — those would mean "no creates
+        // allowed at all" which is not a useful state and is
+        // almost certainly a config typo. Treat as default.
+        if (configured is null || configured.Value <= 0)
+        {
+            return DefaultPerUserSimultaneousLimit;
+        }
+        return configured.Value;
     }
 
     public async Task<Container> CreateContainerAsync(CreateContainerRequest request, CancellationToken ct)
@@ -45,6 +77,23 @@ public class ContainerOrchestrationService : IContainerService
         using var activity = ActivitySources.Provisioning.StartActivity("CreateContainer");
         activity?.SetTag("templateId", request.TemplateId?.ToString() ?? request.TemplateCode);
         activity?.SetTag("provider", request.ProviderCode ?? request.ProviderId?.ToString());
+
+        // Conductor #878. Per-user quota check. Done BEFORE
+        // resolving template/provider so a user at the cap
+        // gets an immediate 422 instead of paying for two
+        // database round-trips just to be told no. We count
+        // every non-Destroyed row — Pending / Creating / Failed
+        // all consume the slot because they tie up a name and
+        // (for non-Failed) potentially provider resources.
+        var ownerId = request.OwnerId ?? "system";
+        var limit = GetPerUserSimultaneousLimit();
+        var current = await _db.Containers
+            .Where(c => c.OwnerId == ownerId && c.Status != ContainerStatus.Destroyed)
+            .CountAsync(ct);
+        if (current >= limit)
+        {
+            throw new QuotaExceededException(limit, current, ownerId);
+        }
 
         // Resolve template
         var template = request.TemplateId.HasValue
