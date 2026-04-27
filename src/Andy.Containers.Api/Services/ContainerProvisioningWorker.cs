@@ -264,6 +264,33 @@ public class ContainerProvisioningWorker : BackgroundService
                 _logger.LogDebug(bannerEx, "Failed to install welcome banner for container {ContainerId}", job.ContainerId);
             }
 
+            // Conductor #871: probe /etc/os-release so the UI can show
+            // "Debian 12" / "Alpine 3.19" alongside the friendly name.
+            // Best-effort: a probe failure leaves OsLabel null and
+            // does NOT block provisioning — the banner step above
+            // already passed, so the container is healthy enough to
+            // surface to the user.
+            try
+            {
+                var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
+                var probe = await containerService.ExecAsync(
+                    job.ContainerId,
+                    "cat /etc/os-release 2>/dev/null || true",
+                    TimeSpan.FromSeconds(10),
+                    stoppingToken);
+                var label = OsReleaseParser.ParseLabel(probe.StdOut);
+                if (!string.IsNullOrEmpty(label))
+                {
+                    container.OsLabel = label;
+                    _logger.LogDebug("OS label probed for container {ContainerId}: {Label}",
+                        job.ContainerId, label);
+                }
+            }
+            catch (Exception osEx)
+            {
+                _logger.LogDebug(osEx, "Failed to probe /etc/os-release for container {ContainerId}", job.ContainerId);
+            }
+
             // All setup complete — now mark as Running
             container.Status = ContainerStatus.Running;
             container.StartedAt = DateTime.UtcNow;

@@ -31,8 +31,8 @@ public class ContainersClientTests
     [Fact]
     public void ContainerDto_RecordEquality()
     {
-        var dto1 = new ContainersClient.ContainerDto("id1", "test", "Running", null, "user1", null, null, null, null, null, null, null, null, null);
-        var dto2 = new ContainersClient.ContainerDto("id1", "test", "Running", null, "user1", null, null, null, null, null, null, null, null, null);
+        var dto1 = new ContainersClient.ContainerDto("id1", "test", "Running", null, "user1", null, null, null, null, null, null, null, null, null, null, null);
+        var dto2 = new ContainersClient.ContainerDto("id1", "test", "Running", null, "user1", null, null, null, null, null, null, null, null, null, null, null);
 
         dto1.Should().Be(dto2);
     }
@@ -42,7 +42,7 @@ public class ContainersClientTests
     {
         var items = new[]
         {
-            new ContainersClient.ContainerDto("1", "c1", "Running", null, "u1", null, null, null, null, null, null, null, null, null)
+            new ContainersClient.ContainerDto("1", "c1", "Running", null, "u1", null, null, null, null, null, null, null, null, null, null, null)
         };
         var result = new ContainersClient.PaginatedResult<ContainersClient.ContainerDto>(items, 1);
 

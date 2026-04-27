@@ -93,6 +93,17 @@ public class ContainerOrchestrationService : IContainerService
             CreationSource = request.Source,
             ClientInfo = request.ClientInfo,
             StoryId = request.StoryId,
+            // Conductor #871: short human-friendly handle generated
+            // at create time. Stable for the container's lifetime.
+            // Avoid collisions with names already in the live fleet
+            // (Destroyed rows are excluded — those names are free to
+            // recycle since the user can't see them anymore).
+            FriendlyName = FriendlyNameGenerator.GenerateAvoiding(
+                (await _db.Containers
+                    .Where(c => c.Status != ContainerStatus.Destroyed
+                                && c.FriendlyName != null)
+                    .Select(c => c.FriendlyName!)
+                    .ToListAsync(ct)).ToHashSet()),
             ExpiresAt = request.ExpiresAfter.HasValue
                 ? DateTime.UtcNow.Add(request.ExpiresAfter.Value)
                 : null

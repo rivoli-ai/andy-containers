@@ -119,7 +119,12 @@ public sealed class ContainersClient
         string Id, string Name, string Status, string? ExternalId, string OwnerId,
         string? TemplateId, string? ProviderId, string? StartedAt, string? CreatedAt,
         string? HostIp, string? IdeEndpoint, string? VncEndpoint,
-        TemplateDto? Template, ProviderDto? Provider);
+        TemplateDto? Template, ProviderDto? Provider,
+        // Conductor #871: identity fields the UI uses to label
+        // containers — FriendlyName is generated at create time,
+        // OsLabel is probed post-provisioning. Both nullable since
+        // older containers (pre-migration) won't have either.
+        string? FriendlyName, string? OsLabel);
 
     public record TemplateDto(string Id, string Code, string Name, string? BaseImage);
     public record ProviderDto(string Id, string Code, string Name, string Type);

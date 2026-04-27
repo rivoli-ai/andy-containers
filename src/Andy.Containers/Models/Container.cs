@@ -37,6 +37,24 @@ public class Container
     // transition the linked UserStory's state on run completion.
     public Guid? StoryId { get; set; }
 
+    /// <summary>
+    /// Human-friendly identifier generated at create time
+    /// (<c>{adjective}-{animal}</c>, e.g. "amber-pelican"). Stable
+    /// across the container's lifetime; never collides with the
+    /// short ExternalId (12-char hash) but is much easier to refer
+    /// to in conversation / docs / chat. Conductor #871.
+    /// </summary>
+    public string? FriendlyName { get; set; }
+
+    /// <summary>
+    /// OS label populated post-creation by reading
+    /// <c>/etc/os-release</c> inside the container. Format follows
+    /// <c>{NAME} {VERSION_ID}</c> (e.g. "Debian 12", "Alpine 3.19").
+    /// Best-effort: probe failures leave this null without blocking
+    /// provisioning. Conductor #871.
+    /// </summary>
+    public string? OsLabel { get; set; }
+
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();
     public ICollection<ContainerGitRepository> GitRepositories { get; set; } = new List<ContainerGitRepository>();

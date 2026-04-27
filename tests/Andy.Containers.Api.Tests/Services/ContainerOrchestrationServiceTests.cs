@@ -674,4 +674,110 @@ public class ContainerOrchestrationServiceTests : IDisposable
         results.Should().HaveCount(1);
         results[0].Name.Should().Be("cli-1");
     }
+
+    // Conductor #871. Friendly name is generated at create time;
+    // OS label is filled by the provisioning worker post-create
+    // (covered separately in OsReleaseParserTests).
+
+    [Fact]
+    public async Task CreateContainer_StampsAFriendlyName()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        var request = new CreateContainerRequest
+        {
+            Name = "labeled",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        container.FriendlyName.Should().NotBeNullOrEmpty();
+        container.FriendlyName.Should().MatchRegex("^[a-z]+-[a-z]+(-\\d+)?$",
+            "FriendlyName must be {adjective}-{animal} (with optional numeric suffix on collision)");
+    }
+
+    [Fact]
+    public async Task CreateContainer_DoesNotReuseFriendlyNameOfLiveContainer()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        // Pre-load the DB with one of every {adj}-{animal} pair.
+        // The generator can't pick a fresh combination, so it
+        // MUST land on the suffix fallback ("foo-bar-2"). This
+        // proves the orchestrator threads `taken` correctly into
+        // GenerateAvoiding — without that wiring the generator
+        // would happily re-pick a colliding name.
+        foreach (var adj in Andy.Containers.FriendlyNameGenerator.Adjectives)
+        foreach (var animal in Andy.Containers.FriendlyNameGenerator.Animals)
+        {
+            _db.Containers.Add(new Container
+            {
+                Name = $"seed-{adj}-{animal}",
+                TemplateId = template.Id,
+                ProviderId = provider.Id,
+                OwnerId = "system",
+                Status = ContainerStatus.Running,
+                FriendlyName = $"{adj}-{animal}"
+            });
+        }
+        await _db.SaveChangesAsync();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "the-new-one",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        container.FriendlyName.Should().EndWith("-2",
+            "every base name was taken, so the orchestrator must surface the numeric-suffix fallback");
+    }
+
+    [Fact]
+    public async Task CreateContainer_ReusesNamesOfDestroyedContainers()
+    {
+        // Destroyed containers don't show in the user's fleet, so
+        // their friendly names are free to recycle. Keeps the
+        // namespace from accumulating dead reservations.
+        var (template, provider) = await SeedTemplateAndProvider();
+        _mockInfraProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+
+        // Same exhaustion as above, but everything is Destroyed.
+        foreach (var adj in Andy.Containers.FriendlyNameGenerator.Adjectives)
+        foreach (var animal in Andy.Containers.FriendlyNameGenerator.Animals)
+        {
+            _db.Containers.Add(new Container
+            {
+                Name = $"dead-{adj}-{animal}",
+                TemplateId = template.Id,
+                ProviderId = provider.Id,
+                OwnerId = "system",
+                Status = ContainerStatus.Destroyed,
+                FriendlyName = $"{adj}-{animal}"
+            });
+        }
+        await _db.SaveChangesAsync();
+
+        var request = new CreateContainerRequest
+        {
+            Name = "rises-again",
+            TemplateId = template.Id,
+            ProviderId = provider.Id
+        };
+
+        var container = await _service.CreateContainerAsync(request, CancellationToken.None);
+
+        // Suffix-free: the destroyed names didn't block the picker.
+        container.FriendlyName.Should().NotEndWith("-2");
+        container.FriendlyName.Should().MatchRegex("^[a-z]+-[a-z]+$");
+    }
 }
