@@ -254,6 +254,13 @@ try
     // the terminal run.* event to the outbox.
     builder.Services.AddScoped<IHeadlessRunner, HeadlessRunner>();
 
+    // AP5 (rivoli-ai/andy-containers#107). Mode dispatcher: selects the
+    // run's container, transitions Pending → Provisioning, and routes
+    // headless runs to the runner above (terminal/desktop modes branch
+    // independently). RunsController hands off to it after configurator
+    // success.
+    builder.Services.AddScoped<IRunModeDispatcher, RunModeDispatcher>();
+
     var app = builder.Build();
 
     // Auto-migrate (PostgreSQL) or auto-create (SQLite) and seed.

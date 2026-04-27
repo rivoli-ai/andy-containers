@@ -64,10 +64,11 @@ public sealed class HeadlessRunner : IHeadlessRunner
         }
 
         var sw = Stopwatch.StartNew();
-        // AP1's state-machine requires Pending → Provisioning → Running
-        // before any terminal transition. We compress all three into the
-        // span of one ExecAsync because AP5 isn't writing them yet; once
-        // AP5 emits Provisioning itself, drop that transition here.
+        // AP5's dispatcher already transitioned Pending → Provisioning before
+        // calling us, so we only need to advance to Running. SafeTransition
+        // is a no-op if the run isn't actually in Provisioning (e.g. a test
+        // hands us a Pending run directly), which keeps the runner usable
+        // standalone without forcing every caller through the dispatcher.
         SafeTransition(run, RunStatus.Provisioning);
         SafeTransition(run, RunStatus.Running);
         await _db.SaveChangesAsync(ct);
