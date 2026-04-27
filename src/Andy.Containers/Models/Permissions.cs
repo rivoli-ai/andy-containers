@@ -22,6 +22,14 @@ public static class Permissions
     // API Key permissions
     public const string ApiKeyManage = "api-key:manage";
     public const string ApiKeyAdmin = "api-key:admin";
+
+    // Run permissions (Epic AP). RunsController already gates on these
+    // strings; AP8 adds them to the catalog so MCP tools can check via
+    // IOrganizationMembershipService and Editor/Viewer roles get the
+    // expected default scopes.
+    public const string RunWrite = "run:write";
+    public const string RunRead = "run:read";
+    public const string RunExecute = "run:execute";
 }
 
 public static class OrgRoles
@@ -38,16 +46,19 @@ public static class OrgRoles
             Permissions.TemplateCreate, Permissions.TemplateRead,
             Permissions.TemplatePublish, Permissions.TemplateManage,
             Permissions.ProviderRead, Permissions.ProviderManage,
-            Permissions.ApiKeyManage, Permissions.ApiKeyAdmin
+            Permissions.ApiKeyManage, Permissions.ApiKeyAdmin,
+            Permissions.RunWrite, Permissions.RunRead, Permissions.RunExecute
         ],
         Editor => [
             Permissions.ImageCreate, Permissions.ImageRead, Permissions.ImageBuild,
             Permissions.TemplateCreate, Permissions.TemplateRead, Permissions.TemplateManage,
-            Permissions.ApiKeyManage
+            Permissions.ApiKeyManage,
+            Permissions.RunWrite, Permissions.RunRead, Permissions.RunExecute
         ],
         Viewer => [
             Permissions.ImageRead, Permissions.TemplateRead, Permissions.ProviderRead,
-            Permissions.ApiKeyManage
+            Permissions.ApiKeyManage,
+            Permissions.RunRead
         ],
         _ => []
     };
