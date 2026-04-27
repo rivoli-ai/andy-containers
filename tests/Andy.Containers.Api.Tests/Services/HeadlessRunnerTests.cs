@@ -21,12 +21,14 @@ public class HeadlessRunnerTests : IDisposable
 {
     private readonly ContainersDbContext _db;
     private readonly Mock<IContainerService> _containers = new();
+    private readonly RunCancellationRegistry _cancellation = new();
     private readonly HeadlessRunner _runner;
 
     public HeadlessRunnerTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _runner = new HeadlessRunner(_containers.Object, _db, NullLogger<HeadlessRunner>.Instance);
+        _runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, NullLogger<HeadlessRunner>.Instance);
     }
 
     public void Dispose() => _db.Dispose();
@@ -146,6 +148,66 @@ public class HeadlessRunnerTests : IDisposable
 
         outcome.Kind.Should().Be(RunEventKind.Cancelled);
         outcome.Status.Should().Be(RunStatus.Cancelled);
+    }
+
+    [Fact]
+    public async Task StartAsync_RegistryCancelDuringExec_TerminatesAsCancelled()
+    {
+        // AP7 (rivoli-ai/andy-containers#109). The cancel endpoint signals
+        // the runner via the registry; the linked CTS fires inside ExecAsync
+        // and the runner's catch-OCE path should produce a Cancelled
+        // outcome + outbox event regardless of how the spawn was kicked
+        // off (caller token vs. registry signal).
+        var run = SeedRun();
+        var spawnedTcs = new TaskCompletionSource<bool>();
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, string, TimeSpan, CancellationToken>(async (_, _, _, token) =>
+            {
+                spawnedTcs.TrySetResult(true);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                throw new InvalidOperationException("delay should have thrown");
+            });
+
+        var startTask = _runner.StartAsync(run, "/tmp/x/config.json");
+
+        // Wait for ExecAsync to be in flight before signalling — the
+        // runner's registration only exists between the SaveChanges of
+        // the Running transition and the using-disposal at end of method.
+        await spawnedTcs.Task;
+
+        _cancellation.TryCancel(run.Id).Should().BeTrue(
+            "the runner registers itself before invoking ExecAsync");
+
+        var outcome = await startTask;
+
+        outcome.Kind.Should().Be(RunEventKind.Cancelled);
+        outcome.Status.Should().Be(RunStatus.Cancelled);
+
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.Status.Should().Be(RunStatus.Cancelled);
+        persisted.EndedAt.Should().NotBeNull();
+
+        var entry = await _db.OutboxEntries.SingleAsync();
+        entry.Subject.Should().EndWith(".cancelled");
+    }
+
+    [Fact]
+    public async Task StartAsync_RegistryEntryRemovedAfterTerminal()
+    {
+        // The registration is `using`-scoped so disposal happens whether
+        // the run succeeds, fails, or is cancelled. After StartAsync
+        // returns, TryCancel must report no active registration so a
+        // late cancel POST falls through to the controller's no-runner
+        // path (flip + emit) instead of waiting forever.
+        var run = SeedRun();
+        SetupExec(run.ContainerId!.Value, exitCode: 0);
+
+        await _runner.StartAsync(run, "/tmp/x/config.json");
+
+        _cancellation.TryCancel(run.Id).Should().BeFalse(
+            "registration must be removed after the runner terminates");
     }
 
     [Fact]

@@ -14,6 +14,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
 {
     private readonly IContainerService _containers;
     private readonly ContainersDbContext _db;
+    private readonly IRunCancellationRegistry _cancellation;
     private readonly ILogger<HeadlessRunner> _logger;
 
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
@@ -32,10 +33,12 @@ public sealed class HeadlessRunner : IHeadlessRunner
     public HeadlessRunner(
         IContainerService containers,
         ContainersDbContext db,
+        IRunCancellationRegistry cancellation,
         ILogger<HeadlessRunner> logger)
     {
         _containers = containers;
         _db = db;
+        _cancellation = cancellation;
         _logger = logger;
     }
 
@@ -73,8 +76,16 @@ public sealed class HeadlessRunner : IHeadlessRunner
         SafeTransition(run, RunStatus.Running);
         await _db.SaveChangesAsync(ct);
 
+        // AP7 (rivoli-ai/andy-containers#109). Register so the cancel
+        // endpoint can signal this exec from a different request scope.
+        // Disposal removes the entry and signals waiters — the using
+        // statement guarantees that every exit path (success, cancel,
+        // throw) wakes RunsController.Cancel's WaitForTerminalAsync.
+        using var registration = _cancellation.Register(run.Id, ct);
+        var execToken = registration.Token;
+
         var command = $"andy-cli run --headless --config {ShellEscape(configPath)}";
-        var execTimeout = await ResolveExecTimeoutAsync(configPath, ct);
+        var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
         ExecResult result;
         try
         {
@@ -82,14 +93,18 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 "Spawning headless agent for Run {RunId} in container {ContainerId} with config {ConfigPath} (outer timeout {Seconds}s)",
                 run.Id, containerId, configPath, (int)execTimeout.TotalSeconds);
 
-            result = await _containers.ExecAsync(containerId, command, execTimeout, ct);
+            result = await _containers.ExecAsync(containerId, command, execTimeout, execToken);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (execToken.IsCancellationRequested)
         {
+            // Either the caller cancelled (ct flows into the linked
+            // CTS) or the registry's TryCancel fired from the cancel
+            // endpoint. Both routes land here and produce the same
+            // Cancelled outcome — the runner doesn't distinguish.
             sw.Stop();
-            _logger.LogWarning("Headless spawn for Run {RunId} cancelled by caller", run.Id);
+            _logger.LogWarning("Headless spawn for Run {RunId} cancelled (caller or registry signal)", run.Id);
             return await TerminateAsync(run, RunEventKind.Cancelled, RunStatus.Cancelled,
-                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds, error: "Cancelled by caller", CancellationToken.None);
+                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds, error: "Cancelled", CancellationToken.None);
         }
         catch (OperationCanceledException ex)
         {
