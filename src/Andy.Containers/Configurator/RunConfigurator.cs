@@ -1,5 +1,6 @@
 using Andy.Containers.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Andy.Containers.Configurator;
 
@@ -8,17 +9,23 @@ public sealed class RunConfigurator : IRunConfigurator
     private readonly IAndyAgentsClient _agents;
     private readonly IHeadlessConfigBuilder _builder;
     private readonly IHeadlessConfigWriter _writer;
+    private readonly ITokenIssuer _tokens;
+    private readonly IOptions<SecretsOptions> _secrets;
     private readonly ILogger<RunConfigurator> _logger;
 
     public RunConfigurator(
         IAndyAgentsClient agents,
         IHeadlessConfigBuilder builder,
         IHeadlessConfigWriter writer,
+        ITokenIssuer tokens,
+        IOptions<SecretsOptions> secrets,
         ILogger<RunConfigurator> logger)
     {
         _agents = agents;
         _builder = builder;
         _writer = writer;
+        _tokens = tokens;
+        _secrets = secrets;
         _logger = logger;
     }
 
@@ -34,6 +41,16 @@ public sealed class RunConfigurator : IRunConfigurator
                 run.AgentId, run.AgentRevision, run.Id);
             return RunConfiguratorResult.Fail($"Agent '{run.AgentId}' not found.");
         }
+
+        // AP10 (rivoli-ai/andy-containers#112). Mint a run-scoped token
+        // and merge ANDY_TOKEN + ANDY_PROXY_URL + ANDY_MCP_URL into the
+        // env vars the headless config carries to andy-cli. Mint is
+        // idempotent so a configurator retry doesn't orphan tokens.
+        // Skip injecting any URL whose option value is null/empty so a
+        // half-configured deployment surfaces as a missing var rather
+        // than a misleading value.
+        var token = await _tokens.MintAsync(run.Id, ct);
+        spec = spec with { EnvVars = MergeRunSecrets(spec.EnvVars, token, _secrets.Value) };
 
         HeadlessRunConfig config;
         try
@@ -69,5 +86,31 @@ public sealed class RunConfigurator : IRunConfigurator
                 run.Id, ex.Message);
             return RunConfiguratorResult.Fail($"Permission denied writing config: {ex.Message}");
         }
+    }
+
+    // Merge AP10's run-scoped secrets with whatever EnvVars the agent
+    // spec already carries. The agent's vars win on collision — an
+    // agent author who explicitly pins ANDY_TOKEN (e.g. for a test
+    // double) should not be silently overridden by the issuer; the
+    // collision is intentional, not the platform's call to break.
+    private static IReadOnlyDictionary<string, string> MergeRunSecrets(
+        IReadOnlyDictionary<string, string>? agentEnv, RunToken token, SecretsOptions secrets)
+    {
+        var merged = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [EnvVarNames.AndyToken] = token.Token,
+        };
+        if (!string.IsNullOrEmpty(secrets.ProxyUrl)) merged[EnvVarNames.AndyProxyUrl] = secrets.ProxyUrl;
+        if (!string.IsNullOrEmpty(secrets.McpUrl)) merged[EnvVarNames.AndyMcpUrl] = secrets.McpUrl;
+
+        if (agentEnv is { Count: > 0 })
+        {
+            foreach (var (k, v) in agentEnv)
+            {
+                merged[k] = v;
+            }
+        }
+
+        return merged;
     }
 }

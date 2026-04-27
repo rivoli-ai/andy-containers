@@ -15,6 +15,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
     private readonly IContainerService _containers;
     private readonly ContainersDbContext _db;
     private readonly IRunCancellationRegistry _cancellation;
+    private readonly ITokenIssuer _tokens;
     private readonly ILogger<HeadlessRunner> _logger;
 
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
@@ -34,11 +35,13 @@ public sealed class HeadlessRunner : IHeadlessRunner
         IContainerService containers,
         ContainersDbContext db,
         IRunCancellationRegistry cancellation,
+        ITokenIssuer tokens,
         ILogger<HeadlessRunner> logger)
     {
         _containers = containers;
         _db = db;
         _cancellation = cancellation;
+        _tokens = tokens;
         _logger = logger;
     }
 
@@ -188,6 +191,24 @@ public sealed class HeadlessRunner : IHeadlessRunner
         {
             _logger.LogError(ex,
                 "Failed to persist terminal outcome for Run {RunId}: {Message}",
+                run.Id, ex.Message);
+        }
+
+        // AP10 (rivoli-ai/andy-containers#112). Revoke the run-scoped
+        // token outside the persistence try/catch so a DB failure
+        // doesn't leak credentials and an issuer failure doesn't lose
+        // the terminal write. Best-effort: a missing registration
+        // (server restart, double-revoke) is fine; we just want the
+        // post-condition "no live run-scoped token" to hold once a
+        // run is observed terminal.
+        try
+        {
+            await _tokens.RevokeAsync(run.Id, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to revoke run-scoped token for Run {RunId}: {Message}",
                 run.Id, ex.Message);
         }
 

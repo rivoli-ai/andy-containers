@@ -81,7 +81,9 @@ public class Ap6Aq3SmokeTests : IDisposable
 
         var hostExec = new HostSubprocessContainerService(cliDll);
         var runner = new HeadlessRunner(
-            hostExec, _db, new RunCancellationRegistry(), NullLoggerForRunner());
+            hostExec, _db, new RunCancellationRegistry(),
+            new StubTokenIssuer(NullLogger<StubTokenIssuer>.Instance),
+            NullLoggerForRunner());
 
         var outcome = await runner.StartAsync(run, configPath);
 

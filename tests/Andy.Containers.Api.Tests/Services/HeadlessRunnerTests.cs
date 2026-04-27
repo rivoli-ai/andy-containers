@@ -2,6 +2,7 @@ using System.Text.Json;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
+using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
@@ -22,13 +23,21 @@ public class HeadlessRunnerTests : IDisposable
     private readonly ContainersDbContext _db;
     private readonly Mock<IContainerService> _containers = new();
     private readonly RunCancellationRegistry _cancellation = new();
+    private readonly Mock<ITokenIssuer> _tokens = new();
     private readonly HeadlessRunner _runner;
 
     public HeadlessRunnerTests()
     {
         _db = InMemoryDbHelper.CreateContext();
+        // AP10 (#112): runner now revokes the run-scoped token on every
+        // terminal path. Default to a no-op revoke; AP10-specific tests
+        // assert the call, while existing tests don't need to care.
+        _tokens
+            .Setup(t => t.RevokeAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         _runner = new HeadlessRunner(
-            _containers.Object, _db, _cancellation, NullLogger<HeadlessRunner>.Instance);
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance);
     }
 
     public void Dispose() => _db.Dispose();
@@ -227,6 +236,55 @@ public class HeadlessRunnerTests : IDisposable
 
         var entry = await _db.OutboxEntries.SingleAsync();
         entry.Subject.Should().EndWith(".failed");
+    }
+
+    // AP10 (#112). Every terminal path must revoke the run-scoped token.
+    // Cover all four — no-container Failed, exit-code Succeeded/Failed,
+    // exec-throw Failed, registry-cancel Cancelled, watchdog Timeout —
+    // so a future regression that adds a new exit path can't slip a leak.
+
+    [Theory]
+    [InlineData(0)]   // Succeeded
+    [InlineData(1)]   // Failed
+    [InlineData(3)]   // Cancelled
+    [InlineData(4)]   // Timeout
+    public async Task StartAsync_ExitCodeTerminalPath_RevokesToken(int exitCode)
+    {
+        var run = SeedRun();
+        SetupExec(run.ContainerId!.Value, exitCode);
+
+        await _runner.StartAsync(run, "/tmp/x/config.json");
+
+        _tokens.Verify(t => t.RevokeAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartAsync_NoContainerId_StillRevokesToken()
+    {
+        // Configurator already minted the token before AP5 failed to
+        // assign a container; we still need to revoke so the token
+        // doesn't outlive the run row.
+        var run = SeedRunWithoutContainer();
+
+        await _runner.StartAsync(run, "/tmp/x/config.json");
+
+        _tokens.Verify(t => t.RevokeAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartAsync_RevokeFailureDoesNotMaskOutcome()
+    {
+        // A revoke that throws must not lose the terminal outcome.
+        var run = SeedRun();
+        SetupExec(run.ContainerId!.Value, exitCode: 0);
+        _tokens
+            .Setup(t => t.RevokeAsync(run.Id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("issuer down"));
+
+        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json");
+
+        outcome.Status.Should().Be(RunStatus.Succeeded,
+            "issuer failure must be logged, not propagated as a run failure");
     }
 
     [Fact]
