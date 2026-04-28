@@ -45,9 +45,12 @@ nav:
     - REST Endpoints: api-reference.md
   - Concepts:
     - Environment profiles: environment-profiles.md
+    - Agent runs: runs.md
+    - Run configurator: run-configurator.md
   - ADRs:
     - ADR 0001 — Messaging: adr/0001-messaging.md
     - ADR 0002 — Environment profiles: adr/0002-environment-profiles.md
+    - ADR 0003 — Agent run execution: adr/0003-agent-run-execution.md
 
 markdown_extensions:
   - admonition
