@@ -51,8 +51,17 @@ Development container management platform for the Andy ecosystem.
 ```bash
 git clone https://github.com/rivoli-ai/andy-containers.git
 cd andy-containers
+cp .env.example .env
+# Edit .env: set POSTGRES_PASSWORD to a strong value
+# (e.g. `openssl rand -base64 32`).
 docker compose up --build
 ```
+
+> **POSTGRES_PASSWORD has no default.** Compose fails fast if the variable
+> isn't set in the environment or `.env` — see [`.env.example`](.env.example).
+> This is intentional ([rivoli-ai/andy-containers#129](https://github.com/rivoli-ai/andy-containers/issues/129)) — shipping a known
+> default is exactly the kind of credential that gets missed during deploy
+> rotation.
 
 This starts all services:
 
