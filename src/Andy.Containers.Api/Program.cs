@@ -284,26 +284,38 @@ try
 
     var app = builder.Build();
 
-    // Auto-migrate (PostgreSQL) or auto-create (SQLite) and seed.
+    // Auto-migrate on both providers. Conductor #883.
     //
     // EnsureCreated only creates the DB if missing — it does NOT apply
     // migrations to an existing DB. For PostgreSQL that silently drops
     // schema changes (e.g. the `AddContainerStoryId` migration would
-    // never take effect). Use Migrate there instead.
+    // never take effect). For SQLite it had the same effect: every
+    // model change shipped a footgun that 500-stormed the Containers
+    // tab on existing users until someone hand-rolled an `ALTER TABLE`.
     //
-    // SQLite migrations in this project use Npgsql-specific types
-    // (`type: "uuid"`) and are not portable, so keep the EnsureCreated
-    // shortcut for the embedded path. When the model changes, the
-    // existing SQLite file must be deleted (Conductor ships it under
-    // `Application Support/ai.rivoli.conductor/db/`) or patched
-    // manually; there is no in-place upgrade path on SQLite today.
+    // The Npgsql column types in our existing migrations (`uuid`,
+    // `jsonb`, `timestamp with time zone`) translate cleanly under
+    // EF Core's SQLite provider — verified by
+    // `SqliteAutoMigrationProbeTests.MigrateAsync_AppliesAllMigrationsToFreshDb`.
+    // The only stumbling block is existing users whose DB was created
+    // by the previous `EnsureCreatedAsync` branch and therefore has
+    // schema but no `__EFMigrationsHistory`; `SqliteMigrationBootstrap`
+    // detects that case and seeds the history before letting
+    // `MigrateAsync` run.
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<ContainersDbContext>();
-        if (db.Database.IsNpgsql())
-            await db.Database.MigrateAsync();
+        if (db.Database.IsSqlite())
+        {
+            var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
+            var migrationLogger = loggerFactory.CreateLogger("SqliteMigrationBootstrap");
+            await Andy.Containers.Api.Services.SqliteMigrationBootstrap.EnsureSchemaAsync(
+                db, migrationLogger);
+        }
         else
-            await db.Database.EnsureCreatedAsync();
+        {
+            await db.Database.MigrateAsync();
+        }
         await DataSeeder.SeedAsync(db);
 
         // X2 (rivoli-ai/andy-containers#91). Load the EnvironmentProfile
