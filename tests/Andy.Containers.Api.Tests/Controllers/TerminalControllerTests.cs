@@ -413,57 +413,73 @@ public class TerminalControllerTests : IDisposable
     }
 
     [Fact]
-    public void BuildContainerShellCommand_PrefersDtachWhenAvailable()
+    public void BuildContainerShellCommand_ExecsTmuxNewSessionAttachOrCreate()
     {
+        // The end of the command must launch tmux in attach-if-exists,
+        // create-if-not mode. `-A` is the flag; `-s web` is the fixed
+        // session name shared with the probe. Conductor #875 PR 2.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain("command -v dtach",
-            "must check for dtach before invoking it");
-        cmd.Should().Contain("exec dtach -A /tmp/conductor.sock -z bash -i",
-            "dtach gets a fixed socket per container so reattach works");
+        cmd.Should().Contain($"new-session -A -s {TerminalController.TmuxSessionName} bash -i",
+            "tmux must use -A for attach-or-create — that gives us persistence across reconnects");
     }
 
     [Fact]
-    public void BuildContainerShellCommand_FallsBackToBareBashWhenDtachMissing()
+    public void BuildContainerShellCommand_LazyCreatesTmuxConfInUserHome()
     {
+        // The conf is dropped in $HOME/.config/conductor/tmux.conf so
+        // it doesn't require write access to /etc and doesn't require
+        // rebuilding every container image. First attach writes the
+        // file; subsequent attaches keep it.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain("|| exec bash -i",
-            "containers without dtach installed must still get a working terminal");
+        cmd.Should().Contain("$HOME/.config/conductor/tmux.conf",
+            "conf path must be user-writable so first attach can create it");
+        cmd.Should().Contain("if [ ! -f",
+            "must guard the heredoc on file-missing so we don't rewrite on every attach");
     }
 
     [Fact]
-    public void BuildContainerShellCommand_DtachUsesAttachOrCreate()
+    public void BuildContainerShellCommand_TmuxConfMakesUiInvisible()
     {
+        // The whole point of the invisible-tmux design is that the
+        // user never perceives tmux is there. Pin the four conf
+        // directives that make that true.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain("dtach -A",
-            "the -A flag means 'attach if exists, create if not' — what gives us persistence across reconnects");
+        cmd.Should().Contain("set -g status off",
+            "no status bar at the bottom");
+        cmd.Should().Contain("set -g prefix none",
+            "no prefix key — so accidental Ctrl-B keystrokes don't capture");
+        cmd.Should().Contain("unbind-key -a",
+            "drop every default keybinding so the user only ever sees bash");
+        cmd.Should().Contain("setw -g aggressive-resize on",
+            "tmux must auto-resize the inner window when the daemon-PTY's SIGWINCH lands");
     }
 
     [Fact]
-    public void BuildContainerShellCommand_DtachUsesQuietMode()
+    public void BuildContainerShellCommand_TmuxConfPreservesScrollback()
     {
+        // 10 000 lines is the floor we promise — anything less and
+        // reconnect-and-look-up-history loses real work.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain("dtach -A /tmp/conductor.sock -z bash",
-            "the -z flag suppresses dtach's own escape sequences so the terminal output is clean");
+        cmd.Should().Contain("set -g history-limit 10000",
+            "scrollback floor for reconnect-and-still-see-what-you-did");
     }
 
     [Fact]
-    public void BuildContainerShellCommand_DoesNotMentionTmux()
+    public void BuildContainerShellCommand_DoesNotMentionDtach()
     {
-        // Regression guard: tmux was removed in #154 / #842 preview
-        // because it caused rendering artifacts in TUI apps. dtach
-        // is the replacement. If anyone re-introduces tmux into the
-        // shell command without going through #842's per-mode
-        // picker, this test fires.
+        // Regression guard the other direction: dtach was removed in
+        // #875 PR 2 because it had no scrollback to replay. If anyone
+        // re-introduces dtach into the shell command, this test fires.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().NotContain("tmux ",
-            "tmux must not appear in the shell command — use dtach for persistence");
+        cmd.Should().NotContain("dtach",
+            "dtach must not appear — use the invisible-tmux invocation for persistence");
     }
 
-    // MARK: - dtach socket path / banner contract (conductor #836-#842)
+    // MARK: - tmux session name / banner contract (conductor #875 PR 2)
     //
-    // The dtach socket path is the SHARED contract between the shell
-    // command (which CREATES the socket) and the probe (which DETECTS
-    // the socket on reattach to suppress the welcome banner). If
+    // The tmux session name is the SHARED contract between the shell
+    // command (which CREATES the session) and the probe (which DETECTS
+    // the session on reattach to suppress the welcome banner). If
     // anyone changes one constant without the other, banner detection
     // silently breaks — banner re-injects on every reattach,
     // overwriting the user's prompt.
@@ -471,60 +487,55 @@ public class TerminalControllerTests : IDisposable
     // These tests pin the contract.
 
     [Fact]
-    public void DtachSocketPath_IsTheStableConstant()
+    public void TmuxSessionName_IsTheStableConstant()
     {
         // Pin the literal so unrelated edits to BuildContainerShellCommand
-        // or BuildDtachProbeArguments don't accidentally divert to a
-        // different path.
-        TerminalController.DtachSocketPath.Should().Be("/tmp/conductor.sock");
+        // or BuildTmuxHasSessionArguments don't accidentally diverge.
+        TerminalController.TmuxSessionName.Should().Be("web");
     }
 
     [Fact]
-    public void BuildContainerShellCommand_UsesDtachSocketPathConstant()
+    public void BuildContainerShellCommand_UsesTmuxSessionNameConstant()
     {
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain(TerminalController.DtachSocketPath,
-            "the shell command must reference the same socket path the probe checks");
+        cmd.Should().Contain($"-s {TerminalController.TmuxSessionName} ",
+            "the shell command must reference the same session name the probe checks");
     }
 
     [Fact]
-    public void BuildDtachProbeArguments_UsesDtachSocketPathConstant()
+    public void BuildTmuxHasSessionArguments_UsesTmuxSessionNameConstant()
     {
-        var args = TerminalController.BuildDtachProbeArguments("test-user", "ext-123");
-        args.Should().Contain(TerminalController.DtachSocketPath,
-            "the probe must reference the same socket path the shell command creates");
+        var args = TerminalController.BuildTmuxHasSessionArguments("test-user", "ext-123");
+        args.Should().Contain($"-t {TerminalController.TmuxSessionName}",
+            "the probe must reference the same session name the shell command creates");
     }
 
     [Fact]
-    public void BuildDtachProbeArguments_UsesTestDashSForSocketSemantics()
+    public void BuildTmuxHasSessionArguments_UsesTmuxHasSession()
     {
-        // `test -e` matches any file (including stale regular files);
-        // `test -f` matches regular files only; `test -S` matches
-        // Unix domain sockets specifically. dtach creates a socket,
-        // so we use -S — the precise signal that a dtach session is
-        // already running (not just leftover garbage at the path).
-        var args = TerminalController.BuildDtachProbeArguments("test-user", "ext-123");
-        args.Should().Contain("test -S",
-            "use -S not -e/-f so we don't false-positive on stale non-socket files at the path");
+        // `tmux has-session -t web` exits 0 iff the session exists on
+        // the user's per-UID tmux socket. No filesystem path peeking,
+        // no race with stale files.
+        var args = TerminalController.BuildTmuxHasSessionArguments("test-user", "ext-123");
+        args.Should().Contain("tmux has-session",
+            "use tmux's own probe, not a filesystem proxy");
     }
 
     [Fact]
-    public void BuildDtachProbeArguments_RunsAsContainerUser()
+    public void BuildTmuxHasSessionArguments_RunsAsContainerUser()
     {
-        // dtach's socket has user-private permissions (srwx------ owned
-        // by the container user). Probing as root would fail
-        // permission-wise on some filesystems and succeed misleadingly
-        // on others. Always probe as the same user that owns the
-        // session.
-        var args = TerminalController.BuildDtachProbeArguments("alice", "ext-abc");
+        // Each user has a per-UID tmux server. Probing as root finds
+        // no session even when the container user's session exists.
+        // Always probe as the same user that owns the session.
+        var args = TerminalController.BuildTmuxHasSessionArguments("alice", "ext-abc");
         args.Should().Contain("-u alice",
             "probe must run as the container user, not root");
     }
 
     [Fact]
-    public void BuildDtachProbeArguments_TargetsTheCorrectContainer()
+    public void BuildTmuxHasSessionArguments_TargetsTheCorrectContainer()
     {
-        var args = TerminalController.BuildDtachProbeArguments("alice", "ext-12345");
+        var args = TerminalController.BuildTmuxHasSessionArguments("alice", "ext-12345");
         args.Should().Contain("ext-12345");
     }
 
@@ -543,84 +554,79 @@ public class TerminalControllerTests : IDisposable
     [Fact]
     public void ShouldInjectWelcomeBanner_DoesNotFireOnReattach()
     {
-        // dtach session already exists → reattach → user already saw
+        // tmux session already exists → reattach → user already saw
         // the banner. Repeating it overwrites whatever they were
-        // looking at (the bug the user reported when verifying
-        // dtach persistence: closing the terminal mid-session and
-        // reopening showed the banner header on top of their bash
-        // prompt).
+        // looking at.
         TerminalController.ShouldInjectWelcomeBanner(hasExistingSession: true)
             .Should().BeFalse();
     }
 
-    // MARK: - Cross-module contract: shell + probe agree on path
+    // MARK: - Cross-module contract: shell + probe agree on session name
 
     [Fact]
-    public void ShellCommandAndProbeAgreeOnSocketPath()
+    public void ShellCommandAndProbeAgreeOnTmuxSessionName()
     {
         // Belt-and-suspenders test: even if someone fixes a typo in
         // both call sites separately and keeps them in sync, this
         // test asserts they reference the SAME constant.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        var args = TerminalController.BuildDtachProbeArguments("test-user", "ext-123");
+        var args = TerminalController.BuildTmuxHasSessionArguments("test-user", "ext-123");
 
-        cmd.Should().Contain(TerminalController.DtachSocketPath);
-        args.Should().Contain(TerminalController.DtachSocketPath);
+        cmd.Should().Contain($"-s {TerminalController.TmuxSessionName}");
+        args.Should().Contain($"-t {TerminalController.TmuxSessionName}");
     }
 
     [Fact]
-    public void ShellCommand_DtachInvocationCreatesTheProbedSocket()
+    public void ShellCommand_TmuxInvocationCreatesTheProbedSession()
     {
-        // Specifically check the dtach invocation form, not just
-        // path-presence. dtach's `-A` flag is the one that "attaches
-        // if exists OR creates if not" — the right semantic for
-        // first-attach + reattach. Other forms (-c, -n) would create
-        // a NEW socket every time and break persistence even if dtach
-        // is in PATH.
+        // Specifically check the tmux invocation form, not just
+        // session-name-presence. `new-session -A` is the form that
+        // "attaches if exists OR creates if not" — the right semantic
+        // for first-attach + reattach. Other forms would create a
+        // NEW session every time and break persistence.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain($"dtach -A {TerminalController.DtachSocketPath} -z bash -i",
-            "must use `-A` for attach-or-create, `-z` to suppress dtach's escape sequences");
+        cmd.Should().Contain($"new-session -A -s {TerminalController.TmuxSessionName} bash -i",
+            "must use `new-session -A` for attach-or-create");
     }
 
     // MARK: - Reattach-without-banner end-to-end contract
     //
     // The full chain we want to lock:
     //   1. First attach: probe → false → ShouldInject → true → banner fires
-    //   2. dtach creates the socket; bash runs.
-    //   3. Reattach: probe → true (socket still there) → ShouldInject → false → no banner
+    //   2. tmux new-session -A creates the session; bash runs inside it.
+    //   3. Reattach: probe → true (tmux has-session succeeds) → ShouldInject → false → no banner
     //
     // We can't easily run a real container in unit tests, but we can
     // simulate the decision arms:
 
     [Fact]
-    public void Decision_FirstAttachNoSocket_BannerFires()
+    public void Decision_FirstAttachNoSession_BannerFires()
     {
-        // Arm 1: container has dtach installed but no socket yet.
-        // Probe would return false (socket absent). hasExistingSession
-        // = false. Banner fires.
-        var probeResult = false; // simulating: socket doesn't exist
+        // Arm 1: container has tmux installed but no session yet.
+        // Probe would return false (`tmux has-session` exits non-zero).
+        // hasExistingSession = false. Banner fires.
+        var probeResult = false; // simulating: session doesn't exist
         TerminalController.ShouldInjectWelcomeBanner(probeResult).Should().BeTrue();
     }
 
     [Fact]
-    public void Decision_SecondAttachSocketExists_BannerSkipped()
+    public void Decision_SecondAttachSessionExists_BannerSkipped()
     {
-        // Arm 2: socket exists from a prior attach. Probe returns
+        // Arm 2: session exists from a prior attach. Probe returns
         // true. Banner is skipped — the user is reattaching, not
         // visiting fresh.
-        var probeResult = true; // simulating: dtach session running
+        var probeResult = true; // simulating: tmux session running
         TerminalController.ShouldInjectWelcomeBanner(probeResult).Should().BeFalse();
     }
 
     [Fact]
-    public void Decision_NoDtachInstalled_FallbackBareShellAlwaysGetsBanner()
+    public void Decision_TmuxNotInstalled_ProbeFalseBannerAlwaysFires()
     {
-        // Arm 3: container has no dtach. The shell command falls back
-        // to `exec bash -i` (no socket). Probe always returns false
-        // (no socket exists). hasExistingSession = false. Banner
-        // fires every attach — same as the bare-bash baseline before
-        // dtach was introduced. No regression.
-        var probeResult = false; // no dtach → no socket → probe false
+        // Arm 3: tmux not installed (or unreachable). The probe
+        // catches the exit-code-non-zero / spawn-failure and returns
+        // false. hasExistingSession = false. Banner fires every
+        // attach — same as the bare-bash baseline. No regression.
+        var probeResult = false; // tmux missing → has-session fails → probe false
         TerminalController.ShouldInjectWelcomeBanner(probeResult).Should().BeTrue();
     }
 
@@ -631,12 +637,11 @@ public class TerminalControllerTests : IDisposable
         // hasExistingSession=true branch that returned
         // "tmux refresh-client -S\n", which got TYPED into the user's
         // foreground process (bash → ran it; vim/claude → keystrokes
-        // landed in their input). Existing sessions now go through
-        // the tmux side channel via InvokeTmuxCommand. The banner
-        // helper must never embed a `tmux` command.
+        // landed in their input). The banner helper must never embed
+        // a `tmux` command — reattach simply does NOT inject anything.
         var bytes = TerminalController.BuildWelcomeBannerCommand();
         var text = System.Text.Encoding.UTF8.GetString(bytes);
         text.Should().NotContain("tmux ",
-            "post-attach injection must not type tmux commands into the user's shell — those go through the side channel");
+            "post-attach injection must not type tmux commands into the user's shell");
     }
 }

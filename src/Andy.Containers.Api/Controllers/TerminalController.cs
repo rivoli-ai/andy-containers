@@ -182,7 +182,7 @@ public class TerminalController : ControllerBase
                 if (ptySession is not null)
                 {
                     var execCommandForProbe = providerType == ProviderType.AppleContainer ? "container" : "docker";
-                    var ptyHasExistingSession = await ProbeDtachSocketExistsAsync(
+                    var ptyHasExistingSession = await ProbeTmuxSessionExistsAsync(
                         providerCommand: execCommandForProbe,
                         externalId: externalId,
                         containerUser: containerUser,
@@ -250,7 +250,7 @@ public class TerminalController : ControllerBase
         // every attach gets the banner — same as before this change,
         // since each attach is a fresh bash anyway.
         var execCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
-        var hasExistingSession = await ProbeDtachSocketExistsAsync(
+        var hasExistingSession = await ProbeTmuxSessionExistsAsync(
             providerCommand: execCommand,
             externalId: externalId,
             containerUser: containerUser,
@@ -656,99 +656,6 @@ public class TerminalController : ControllerBase
         return container.OwnerId == _currentUser.GetUserId();
     }
 
-    /// <summary>
-    /// Tells the tmux server to resize the named window to the new
-    /// columns/rows. Runs as <paramref name="containerUser"/> so the
-    /// command lands on the same per-UID tmux socket that owns the
-    /// session.
-    /// </summary>
-    private void ForwardResizeToTmux(
-        string providerCommand,
-        string externalId,
-        string containerUser,
-        string tmuxSession,
-        int cols,
-        int rows,
-        CancellationToken ct)
-    {
-        if (!IsValidTerminalSize(cols, rows))
-        {
-            _logger.LogWarning(
-                "Refusing tmux resize-window — out of range: {Cols}x{Rows}",
-                cols, rows);
-            return;
-        }
-
-        _logger.LogDebug(
-            "[CONTAINERS-TMUX] resize-window {Cols}x{Rows} on {Provider} {ExternalId} as {User}",
-            cols, rows, providerCommand, externalId, containerUser);
-
-        InvokeTmuxCommand(
-            providerCommand: providerCommand,
-            externalId: externalId,
-            containerUser: containerUser,
-            tmuxArguments: $"resize-window -t {tmuxSession} -x {cols} -y {rows}",
-            ct: ct);
-    }
-
-    /// <summary>
-    /// Spawns a <c>&lt;providerCommand&gt; exec -u &lt;user&gt; &lt;externalId&gt; tmux &lt;args&gt;</c>
-    /// against the container's per-UID tmux socket. Used for any
-    /// out-of-band tmux server command (resize-window, refresh-client,
-    /// kill-session, …) where stdin injection into the user's shell
-    /// would be wrong (they'd see the command typed in their session).
-    ///
-    /// Fire-and-forget: a slow <c>docker exec</c> spawn never stalls
-    /// the main WebSocket relay loop. Failures are logged at Debug
-    /// level so a transient error isn't surfaced as a banner.
-    /// </summary>
-    /// <remarks>
-    /// Conductor #838 — replaces the previous stdin-injection path
-    /// for the post-attach redraw, which typed
-    /// <c>tmux refresh-client -S</c> into the user's foreground
-    /// process.
-    /// </remarks>
-    private void InvokeTmuxCommand(
-        string providerCommand,
-        string externalId,
-        string containerUser,
-        string tmuxArguments,
-        CancellationToken ct)
-    {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var args = $"exec -u {containerUser} {externalId} tmux {tmuxArguments}";
-                using var p = System.Diagnostics.Process.Start(new ProcessStartInfo
-                {
-                    FileName = providerCommand,
-                    Arguments = args,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                });
-                if (p is null) return;
-                await p.WaitForExitAsync(ct);
-                if (p.ExitCode != 0)
-                {
-                    var stderr = await p.StandardError.ReadToEndAsync(ct);
-                    _logger.LogDebug(
-                        "tmux {Args} exited {Code}: {Stderr}",
-                        tmuxArguments, p.ExitCode, stderr.Trim());
-                }
-            }
-            catch (OperationCanceledException) { /* WS closed */ }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex,
-                    "Failed to invoke tmux command: {Args}",
-                    tmuxArguments);
-            }
-        }, ct);
-    }
-
     internal bool IsOriginAllowed(string origin)
     {
         if (string.IsNullOrEmpty(origin))
@@ -791,9 +698,9 @@ public class TerminalController : ControllerBase
     /// <summary>
     /// Builds the bytes injected into the inner shell's stdin on first
     /// attach to display the welcome banner. Only invoked on new
-    /// sessions — reattach uses the tmux side channel
-    /// (<see cref="InvokeTmuxCommand"/>) so commands don't get typed
-    /// into the user's foreground process.
+    /// sessions — reattach must NOT inject because the bytes would be
+    /// typed into whatever the user has running in the foreground
+    /// (vim, claude code, etc.).
     /// </summary>
     /// <remarks>
     /// Internal for unit tests. Space prefix keeps the command out
@@ -828,24 +735,23 @@ public class TerminalController : ControllerBase
     }
 
     /// <summary>
-    /// Checks whether the dtach socket already exists in the
+    /// Checks whether the tmux session already exists in the
     /// container — the signal that we're reattaching to an existing
     /// session and shouldn't re-emit the welcome banner.
     /// </summary>
     /// <remarks>
     /// Best-effort: a failure to probe is interpreted as
     /// "no session", which means the worst case is a redundant
-    /// banner injection on a borderline-broken container. The path
-    /// matches <see cref="BuildContainerShellCommand(int, int)"/>'s
-    /// <c>/tmp/conductor.sock</c> constant.
+    /// banner injection on a borderline-broken container. The
+    /// session name matches <see cref="TmuxSessionName"/>.
     /// </remarks>
-    private async Task<bool> ProbeDtachSocketExistsAsync(
+    private async Task<bool> ProbeTmuxSessionExistsAsync(
         string providerCommand,
         string externalId,
         string containerUser,
         CancellationToken ct)
     {
-        var args = BuildDtachProbeArguments(containerUser, externalId);
+        var args = BuildTmuxHasSessionArguments(containerUser, externalId);
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -863,7 +769,7 @@ public class TerminalController : ControllerBase
             if (process is null)
             {
                 _logger.LogInformation(
-                    "[DTACH-PROBE] Process.Start returned null — provider={Provider} args={Args}",
+                    "[TMUX-PROBE] Process.Start returned null — provider={Provider} args={Args}",
                     providerCommand, args);
                 return false;
             }
@@ -879,7 +785,7 @@ public class TerminalController : ControllerBase
             catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
                 _logger.LogInformation(
-                    "[DTACH-PROBE] timed out after 3s — provider={Provider} args={Args} elapsed={ElapsedMs}ms",
+                    "[TMUX-PROBE] timed out after 3s — provider={Provider} args={Args} elapsed={ElapsedMs}ms",
                     providerCommand, args, sw.ElapsedMilliseconds);
                 try { process.Kill(true); } catch { /* ignore */ }
                 return false;
@@ -887,7 +793,7 @@ public class TerminalController : ControllerBase
 
             var hasSession = process.ExitCode == 0;
             _logger.LogInformation(
-                "[DTACH-PROBE] provider={Provider} args={Args} exit={ExitCode} elapsed={ElapsedMs}ms hasSession={HasSession} stderr={Stderr}",
+                "[TMUX-PROBE] provider={Provider} args={Args} exit={ExitCode} elapsed={ElapsedMs}ms hasSession={HasSession} stderr={Stderr}",
                 providerCommand, args, process.ExitCode, sw.ElapsedMilliseconds, hasSession,
                 stderr.Length > 200 ? stderr[..200] : stderr);
             return hasSession;
@@ -895,7 +801,7 @@ public class TerminalController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogInformation(
-                "[DTACH-PROBE] threw — provider={Provider} args={Args} elapsed={ElapsedMs}ms exception={Exception}",
+                "[TMUX-PROBE] threw — provider={Provider} args={Args} elapsed={ElapsedMs}ms exception={Exception}",
                 providerCommand, args, sw.ElapsedMilliseconds, ex.GetType().Name + ": " + ex.Message);
             return false;
         }
@@ -905,47 +811,75 @@ public class TerminalController : ControllerBase
     /// Builds the shell command piped into <c>docker exec -it … bash
     /// -c '…'</c> to start a terminal session inside the container.
     ///
-    /// Sets up the inner PTY (stty), exports a sensible TERM / locale,
-    /// sources rcfiles, then runs an interactive shell — wrapped in
-    /// <c>dtach</c> when available so the bash session survives across
-    /// WebSocket close/reopen. When dtach isn't installed (existing
-    /// containers, minimal images), the command falls back to bare
-    /// <c>bash -i</c> so the terminal still works without persistence.
+    /// The session is wrapped in an invisible tmux: tmux holds the
+    /// scroll buffer + screen state across WebSocket reconnects, but
+    /// is configured to render exactly like a bare bash — no status
+    /// bar, no prefix key, no keybindings, native ANSI passthrough.
+    /// The user perceives a plain bash; reconnecting from another
+    /// machine attaches the same session and replays the last
+    /// 10 000 lines automatically. Conductor #875 PR 2.
     ///
-    /// dtach replaced the previous tmux block (#154 / #842 preview).
-    /// Tmux's <c>resize-window</c> + script-PTY chain produced
-    /// rendering artifacts in TUI apps like claude code; dtach's
-    /// transparent SIGWINCH forwarding sidesteps those entirely.
+    /// dtach (used by the previous incarnation of this command) also
+    /// preserved the bash session but had no buffer to replay, so a
+    /// reconnecting client saw a blank screen until the user typed.
+    /// tmux's <c>aggressive-resize</c> + the daemon-PTY's SIGWINCH
+    /// chain make the rendering bugs that drove the earlier dtach
+    /// switch (#154) moot — those came from <c>tmux resize-window</c>
+    /// being injected as a side-channel against a <c>script</c>-owned
+    /// PTY. With the daemon owning the PTY, SIGWINCH propagates
+    /// cleanly and tmux resizes correctly.
+    ///
+    /// The conductor-tmux.conf is lazy-created in the user's home on
+    /// first attach so we don't have to rebuild every container image
+    /// (and so the file lands somewhere the container user can write).
     /// </summary>
     /// <remarks>
     /// Internal for unit tests. Pure function — no side effects, no
-    /// DI dependencies. Tests pin the dtach-with-fallback shape so
-    /// future changes don't silently lose persistence.
+    /// DI dependencies. Tests pin the tmux-attach shape so future
+    /// changes don't silently lose session persistence.
     /// </remarks>
     internal static string BuildContainerShellCommand(int rows, int cols)
     {
+        // Outer setup (stty, env, rcfiles) matches the legacy command
+        // so existing infrastructure that depends on this shape keeps
+        // working. The final exec swaps dtach → invisible tmux: tmux
+        // wraps `bash -i`, holds the screen state across WS reconnects,
+        // and renders identically to bare bash thanks to a minimal
+        // conductor-tmux.conf (no status bar, no prefix, no bindings).
+        // The conf file is lazy-created in $HOME so we don't have to
+        // rebuild every container image.
         return $"stty rows {rows} cols {cols} 2>/dev/null; " +
                $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
                $"[ -f /etc/profile ] && . /etc/profile 2>/dev/null; " +
                $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
                $"[ -f ~/.profile ] && . ~/.profile 2>/dev/null; " +
                $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
-               $"command -v dtach >/dev/null 2>&1 && exec dtach -A {DtachSocketPath} -z bash -i || exec bash -i";
+               $"TMUX_CONF=\"$HOME/.config/conductor/tmux.conf\"; " +
+               $"mkdir -p \"$(dirname \"$TMUX_CONF\")\" 2>/dev/null; " +
+               $"if [ ! -f \"$TMUX_CONF\" ]; then cat > \"$TMUX_CONF\" <<'CONDUCTOR_TMUX_EOF'\n" +
+               "set -g status off\n" +
+               "set -g prefix none\n" +
+               "unbind-key -a\n" +
+               "setw -g aggressive-resize on\n" +
+               "set -g default-terminal \"xterm-256color\"\n" +
+               "set -g default-shell \"/bin/bash\"\n" +
+               "set -g history-limit 10000\n" +
+               "CONDUCTOR_TMUX_EOF\n" +
+               $"fi; " +
+               $"exec tmux -f \"$TMUX_CONF\" new-session -A -s {TmuxSessionName} bash -i";
     }
 
     /// <summary>
-    /// Path to the dtach socket inside each container's filesystem.
-    /// Bound to <c>/tmp/conductor.sock</c> — the container's /tmp is
-    /// private so this doesn't collide with anything on the host or
-    /// other containers. Using a fixed name (not per-WS) is what
-    /// gives us "close terminal, reopen, you're back" — every attach
-    /// hits the same socket.
+    /// Fixed tmux session name. The session is created on first
+    /// attach via <c>tmux new-session -A -s web</c> and reused for
+    /// every subsequent attach to the same container — the user
+    /// perceives "close terminal, reopen, you're back."
     ///
-    /// Internal so unit tests can pin both the shell command and the
-    /// probe argv against the same constant — if anyone changes one
-    /// without the other, banner detection breaks silently.
+    /// Internal so unit tests can pin both the shell command and
+    /// the probe argv against the same constant — if anyone changes
+    /// one without the other, banner detection breaks silently.
     /// </summary>
-    internal const string DtachSocketPath = "/tmp/conductor.sock";
+    internal const string TmuxSessionName = "web";
 
     /// <summary>
     /// Pure decision: does the post-attach injection block need to
@@ -956,15 +890,16 @@ public class TerminalController : ControllerBase
     internal static bool ShouldInjectWelcomeBanner(bool hasExistingSession) => !hasExistingSession;
 
     /// <summary>
-    /// Builds the argv for probing the dtach socket via
-    /// <c>&lt;providerCommand&gt; exec -u &lt;user&gt; &lt;externalId&gt; test -S /tmp/conductor.sock</c>.
-    /// <c>test -S</c> succeeds (exit 0) iff the path is a Unix
-    /// domain socket — the precise signal that a dtach session is
-    /// already running. Using <c>-e</c> or <c>-f</c> would also
-    /// match a stale regular file at the same path.
+    /// Builds the argv for probing whether the tmux session already
+    /// exists via
+    /// <c>&lt;providerCommand&gt; exec -u &lt;user&gt; &lt;externalId&gt; tmux has-session -t web</c>.
+    /// <c>tmux has-session</c> exits 0 if the session is alive on
+    /// the user's per-UID tmux socket, non-zero otherwise — the
+    /// precise signal we need to decide "first attach" vs. "reattach"
+    /// without poking at filesystem socket paths.
     /// </summary>
-    internal static string BuildDtachProbeArguments(string containerUser, string externalId)
-        => $"exec -u {containerUser} {externalId} test -S {DtachSocketPath}";
+    internal static string BuildTmuxHasSessionArguments(string containerUser, string externalId)
+        => $"exec -u {containerUser} {externalId} tmux has-session -t {TmuxSessionName}";
 
     private static bool IsResizeMessage(byte[] buffer, int count, out int cols, out int rows)
     {
