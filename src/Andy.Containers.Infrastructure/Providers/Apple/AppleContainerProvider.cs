@@ -74,15 +74,18 @@ public class AppleContainerProvider : IInfrastructureProvider
 
         var name = spec.Name.ToLowerInvariant().Replace(' ', '-');
 
-        // Remove any existing container with the same name (may be left over from a previous run)
+        // Remove any existing container with the same name (may be left over
+        // from a previous run). #127: pass the name as an argv element so a
+        // template-supplied container name with spaces can't tokenise into
+        // extra CLI flags.
         try
         {
-            var inspect = await RunCliAsync($"inspect {name}", ct, TimeSpan.FromSeconds(5));
+            var inspect = await RunCliWithArgsAsync(["inspect", name], ct, TimeSpan.FromSeconds(5));
             if (inspect.ExitCode == 0)
             {
                 _logger.LogInformation("Removing existing Apple Container {Name} before re-creation", name);
-                await RunCliAsync($"stop {name}", ct, TimeSpan.FromSeconds(15));
-                await RunCliAsync($"delete {name}", ct, TimeSpan.FromSeconds(15));
+                await RunCliWithArgsAsync(["stop", name], ct, TimeSpan.FromSeconds(15));
+                await RunCliWithArgsAsync(["delete", name], ct, TimeSpan.FromSeconds(15));
             }
         }
         catch (Exception ex)
@@ -90,55 +93,18 @@ public class AppleContainerProvider : IInfrastructureProvider
             _logger.LogWarning(ex, "Failed to check/remove existing Apple Container {Name}", name);
         }
 
-        // Use `container run -d` which creates AND starts in one step.
-        var args = $"run --name {name}";
+        // rivoli-ai/andy-containers#127. The previous implementation built the
+        // entire `container run ...` line as a single arguments string. A
+        // template's BaseImage with a space (`my-image --rm`), an env value
+        // with whitespace, or a Command with embedded flags split into extra
+        // CLI tokens at .NET's Win32-style parser, escalating template:write
+        // into CLI-flag smuggling. BuildCreateContainerArgs returns a
+        // string[] passed straight to ProcessStartInfo.ArgumentList — the OS
+        // never sees a shell or a tokeniser for these values.
+        var runArgs = BuildCreateContainerArgs(spec, name);
 
-        if (spec.Resources is not null)
-        {
-            if (spec.Resources.CpuCores > 0)
-                args += $" -c {spec.Resources.CpuCores}";
-            if (spec.Resources.MemoryMb > 0)
-                args += $" -m {spec.Resources.MemoryMb}M";
-        }
-
-        // Pass env vars at creation time so secrets reach `container exec` without
-        // being persisted to world-readable files inside the container.
-        // ProcessStartInfo.Arguments is parsed by .NET (Win32-style: pairs of double
-        // quotes, no shell interpretation). API key values in practice contain no
-        // whitespace or quotes; reject anything that would tokenize incorrectly so
-        // we never silently truncate a secret. Tighter quoting arrives with #127.
-        if (spec.EnvironmentVariables is { Count: > 0 })
-        {
-            foreach (var (key, value) in spec.EnvironmentVariables)
-            {
-                var v = value ?? string.Empty;
-                if (v.Any(c => char.IsWhiteSpace(c) || c == '"' || c == '\''))
-                {
-                    _logger.LogWarning(
-                        "Skipping env var {Key} for Apple Container {Name}: value contains whitespace or quote",
-                        key, name);
-                    continue;
-                }
-                args += $" -e {key}={v}";
-            }
-        }
-
-        args += $" -d {spec.ImageReference}";
-
-        // Add command if specified, otherwise default to sleep infinity to keep the container alive
-        if (!string.IsNullOrEmpty(spec.Command))
-        {
-            args += $" {spec.Command}";
-            if (spec.Arguments is not null)
-                args += " " + string.Join(" ", spec.Arguments);
-        }
-        else
-        {
-            args += " sleep infinity";
-        }
-
-        _logger.LogInformation("Running: {CliPath} {Args}", _cliPath, args);
-        var result = await RunCliAsync(args, ct, TimeSpan.FromMinutes(5));
+        _logger.LogInformation("Running: {CliPath} {ArgCount} args", _cliPath, runArgs.Length);
+        var result = await RunCliWithArgsAsync(runArgs, ct, TimeSpan.FromMinutes(5));
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to run Apple Container: {result.StdErr}");
 
@@ -157,14 +123,14 @@ public class AppleContainerProvider : IInfrastructureProvider
 
     public async Task StartContainerAsync(string externalId, CancellationToken ct)
     {
-        var result = await RunCliAsync($"start {externalId}", ct, TimeSpan.FromSeconds(30));
+        var result = await RunCliWithArgsAsync(["start", externalId], ct, TimeSpan.FromSeconds(30));
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to start: {result.StdErr}");
     }
 
     public async Task StopContainerAsync(string externalId, CancellationToken ct)
     {
-        var result = await RunCliAsync($"stop {externalId}", ct, TimeSpan.FromSeconds(15));
+        var result = await RunCliWithArgsAsync(["stop", externalId], ct, TimeSpan.FromSeconds(15));
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to stop: {result.StdErr}");
     }
@@ -172,9 +138,9 @@ public class AppleContainerProvider : IInfrastructureProvider
     public async Task DestroyContainerAsync(string externalId, CancellationToken ct)
     {
         // Stop first (ignore errors — may already be stopped)
-        await RunCliAsync($"stop {externalId}", ct, TimeSpan.FromSeconds(15));
+        await RunCliWithArgsAsync(["stop", externalId], ct, TimeSpan.FromSeconds(15));
 
-        var result = await RunCliAsync($"delete {externalId}", ct, TimeSpan.FromSeconds(15));
+        var result = await RunCliWithArgsAsync(["delete", externalId], ct, TimeSpan.FromSeconds(15));
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Failed to delete: {result.StdErr}");
     }
@@ -296,7 +262,7 @@ public class AppleContainerProvider : IInfrastructureProvider
 
     private async Task<InspectInfo> InspectAsync(string externalId, CancellationToken ct)
     {
-        var result = await RunCliAsync($"inspect {externalId}", ct, TimeSpan.FromSeconds(10));
+        var result = await RunCliWithArgsAsync(["inspect", externalId], ct, TimeSpan.FromSeconds(10));
         if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StdOut))
             return new InspectInfo { Status = "unknown" };
 
@@ -333,6 +299,79 @@ public class AppleContainerProvider : IInfrastructureProvider
             _logger.LogWarning(ex, "Failed to parse inspect output for {Id}", externalId);
             return new InspectInfo { Status = "unknown" };
         }
+    }
+
+    /// <summary>
+    /// Build the argv list for <c>container run -d ...</c>. Pure function
+    /// (static + no I/O) so the construction can be unit-tested without
+    /// the Apple CLI being installed on the test runner. The returned
+    /// array is fed straight to <see cref="ProcessStartInfo.ArgumentList"/>;
+    /// each element becomes one argv slot, never tokenised by a shell or
+    /// .NET's Win32 parser.
+    /// </summary>
+    /// <remarks>
+    /// rivoli-ai/andy-containers#127. Order matters here: positional
+    /// values (image ref, command, command args) must appear in the
+    /// run-time positions Apple's CLI expects, but every interpolated
+    /// value goes through unescaped. A template with
+    /// <c>BaseImage = "evil --rm"</c> would have split into two argv
+    /// elements under the previous string-based path; here it stays
+    /// as a single (unrecognised, error-out-cleanly) argv slot.
+    /// </remarks>
+    internal static string[] BuildCreateContainerArgs(ContainerSpec spec, string name)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentException.ThrowIfNullOrEmpty(name);
+
+        var args = new List<string> { "run", "--name", name };
+
+        if (spec.Resources is not null)
+        {
+            if (spec.Resources.CpuCores > 0)
+            {
+                args.Add("-c");
+                args.Add(spec.Resources.CpuCores.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (spec.Resources.MemoryMb > 0)
+            {
+                args.Add("-m");
+                args.Add($"{spec.Resources.MemoryMb}M");
+            }
+        }
+
+        // Env vars pass as separate `-e KEY=VALUE` argv slots. Whitespace
+        // and quote characters in the value are now safe — the previous
+        // skip-with-warning workaround is gone with the string-build path.
+        if (spec.EnvironmentVariables is { Count: > 0 })
+        {
+            foreach (var (key, value) in spec.EnvironmentVariables)
+            {
+                args.Add("-e");
+                args.Add($"{key}={value ?? string.Empty}");
+            }
+        }
+
+        args.Add("-d");
+        args.Add(spec.ImageReference);
+
+        if (!string.IsNullOrEmpty(spec.Command))
+        {
+            args.Add(spec.Command);
+            if (spec.Arguments is not null)
+            {
+                args.AddRange(spec.Arguments);
+            }
+        }
+        else
+        {
+            // Default keep-alive command. Two argv elements (`sleep` then
+            // `infinity`) so even this default doesn't accidentally
+            // tokenise differently from caller-supplied commands.
+            args.Add("sleep");
+            args.Add("infinity");
+        }
+
+        return args.ToArray();
     }
 
     private async Task<CliResult> RunCliAsync(string arguments, CancellationToken ct, TimeSpan? timeout = null)
