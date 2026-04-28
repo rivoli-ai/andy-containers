@@ -4,7 +4,10 @@ using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
@@ -14,6 +17,7 @@ public class WorkspacesControllerTests : IDisposable
 {
     private readonly ContainersDbContext _db;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
+    private readonly Mock<IAgentCapabilityService> _agentCapabilities;
     private readonly WorkspacesController _controller;
 
     public WorkspacesControllerTests()
@@ -26,7 +30,16 @@ public class WorkspacesControllerTests : IDisposable
         var mockOrgMembership = new Mock<IOrganizationMembershipService>();
         mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        _controller = new WorkspacesController(_db, _mockCurrentUser.Object, mockOrgMembership.Object);
+        // X9 (#99): default to "no allowlist on record" so existing tests
+        // (which don't pass an AgentId) skip the enforcement branch.
+        _agentCapabilities = new Mock<IAgentCapabilityService>();
+        _agentCapabilities
+            .Setup(a => a.GetAllowedEnvironmentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>?)null);
+        _controller = new WorkspacesController(
+            _db, _mockCurrentUser.Object, mockOrgMembership.Object,
+            _agentCapabilities.Object,
+            NullLogger<WorkspacesController>.Instance);
     }
 
     public void Dispose()
@@ -119,6 +132,136 @@ public class WorkspacesControllerTests : IDisposable
         var reloaded = await _db.Workspaces.FindAsync(ws.Id);
         reloaded!.EnvironmentProfileId.Should().Be(profile.Id,
             "Update has no profile field — re-binding requires workspace recreation");
+    }
+
+    // X9 (#99) -----------------------------------------------------------
+    // Agent allowed_environments enforcement. Workspaces that target a
+    // specific agent must respect that agent's policy; agents without a
+    // policy stay open. Service outage fails closed.
+
+    [Fact]
+    public async Task Create_AgentBound_ProfileInAllowlist_Returns201()
+    {
+        var profile = await SeedHeadlessProfile();
+        _agentCapabilities
+            .Setup(a => a.GetAllowedEnvironmentsAsync("triage", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { "headless-container", "terminal" });
+
+        var dto = new CreateWorkspaceDto(
+            "agent-allowed", null, null, null, null, null,
+            EnvironmentProfileCode: profile.Name,
+            AgentId: "triage");
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        result.Should().BeOfType<CreatedAtActionResult>();
+    }
+
+    [Fact]
+    public async Task Create_AgentBound_ProfileNotInAllowlist_Returns403()
+    {
+        var profile = await SeedHeadlessProfile();
+        _agentCapabilities
+            .Setup(a => a.GetAllowedEnvironmentsAsync("review-only", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { "terminal", "desktop" });
+
+        var dto = new CreateWorkspaceDto(
+            "agent-rejected", null, null, null, null, null,
+            EnvironmentProfileCode: profile.Name,
+            AgentId: "review-only");
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        var status = result.Should().BeOfType<ObjectResult>().Subject;
+        status.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        status.Value!.ToString().Should().Contain("headless-container")
+            .And.Contain("review-only",
+                "the 403 must name the profile and the agent so callers can self-correct");
+    }
+
+    [Fact]
+    public async Task Create_AgentBound_AllowlistMatchesCaseInsensitively()
+    {
+        // Agents may declare codes with different casing; the catalog
+        // is canonical lowercase, so the comparison must be tolerant.
+        var profile = await SeedHeadlessProfile();
+        _agentCapabilities
+            .Setup(a => a.GetAllowedEnvironmentsAsync("ci", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { "Headless-Container" });
+
+        var dto = new CreateWorkspaceDto(
+            "casey", null, null, null, null, null,
+            EnvironmentProfileCode: profile.Name,
+            AgentId: "ci");
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        result.Should().BeOfType<CreatedAtActionResult>();
+    }
+
+    [Fact]
+    public async Task Create_AgentBound_NullAllowlist_Returns201()
+    {
+        // Null = "no policy on record". Open by default until an
+        // agent declares an allowlist.
+        var profile = await SeedHeadlessProfile();
+        _agentCapabilities
+            .Setup(a => a.GetAllowedEnvironmentsAsync("freeform", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>?)null);
+
+        var dto = new CreateWorkspaceDto(
+            "freeform-ws", null, null, null, null, null,
+            EnvironmentProfileCode: profile.Name,
+            AgentId: "freeform");
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        result.Should().BeOfType<CreatedAtActionResult>();
+    }
+
+    [Fact]
+    public async Task Create_AgentBound_ServiceUnavailable_Returns503()
+    {
+        // Fail-closed: refuse to provision a workspace against an
+        // unverifiable policy rather than silently bypass enforcement.
+        var profile = await SeedHeadlessProfile();
+        _agentCapabilities
+            .Setup(a => a.GetAllowedEnvironmentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AgentCapabilityServiceUnavailableException(
+                "andy-agents 503"));
+
+        var dto = new CreateWorkspaceDto(
+            "outage", null, null, null, null, null,
+            EnvironmentProfileCode: profile.Name,
+            AgentId: "any");
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        var status = result.Should().BeOfType<ObjectResult>().Subject;
+        status.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        (await _db.Workspaces.AnyAsync()).Should().BeFalse(
+            "the service-down path must not produce a row that survived the failed check");
+    }
+
+    [Fact]
+    public async Task Create_NoAgentBound_SkipsEnforcementCallEntirely()
+    {
+        // The capability service never gets called when AgentId is null;
+        // pin that explicitly so a future refactor doesn't accidentally
+        // ask the agent service "does null have an allowlist?" on every
+        // workspace-create.
+        var profile = await SeedHeadlessProfile();
+
+        var dto = new CreateWorkspaceDto(
+            "no-agent", null, null, null, null, null,
+            EnvironmentProfileCode: profile.Name);
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        result.Should().BeOfType<CreatedAtActionResult>();
+        _agentCapabilities.Verify(
+            a => a.GetAllowedEnvironmentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     private async Task<Andy.Containers.Models.EnvironmentProfile> SeedHeadlessProfile()

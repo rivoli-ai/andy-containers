@@ -18,12 +18,21 @@ public class WorkspacesController : ControllerBase
     private readonly ContainersDbContext _db;
     private readonly ICurrentUserService _currentUser;
     private readonly IOrganizationMembershipService _orgMembership;
+    private readonly IAgentCapabilityService _agentCapabilities;
+    private readonly ILogger<WorkspacesController> _logger;
 
-    public WorkspacesController(ContainersDbContext db, ICurrentUserService currentUser, IOrganizationMembershipService orgMembership)
+    public WorkspacesController(
+        ContainersDbContext db,
+        ICurrentUserService currentUser,
+        IOrganizationMembershipService orgMembership,
+        IAgentCapabilityService agentCapabilities,
+        ILogger<WorkspacesController> logger)
     {
         _db = db;
         _currentUser = currentUser;
         _orgMembership = orgMembership;
+        _agentCapabilities = agentCapabilities;
+        _logger = logger;
     }
 
     [RequirePermission("workspace:read")]
@@ -102,6 +111,40 @@ public class WorkspacesController : ControllerBase
             });
         }
 
+        // X9 (rivoli-ai/andy-containers#99). When the workspace targets a
+        // specific agent, enforce the agent's allowed_environments
+        // declaration. Agents without a policy stay open (null
+        // allowlist); agents with one are enforced strictly. Service
+        // outage fails closed — better to refuse provisioning than
+        // bind a workspace to an unverifiable policy.
+        if (!string.IsNullOrWhiteSpace(dto.AgentId))
+        {
+            IReadOnlyList<string>? allowed;
+            try
+            {
+                allowed = await _agentCapabilities.GetAllowedEnvironmentsAsync(dto.AgentId, ct);
+            }
+            catch (AgentCapabilityServiceUnavailableException ex)
+            {
+                _logger.LogError(ex,
+                    "Agent capability service unavailable while creating workspace for agent {AgentId}",
+                    dto.AgentId);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    error = "Agent capability service unavailable; cannot validate allowed_environments.",
+                });
+            }
+
+            if (allowed is not null
+                && !allowed.Any(code => string.Equals(code, profile.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    error = $"Profile '{profile.Name}' is not in agent '{dto.AgentId}' allowed_environments.",
+                });
+            }
+        }
+
         // Validate uniqueness of git repo URLs
         var repos = dto.GitRepositories ?? [];
         var duplicateUrl = repos.GroupBy(r => r.Url, StringComparer.OrdinalIgnoreCase)
@@ -178,5 +221,11 @@ public record WorkspaceGitRepoDto(string Url, string? Branch = null, string? Cre
 // the X3 catalog (e.g. "headless-container"). Optional in the C# signature
 // so existing callers don't break at compile time, but the controller
 // validates it as required and returns 400 when omitted on Create.
-public record CreateWorkspaceDto(string Name, string? Description, Guid? OrganizationId, Guid? TeamId, string? GitRepositoryUrl, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null, string? EnvironmentProfileCode = null);
+//
+// X9 (rivoli-ai/andy-containers#99): AgentId is optional — when set, the
+// controller calls IAgentCapabilityService and rejects the create with
+// 403 if the workspace's profile isn't in the agent's allowlist. Omit
+// to keep the workspace agent-agnostic (run-submit time becomes the
+// natural enforcement point in that case).
+public record CreateWorkspaceDto(string Name, string? Description, Guid? OrganizationId, Guid? TeamId, string? GitRepositoryUrl, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null, string? EnvironmentProfileCode = null, string? AgentId = null);
 public record UpdateWorkspaceDto(string? Name, string? Description, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null);
