@@ -159,14 +159,13 @@ public class TerminalController : ControllerBase
         // null we fall through to the legacy script-based path
         // below.
         //
-        // Gated behind ANDY_USE_DAEMON_PTY=1. The new code path is
-        // wired but the integration showed an issue: user couldn't
-        // see characters echo back in the terminal. Defaulting to
-        // the legacy script-based path until we've debugged the
-        // daemon-PTY I/O loop. Re-enable for testing by setting the
-        // env var before launching andy-containers.
-        var useDaemonPty = Environment.GetEnvironmentVariable("ANDY_USE_DAEMON_PTY") == "1";
-        if (useDaemonPty && container.Provider is not null)
+        // Verified end-to-end via a hand-rolled HTTP/1.1 hijack
+        // (Docker.DotNet's MultiplexedStream-based attach silently
+        // drops writes — see DockerInfrastructureProvider for the
+        // detail). On any exception we still fall through to the
+        // legacy script-based path so a regression here doesn't
+        // leave the user with no terminal.
+        if (container.Provider is not null)
         {
             try
             {

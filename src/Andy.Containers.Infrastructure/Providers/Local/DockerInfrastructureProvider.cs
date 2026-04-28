@@ -13,15 +13,16 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 {
     private readonly DockerClient _client;
     private readonly ILogger<DockerInfrastructureProvider> _logger;
+    private readonly string _endpoint;
 
     public ProviderType Type => ProviderType.Docker;
 
     public DockerInfrastructureProvider(string? connectionConfig, ILogger<DockerInfrastructureProvider> logger)
     {
         _logger = logger;
-        var endpoint = ResolveDockerEndpoint(connectionConfig);
-        _logger.LogDebug("Using Docker endpoint: {Endpoint}", endpoint);
-        _client = new DockerClientConfiguration(new Uri(endpoint)).CreateClient();
+        _endpoint = ResolveDockerEndpoint(connectionConfig);
+        _logger.LogDebug("Using Docker endpoint: {Endpoint}", _endpoint);
+        _client = new DockerClientConfiguration(new Uri(_endpoint)).CreateClient();
     }
 
     private static string ResolveDockerEndpoint(string? connectionConfig)
@@ -414,7 +415,26 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             Tty = true,
         }, ct);
 
-        var stream = await _client.Exec.StartAndAttachContainerExecAsync(exec.ID, tty: true, ct);
+        // Open a hand-rolled hijacked HTTP attach instead of going
+        // through Docker.DotNet's `StartAndAttachContainerExecAsync`.
+        // Docker.DotNet 3.125.x's MultiplexedStream wraps a one-way
+        // ChunkedReadStream — writes go through the wrapper without
+        // ever reaching the daemon, so keystrokes never echo and the
+        // terminal looks frozen. Verified independently of Conductor
+        // via `pty-test`: every Docker.DotNet attach API fails to
+        // deliver writes; raw HTTP/1.1 hijack works. Conductor #875.
+        Stream hijackedStream;
+        try
+        {
+            hijackedStream = await OpenHijackedExecAttachAsync(exec.ID, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[PTY-EXEC] OpenHijackedExecAttachAsync failed for exec {ExecId}",
+                exec.ID);
+            throw;
+        }
 
         // ExecCreateContainerParameters has no size field, so the
         // PTY starts at 80x24. Resize immediately to the renderer's
@@ -438,7 +458,153 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             "[PTY-EXEC] opened container={Container} exec={ExecId} cols={Cols} rows={Rows} user={User} cwd={Cwd}",
             externalId, exec.ID, cols, rows, user, workingDirectory);
 
-        return new DockerInteractiveExecSession(_client, exec.ID, stream, _logger);
+        return new DockerInteractiveExecSession(_client, exec.ID, hijackedStream, _logger);
+    }
+
+    /// <summary>
+    /// Opens a bidirectional, hijacked HTTP/1.1 connection to the
+    /// Docker daemon's <c>/exec/{id}/start</c> endpoint and returns
+    /// the raw upgraded stream. The stream multiplexes raw bytes
+    /// (TTY mode — no 8-byte multiplex framing) for both directions.
+    ///
+    /// Why not <see cref="DockerClient.Exec.StartAndAttachContainerExecAsync"/>?
+    /// Docker.DotNet 3.125.x's <c>MultiplexedStream.WriteAsync</c>
+    /// writes into a one-way <c>ChunkedReadStream</c> wrapper. The
+    /// bytes never reach the daemon — keystrokes are silently
+    /// dropped, the kernel never echoes, and the terminal looks
+    /// frozen. Hand-rolling the upgrade keeps us bidirectional.
+    /// Conductor #875.
+    /// </summary>
+    private async Task<Stream> OpenHijackedExecAttachAsync(string execId, CancellationToken ct)
+    {
+        if (!_endpoint.StartsWith("unix://", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"[PTY-EXEC] Hijacked exec attach only supports unix sockets; endpoint={_endpoint}");
+        }
+        var socketPath = _endpoint["unix://".Length..];
+
+        var sock = new System.Net.Sockets.Socket(
+            System.Net.Sockets.AddressFamily.Unix,
+            System.Net.Sockets.SocketType.Stream,
+            System.Net.Sockets.ProtocolType.Unspecified);
+        // NB: do NOT set sock.NoDelay — it's TCP-only and throws
+        // SocketException(45) "Operation not supported" on Unix
+        // domain sockets, which would silently fall us back to the
+        // legacy script-based path.
+        await sock.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(socketPath), ct);
+        var ns = new System.Net.Sockets.NetworkStream(sock, ownsSocket: true);
+
+        var bodyBytes = System.Text.Encoding.UTF8.GetBytes("{\"Detach\":false,\"Tty\":true}");
+        var requestHeaders =
+            $"POST /v1.41/exec/{execId}/start HTTP/1.1\r\n" +
+            "Host: docker\r\n" +
+            "Content-Type: application/json\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Upgrade: tcp\r\n" +
+            $"Content-Length: {bodyBytes.Length}\r\n\r\n";
+        var requestBytes = System.Text.Encoding.UTF8.GetBytes(requestHeaders);
+        await ns.WriteAsync(requestBytes, ct);
+        await ns.WriteAsync(bodyBytes, ct);
+
+        var headerBuf = new byte[8192];
+        var headerLen = 0;
+        var bodyStart = -1;
+        while (bodyStart < 0 && headerLen < headerBuf.Length)
+        {
+            var n = await ns.ReadAsync(headerBuf.AsMemory(headerLen), ct);
+            if (n <= 0) throw new IOException("[PTY-EXEC] connection closed before HTTP headers");
+            headerLen += n;
+            for (int i = 0; i + 3 < headerLen; i++)
+            {
+                if (headerBuf[i] == '\r' && headerBuf[i + 1] == '\n' &&
+                    headerBuf[i + 2] == '\r' && headerBuf[i + 3] == '\n')
+                {
+                    bodyStart = i + 4;
+                    break;
+                }
+            }
+        }
+        if (bodyStart < 0)
+            throw new IOException("[PTY-EXEC] HTTP headers exceeded 8 KB without a CRLFCRLF");
+
+        var statusLine = System.Text.Encoding.UTF8.GetString(headerBuf, 0, headerLen).Split("\r\n")[0];
+        if (!statusLine.StartsWith("HTTP/1.1 101", StringComparison.Ordinal))
+            throw new IOException($"[PTY-EXEC] expected 101 Switching Protocols, got: {statusLine}");
+
+        // Bytes after headers (if any) are the start of the upgraded
+        // stream and must be replayed before subsequent reads.
+        if (bodyStart < headerLen)
+        {
+            var leftover = new byte[headerLen - bodyStart];
+            Array.Copy(headerBuf, bodyStart, leftover, 0, leftover.Length);
+            return new PrependBufferStream(leftover, ns);
+        }
+        return ns;
+    }
+
+    /// <summary>
+    /// Stream wrapper that replays a leftover prefix on the first
+    /// read(s) before delegating to the underlying stream. Used
+    /// when we accidentally over-read past the HTTP CRLFCRLF while
+    /// looking for the end of headers.
+    /// </summary>
+    private sealed class PrependBufferStream : Stream
+    {
+        private readonly byte[] _prefix;
+        private int _prefixOffset;
+        private readonly Stream _inner;
+
+        public PrependBufferStream(byte[] prefix, Stream inner)
+        {
+            _prefix = prefix;
+            _prefixOffset = 0;
+            _inner = inner;
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanWrite => _inner.CanWrite;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => _inner.Flush();
+        public override Task FlushAsync(CancellationToken ct) => _inner.FlushAsync(ct);
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_prefixOffset < _prefix.Length)
+            {
+                var take = Math.Min(count, _prefix.Length - _prefixOffset);
+                Array.Copy(_prefix, _prefixOffset, buffer, offset, take);
+                _prefixOffset += take;
+                return take;
+            }
+            return _inner.Read(buffer, offset, count);
+        }
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            if (_prefixOffset < _prefix.Length)
+            {
+                var take = Math.Min(buffer.Length, _prefix.Length - _prefixOffset);
+                _prefix.AsSpan(_prefixOffset, take).CopyTo(buffer.Span);
+                _prefixOffset += take;
+                return take;
+            }
+            return await _inner.ReadAsync(buffer, ct);
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+        public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => _inner.WriteAsync(buffer, offset, count, ct);
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+            => _inner.WriteAsync(buffer, ct);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _inner.Dispose();
+            base.Dispose(disposing);
+        }
     }
 
     /// <summary>
