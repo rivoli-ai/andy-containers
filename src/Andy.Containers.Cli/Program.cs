@@ -34,6 +34,9 @@ rootCommand.AddCommand(ConnectCommand.Create());
 // Run commands (AP9 — rivoli-ai/andy-containers#111).
 rootCommand.AddCommand(RunCommands.Create());
 
+// Environment-profile catalog (X7 — rivoli-ai/andy-containers#97).
+rootCommand.AddCommand(EnvironmentCommands.Create());
+
 // Workspace commands (stubs for future)
 var workspaceCommand = new Command("workspace", "Manage workspaces");
 workspaceCommand.AddCommand(new Command("create", "Create a workspace"));

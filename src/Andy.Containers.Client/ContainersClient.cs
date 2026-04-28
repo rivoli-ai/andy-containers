@@ -117,6 +117,33 @@ public sealed class ContainersClient
     // client lib already references Andy.Containers for Permissions
     // constants, so this is no extra dependency.
 
+    // Environments (X7 — rivoli-ai/andy-containers#97). Read-only catalog.
+    // The X3 server returns the standard { items, totalCount } envelope;
+    // PaginatedResult<EnvironmentProfileDto> deserialises it directly via
+    // the case-insensitive options the client already configures.
+
+    public async Task<PaginatedResult<EnvironmentProfileDto>> ListEnvironmentsAsync(
+        string? kind = null, int? skip = null, int? take = null, CancellationToken ct = default)
+    {
+        var query = new List<string>();
+        if (!string.IsNullOrWhiteSpace(kind)) query.Add($"kind={Uri.EscapeDataString(kind)}");
+        if (skip.HasValue) query.Add($"skip={skip.Value}");
+        if (take.HasValue) query.Add($"take={take.Value}");
+        var url = "api/environments" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
+
+        var r = await _http.GetAsync(url, ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<PaginatedResult<EnvironmentProfileDto>>(_json, ct))!;
+    }
+
+    public async Task<EnvironmentProfileDto> GetEnvironmentByCodeAsync(
+        string code, CancellationToken ct = default)
+    {
+        var r = await _http.GetAsync($"api/environments/by-code/{Uri.EscapeDataString(code)}", ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<EnvironmentProfileDto>(_json, ct))!;
+    }
+
     public async Task<RunDto> CreateRunAsync(CreateRunRequest request, CancellationToken ct = default)
     {
         var r = await _http.PostAsJsonAsync("api/runs", request, _json, ct);

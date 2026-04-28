@@ -159,6 +159,9 @@ public class ContainersClientTests
         private readonly string _contentType;
         private readonly HttpStatusCode _status;
 
+        public Uri? LastRequestUri { get; private set; }
+        public HttpMethod? LastMethod { get; private set; }
+
         public CannedHandler(string body, string contentType, HttpStatusCode status = HttpStatusCode.OK)
         {
             _body = Encoding.UTF8.GetBytes(body);
@@ -168,9 +171,137 @@ public class ContainersClientTests
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            LastRequestUri = request.RequestUri;
+            LastMethod = request.Method;
             var content = new ByteArrayContent(_body);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_contentType);
             return Task.FromResult(new HttpResponseMessage(_status) { Content = content });
         }
+    }
+
+    // X7 (rivoli-ai/andy-containers#97). Environment catalog wrappers.
+    // Pin the URL shape so a typo in the route or a regression in
+    // pagination encoding becomes a test failure here, not a 404 in
+    // the CLI.
+
+    [Fact]
+    public async Task ListEnvironmentsAsync_NoFilters_HitsBareCollectionUrl()
+    {
+        var handler = new CannedHandler(
+            """{"items":[],"totalCount":0}""", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var page = await client.ListEnvironmentsAsync();
+
+        page.TotalCount.Should().Be(0);
+        page.Items.Should().BeEmpty();
+        handler.LastMethod.Should().Be(HttpMethod.Get);
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/environments");
+        handler.LastRequestUri.Query.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ListEnvironmentsAsync_AllFilters_AppendsQueryParams()
+    {
+        var handler = new CannedHandler(
+            """{"items":[],"totalCount":0}""", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        await client.ListEnvironmentsAsync(kind: "Headless Container", skip: 0, take: 25);
+
+        var query = handler.LastRequestUri!.Query;
+        query.Should().Contain("kind=Headless%20Container",
+            "spaces in user-supplied kind values must be URL-encoded, not silently dropped");
+        query.Should().Contain("skip=0");
+        query.Should().Contain("take=25");
+    }
+
+    [Fact]
+    public async Task ListEnvironmentsAsync_DeserialisesItems_AndCapabilities()
+    {
+        var profileId = Guid.NewGuid();
+        var body = $$"""
+            {
+              "items": [{
+                "id": "{{profileId}}",
+                "code": "headless-container",
+                "displayName": "Headless container",
+                "kind": "HeadlessContainer",
+                "baseImageRef": "ghcr.io/rivoli-ai/andy-headless:latest",
+                "capabilities": {
+                  "networkAllowlist": ["registry.rivoli.ai"],
+                  "secretsScope": "WorkspaceScoped",
+                  "hasGui": false,
+                  "auditMode": "Strict"
+                },
+                "createdAt": "2026-04-27T00:00:00+00:00"
+              }],
+              "totalCount": 1
+            }
+            """;
+        var http = new HttpClient(new CannedHandler(body, "application/json"))
+        {
+            BaseAddress = new Uri("https://example.local/"),
+        };
+        var client = new ContainersClient(http);
+
+        var page = await client.ListEnvironmentsAsync();
+
+        page.Items.Should().HaveCount(1);
+        var dto = page.Items[0];
+        dto.Code.Should().Be("headless-container");
+        dto.Kind.Should().Be("HeadlessContainer");
+        dto.Capabilities.HasGui.Should().BeFalse();
+        dto.Capabilities.SecretsScope.Should()
+            .Be(Andy.Containers.Models.SecretsScope.WorkspaceScoped);
+        dto.Capabilities.AuditMode.Should()
+            .Be(Andy.Containers.Models.AuditMode.Strict);
+    }
+
+    [Fact]
+    public async Task GetEnvironmentByCodeAsync_HitsByCodeRoute_AndDeserialises()
+    {
+        var body = """
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "code": "desktop",
+              "displayName": "Desktop",
+              "kind": "Desktop",
+              "baseImageRef": "ghcr.io/rivoli-ai/andy-desktop:latest",
+              "capabilities": {
+                "networkAllowlist": ["*"],
+                "secretsScope": "OrganizationScoped",
+                "hasGui": true,
+                "auditMode": "Standard"
+              },
+              "createdAt": "2026-04-27T00:00:00+00:00"
+            }
+            """;
+        var handler = new CannedHandler(body, "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var dto = await client.GetEnvironmentByCodeAsync("desktop");
+
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/environments/by-code/desktop");
+        dto.Capabilities.HasGui.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetEnvironmentByCodeAsync_404_ThrowsContainersApiException()
+    {
+        var http = new HttpClient(
+            new CannedHandler("", "application/json", HttpStatusCode.NotFound))
+        {
+            BaseAddress = new Uri("https://example.local/"),
+        };
+        var client = new ContainersClient(http);
+
+        var act = async () => await client.GetEnvironmentByCodeAsync("nope");
+
+        await act.Should().ThrowAsync<ContainersApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
     }
 }
