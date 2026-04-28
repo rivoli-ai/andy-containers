@@ -1,0 +1,39 @@
+name: OpenAPI lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'openapi/**'
+      - '.github/workflows/openapi.yml'
+  pull_request:
+    paths:
+      - 'openapi/**'
+      - '.github/workflows/openapi.yml'
+
+# X8 (rivoli-ai/andy-containers#98). Catch structural drift in
+# openapi/containers-api.yaml before it lands on main. Spectral's
+# default `spectral:oas` ruleset covers the OpenAPI 3.x correctness
+# rules (required fields, $ref targets, response shapes); we don't
+# need a Rivoli house ruleset until something specific demands it.
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # `--fail-severity=error` blocks structural problems ($ref breaks,
+      # missing required schema fields, malformed responses) but not
+      # the existing 80+ stylistic warnings (operationId, descriptions,
+      # tag-defined) that pre-date X8. A separate cleanup pass can
+      # tighten the bar once those are addressed across the spec.
+      - name: Lint OpenAPI spec
+        run: npx -y @stoplight/spectral-cli@^6 lint openapi/containers-api.yaml --fail-severity=error
