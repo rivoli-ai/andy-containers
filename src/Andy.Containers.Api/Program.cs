@@ -258,6 +258,13 @@ try
         builder.Configuration.GetSection(SecretsOptions.SectionName));
     builder.Services.AddSingleton<ITokenIssuer, StubTokenIssuer>();
 
+    // X9 (rivoli-ai/andy-containers#99). Stub allowlist resolver until
+    // andy-agents (Epic W3) ships GET /api/agents/{id}/allowed-environments.
+    // The stub returns null (= no policy) so workspace-create stays open
+    // for agents that haven't declared an allowlist; explicit policies
+    // get enforced by the controller once the real client lands here.
+    builder.Services.AddSingleton<IAgentCapabilityService, StubAgentCapabilityService>();
+
     // AP7 (rivoli-ai/andy-containers#109). In-process registry of active
     // runs so the cancel endpoint can signal the AP6 runner across
     // request scopes. Singleton — runner registrations span requests.
