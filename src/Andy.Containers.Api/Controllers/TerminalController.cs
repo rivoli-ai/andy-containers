@@ -842,31 +842,51 @@ public class TerminalController : ControllerBase
     {
         // Outer setup (stty, env, rcfiles) matches the legacy command
         // so existing infrastructure that depends on this shape keeps
-        // working. The final exec swaps dtach → invisible tmux: tmux
-        // wraps `bash -i`, holds the screen state across WS reconnects,
-        // and renders identically to bare bash thanks to a minimal
+        // working. The final exec wraps `bash -i` in invisible tmux:
+        // tmux holds the screen state across WS reconnects and renders
+        // identically to bare bash thanks to a minimal
         // conductor-tmux.conf (no status bar, no prefix, no bindings).
-        // The conf file is lazy-created in $HOME so we don't have to
-        // rebuild every container image.
+        //
+        // Conf resolution: prefer the image-baked /etc/conductor-tmux.conf
+        // (every desktop Dockerfile copies the canonical
+        // scripts/container/conductor-tmux.conf there), fall back to
+        // a lazy-create at $HOME/.config/conductor/tmux.conf so older
+        // images that pre-date the bake still get invisible tmux
+        // without us having to rebuild every container.
+        //
+        // Fallback when tmux isn't installed: exec a bare `bash -i`.
+        // Without this guard, `exec tmux …` against a missing binary
+        // would silently fail and the user would see a broken
+        // terminal — so the dtach-fallback semantic survives the
+        // multiplexer swap. Persistence/scrollback are lost on
+        // tmux-less containers, but the terminal still works.
         return $"stty rows {rows} cols {cols} 2>/dev/null; " +
                $"export TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
                $"[ -f /etc/profile ] && . /etc/profile 2>/dev/null; " +
                $"[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc 2>/dev/null; " +
                $"[ -f ~/.profile ] && . ~/.profile 2>/dev/null; " +
                $"[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null; " +
-               $"TMUX_CONF=\"$HOME/.config/conductor/tmux.conf\"; " +
-               $"mkdir -p \"$(dirname \"$TMUX_CONF\")\" 2>/dev/null; " +
-               $"if [ ! -f \"$TMUX_CONF\" ]; then cat > \"$TMUX_CONF\" <<'CONDUCTOR_TMUX_EOF'\n" +
-               "set -g status off\n" +
-               "set -g prefix none\n" +
-               "unbind-key -a\n" +
-               "setw -g aggressive-resize on\n" +
-               "set -g default-terminal \"xterm-256color\"\n" +
-               "set -g default-shell \"/bin/bash\"\n" +
-               "set -g history-limit 10000\n" +
-               "CONDUCTOR_TMUX_EOF\n" +
+               $"if [ -f /etc/conductor-tmux.conf ]; then " +
+                    $"TMUX_CONF=/etc/conductor-tmux.conf; " +
+               $"else " +
+                    $"TMUX_CONF=\"$HOME/.config/conductor/tmux.conf\"; " +
+                    $"mkdir -p \"$(dirname \"$TMUX_CONF\")\" 2>/dev/null; " +
+                    $"if [ ! -f \"$TMUX_CONF\" ]; then cat > \"$TMUX_CONF\" <<'CONDUCTOR_TMUX_EOF'\n" +
+                    "set -g status off\n" +
+                    "set -g prefix none\n" +
+                    "unbind-key -a\n" +
+                    "setw -g aggressive-resize on\n" +
+                    "set -g default-terminal \"xterm-256color\"\n" +
+                    "set -g default-shell \"/bin/bash\"\n" +
+                    "set -g history-limit 10000\n" +
+                    "CONDUCTOR_TMUX_EOF\n" +
+                    $"fi; " +
                $"fi; " +
-               $"exec tmux -f \"$TMUX_CONF\" new-session -A -s {TmuxSessionName} bash -i";
+               $"if command -v tmux >/dev/null 2>&1; then " +
+                    $"exec tmux -f \"$TMUX_CONF\" new-session -A -s {TmuxSessionName} bash -i; " +
+               $"else " +
+                    $"exec bash -i; " +
+               $"fi";
     }
 
     /// <summary>

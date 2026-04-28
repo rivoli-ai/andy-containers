@@ -424,17 +424,33 @@ public class TerminalControllerTests : IDisposable
     }
 
     [Fact]
-    public void BuildContainerShellCommand_LazyCreatesTmuxConfInUserHome()
+    public void BuildContainerShellCommand_PrefersBakedConfThenLazyCreatesInHome()
     {
-        // The conf is dropped in $HOME/.config/conductor/tmux.conf so
-        // it doesn't require write access to /etc and doesn't require
-        // rebuilding every container image. First attach writes the
-        // file; subsequent attaches keep it.
+        // Image-baked path lands at /etc/conductor-tmux.conf via the
+        // Dockerfile COPY; older images without it fall back to a
+        // lazy-create at $HOME/.config/conductor/tmux.conf so we don't
+        // have to rebuild every existing container.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("/etc/conductor-tmux.conf",
+            "must check the image-baked path first");
         cmd.Should().Contain("$HOME/.config/conductor/tmux.conf",
-            "conf path must be user-writable so first attach can create it");
+            "must fall back to a user-writable path for older images");
         cmd.Should().Contain("if [ ! -f",
             "must guard the heredoc on file-missing so we don't rewrite on every attach");
+    }
+
+    [Fact]
+    public void BuildContainerShellCommand_FallsBackToBareBashWhenTmuxMissing()
+    {
+        // Containers without tmux installed (older minimal images,
+        // arbitrary images the user attaches as a provider) must
+        // still get a working terminal. Persistence/scrollback are
+        // lost on those, but a broken terminal is strictly worse.
+        var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
+        cmd.Should().Contain("command -v tmux",
+            "must guard the tmux exec so missing tmux doesn't break the terminal");
+        cmd.Should().Contain("exec bash -i",
+            "must fall through to bare bash when tmux isn't on PATH");
     }
 
     [Fact]

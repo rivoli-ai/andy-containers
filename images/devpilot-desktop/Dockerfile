@@ -34,6 +34,7 @@ RUN mkdir -p /run/sshd && \
 
 # SSL cert for noVNC HTTPS (writes to /etc/novnc — must run as root).
 COPY --from=scripts generate-ssl-cert.sh /tmp/generate-ssl-cert.sh
+COPY --from=scripts conductor-tmux.conf /etc/conductor-tmux.conf
 RUN chmod +x /tmp/generate-ssl-cert.sh && /tmp/generate-ssl-cert.sh && rm -f /tmp/generate-ssl-cert.sh
 
 # start-vnc.sh is the container CMD — install system-wide so it's reachable.

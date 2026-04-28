@@ -27,6 +27,7 @@ RUN mkdir -p /run/sshd && \
     ssh-keygen -A
 
 COPY --from=scripts generate-ssl-cert.sh /tmp/generate-ssl-cert.sh
+COPY --from=scripts conductor-tmux.conf /etc/conductor-tmux.conf
 RUN chmod +x /tmp/generate-ssl-cert.sh && /tmp/generate-ssl-cert.sh && rm -f /tmp/generate-ssl-cert.sh
 COPY --from=scripts start-vnc.sh /start.sh
 RUN chmod +x /start.sh
