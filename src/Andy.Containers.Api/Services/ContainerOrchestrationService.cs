@@ -109,15 +109,31 @@ public class ContainerOrchestrationService : IContainerService
         // Terminal kinds skip the VNC sidecar entirely; Desktop keeps
         // it. The template still drives resources, scripts, and
         // dependencies — only image + sidecar surface flip.
+        //
+        // X5 (rivoli-ai/andy-containers#94). When the request omits a
+        // profile but binds a workspace, inherit the workspace's bound
+        // profile — that's the workspace's governance anchor and every
+        // container the workspace provisions should match its envelope.
+        // Explicit request.EnvironmentProfileId still wins (one-off
+        // shells into a different env are intentional).
+        var effectiveProfileId = request.EnvironmentProfileId;
+        if (effectiveProfileId is null && request.WorkspaceId.HasValue)
+        {
+            effectiveProfileId = await _db.Workspaces
+                .Where(w => w.Id == request.WorkspaceId.Value)
+                .Select(w => w.EnvironmentProfileId)
+                .FirstOrDefaultAsync(ct);
+        }
+
         EnvironmentProfile? profile = null;
-        if (request.EnvironmentProfileId.HasValue)
+        if (effectiveProfileId.HasValue)
         {
             profile = await _db.EnvironmentProfiles
-                .FirstOrDefaultAsync(p => p.Id == request.EnvironmentProfileId.Value, ct);
+                .FirstOrDefaultAsync(p => p.Id == effectiveProfileId.Value, ct);
             if (profile is null)
             {
                 throw new ArgumentException(
-                    $"EnvironmentProfile '{request.EnvironmentProfileId.Value}' not found.");
+                    $"EnvironmentProfile '{effectiveProfileId.Value}' not found.");
             }
         }
 

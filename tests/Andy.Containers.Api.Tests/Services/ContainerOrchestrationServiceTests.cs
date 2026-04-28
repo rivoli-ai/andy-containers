@@ -1128,6 +1128,90 @@ public class ContainerOrchestrationServiceTests : IDisposable
             "a missing profile must short-circuit before any provisioning is enqueued");
     }
 
+    // X5 (#94). When a request omits the profile but binds a workspace,
+    // inherit the workspace's profile — that's the governance anchor and
+    // every container the workspace provisions should match its envelope.
+
+    [Fact]
+    public async Task CreateContainer_InheritsWorkspaceProfile_WhenRequestOmitsProfile()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.GuiType = "vnc"; // would normally drive VNC sidecar
+        var profile = await SeedProfile(
+            "headless-container",
+            EnvironmentKind.HeadlessContainer,
+            "ghcr.io/rivoli-ai/andy-headless:2026.04");
+        var workspace = await SeedWorkspaceWithProfile(profile.Id);
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "from-workspace",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            WorkspaceId = workspace.Id,
+            // EnvironmentProfileId intentionally omitted — inheritance
+            // path is what we're pinning here.
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be("ghcr.io/rivoli-ai/andy-headless:2026.04");
+        job.GuiType.Should().Be("none",
+            "inherited headless profile must drop the VNC sidecar");
+        job.EnvironmentProfileId.Should().Be(profile.Id);
+        job.EnvironmentKind.Should().Be("HeadlessContainer");
+    }
+
+    [Fact]
+    public async Task CreateContainer_ExplicitProfileWinsOverWorkspaceProfile()
+    {
+        // One-off shells into a different env are intentional: the
+        // explicit request value beats the workspace anchor.
+        var (template, provider) = await SeedTemplateAndProvider();
+        var workspaceProfile = await SeedProfile(
+            "headless-container", EnvironmentKind.HeadlessContainer, "image:headless");
+        var explicitProfile = await SeedProfile(
+            "desktop", EnvironmentKind.Desktop, "image:desktop");
+        var workspace = await SeedWorkspaceWithProfile(workspaceProfile.Id);
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "explicit-wins",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            WorkspaceId = workspace.Id,
+            EnvironmentProfileId = explicitProfile.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.EnvironmentProfileId.Should().Be(explicitProfile.Id);
+        job.GuiType.Should().Be("vnc");
+    }
+
+    [Fact]
+    public async Task CreateContainer_WorkspaceWithoutProfile_FallsBackToTemplate()
+    {
+        // Pre-X5 workspaces (or workspaces somehow created without a
+        // profile binding) leave EnvironmentProfileId null. The
+        // container falls through to the template's image / GuiType
+        // exactly as it did before X4 — back-compat.
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.GuiType = "vnc";
+        var workspace = await SeedWorkspaceWithProfile(null);
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "no-profile-ws",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            WorkspaceId = workspace.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be(template.BaseImage);
+        job.GuiType.Should().Be("vnc");
+        job.EnvironmentProfileId.Should().BeNull();
+    }
+
     private async Task<EnvironmentProfile> SeedProfile(
         string code, EnvironmentKind kind, string baseImageRef)
     {
@@ -1142,5 +1226,19 @@ public class ContainerOrchestrationServiceTests : IDisposable
         _db.EnvironmentProfiles.Add(profile);
         await _db.SaveChangesAsync();
         return profile;
+    }
+
+    private async Task<Workspace> SeedWorkspaceWithProfile(Guid? profileId)
+    {
+        var workspace = new Workspace
+        {
+            Id = Guid.NewGuid(),
+            Name = "ws",
+            OwnerId = "alice",
+            EnvironmentProfileId = profileId,
+        };
+        _db.Workspaces.Add(workspace);
+        await _db.SaveChangesAsync();
+        return workspace;
     }
 }
