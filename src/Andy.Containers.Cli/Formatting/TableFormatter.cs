@@ -1,4 +1,5 @@
 using Andy.Containers.Client;
+using Andy.Containers.Models;
 using Spectre.Console;
 
 namespace Andy.Containers.Cli.Formatting;
@@ -169,4 +170,78 @@ public static class TableFormatter
         i = Math.Min(i, units.Length - 1);
         return $"{bytes / Math.Pow(1024, i):F1} {units[i]}";
     }
+
+    // X7 (rivoli-ai/andy-containers#97). Environment catalog views.
+
+    public static void PrintEnvironmentTable(IReadOnlyList<EnvironmentProfileDto> profiles)
+    {
+        if (profiles.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No environment profiles found.[/]");
+            return;
+        }
+
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .AddColumn("Code")
+            .AddColumn("Display name")
+            .AddColumn("Kind")
+            .AddColumn("GUI")
+            .AddColumn("Secrets")
+            .AddColumn("Audit")
+            .AddColumn("Base image");
+
+        foreach (var p in profiles)
+        {
+            var kindColor = p.Kind switch
+            {
+                "HeadlessContainer" => "cyan",
+                "Terminal" => "yellow",
+                "Desktop" => "magenta",
+                _ => "white",
+            };
+            table.AddRow(
+                Markup.Escape(p.Code),
+                Markup.Escape(p.DisplayName),
+                $"[{kindColor}]{p.Kind}[/]",
+                p.Capabilities.HasGui ? "[green]yes[/]" : "[dim]no[/]",
+                Markup.Escape(p.Capabilities.SecretsScope.ToString()),
+                AuditModeColor(p.Capabilities.AuditMode),
+                Markup.Escape(p.BaseImageRef));
+        }
+
+        AnsiConsole.Write(table);
+    }
+
+    public static void PrintEnvironmentDetail(EnvironmentProfileDto profile)
+    {
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .HideHeaders()
+            .AddColumn("")
+            .AddColumn("");
+
+        table.AddRow("Code", Markup.Escape(profile.Code));
+        table.AddRow("Display name", Markup.Escape(profile.DisplayName));
+        table.AddRow("Kind", profile.Kind);
+        table.AddRow("Base image", Markup.Escape(profile.BaseImageRef));
+        table.AddRow("Created", profile.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        table.AddRow("GUI", profile.Capabilities.HasGui ? "[green]yes[/]" : "[dim]no[/]");
+        table.AddRow("Secrets scope", profile.Capabilities.SecretsScope.ToString());
+        table.AddRow("Audit mode", AuditModeColor(profile.Capabilities.AuditMode));
+        var allowlist = profile.Capabilities.NetworkAllowlist;
+        table.AddRow("Network allowlist",
+            allowlist.Count == 0 ? "[dim](none — egress denied)[/]"
+                : string.Join(", ", allowlist.Select(Markup.Escape)));
+
+        AnsiConsole.Write(table);
+    }
+
+    private static string AuditModeColor(AuditMode mode) => mode switch
+    {
+        AuditMode.Strict => "[red]Strict[/]",
+        AuditMode.Standard => "[yellow]Standard[/]",
+        AuditMode.None => "[dim]None[/]",
+        _ => mode.ToString(),
+    };
 }
