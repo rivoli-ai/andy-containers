@@ -687,22 +687,35 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
         _logger.LogInformation("Building desktop image {Image} from {Dir}", imageReference, buildDir);
 
-        var args = $"buildx build -t {imageReference}";
-        if (Directory.Exists(scriptsDir))
-            args += $" --build-context scripts={Path.GetFullPath(scriptsDir)}";
-        args += $" {buildDir}";
+        // rivoli-ai/andy-containers#126. Validate the image reference up-
+        // front so a malformed value fails with a clear operator-facing
+        // error rather than a daemon parse warning. The argv-list path
+        // below is the primary defense; this is belt + braces.
+        Andy.Containers.Validation.OciReferenceValidator.Validate(imageReference);
 
-        var process = new System.Diagnostics.Process
+        // rivoli-ai/andy-containers#126. ProcessStartInfo.ArgumentList
+        // bypasses .NET's Win32-style tokeniser so any whitespace or
+        // shell metacharacter that snuck into a template's BaseImage
+        // can't smuggle extra docker flags.
+        var psi = new System.Diagnostics.ProcessStartInfo
         {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "docker",
-                Arguments = args,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            }
+            FileName = "docker",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
         };
+        psi.ArgumentList.Add("buildx");
+        psi.ArgumentList.Add("build");
+        psi.ArgumentList.Add("-t");
+        psi.ArgumentList.Add(imageReference);
+        if (Directory.Exists(scriptsDir))
+        {
+            psi.ArgumentList.Add("--build-context");
+            psi.ArgumentList.Add($"scripts={Path.GetFullPath(scriptsDir)}");
+        }
+        psi.ArgumentList.Add(buildDir);
+
+        var process = new System.Diagnostics.Process { StartInfo = psi };
 
         process.Start();
         _ = await process.StandardOutput.ReadToEndAsync(ct);

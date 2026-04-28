@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Containers.Validation;
 using Microsoft.EntityFrameworkCore;
 
 namespace Andy.Containers.Api.Services;
@@ -96,23 +97,37 @@ public class TemplateBuildService : ITemplateBuildService
 
             _logger.LogInformation("Building image {Image} from {Dir}", imageReference, buildDir);
 
-            var args = $"buildx build -t {imageReference}";
-            if (scriptsDir is not null && Directory.Exists(scriptsDir))
-                args += $" --build-context scripts={scriptsDir}";
-            args += $" {buildDir}";
+            // rivoli-ai/andy-containers#126. Validate before invoking
+            // docker so a malformed reference fails with a clear
+            // operator-facing error rather than a daemon parse warning.
+            // The argv-list path below is the primary defense; this is
+            // belt + braces.
+            OciReferenceValidator.Validate(imageReference);
 
-            var process = new Process
+            // rivoli-ai/andy-containers#126. ProcessStartInfo.ArgumentList
+            // bypasses .NET's Win32-style tokeniser so a template's
+            // BaseImage with embedded whitespace can't smuggle extra CLI
+            // flags (`-t evil --file /etc/passwd`).
+            var psi = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "docker",
-                    Arguments = args,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                }
+                FileName = "docker",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
             };
+            psi.ArgumentList.Add("buildx");
+            psi.ArgumentList.Add("build");
+            psi.ArgumentList.Add("-t");
+            psi.ArgumentList.Add(imageReference);
+            if (scriptsDir is not null && Directory.Exists(scriptsDir))
+            {
+                psi.ArgumentList.Add("--build-context");
+                psi.ArgumentList.Add($"scripts={scriptsDir}");
+            }
+            psi.ArgumentList.Add(buildDir);
+
+            var process = new Process { StartInfo = psi };
 
             process.Start();
             var stdout = await process.StandardOutput.ReadToEndAsync();
@@ -291,18 +306,24 @@ public class TemplateBuildService : ITemplateBuildService
     {
         try
         {
-            var process = new Process
+            // rivoli-ai/andy-containers#126. ArgumentList prevents the
+            // template-supplied imageReference from tokenising into
+            // extra docker flags.
+            var psi = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "docker",
-                    Arguments = $"image inspect {imageReference} --format json",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                }
+                FileName = "docker",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
             };
+            psi.ArgumentList.Add("image");
+            psi.ArgumentList.Add("inspect");
+            psi.ArgumentList.Add(imageReference);
+            psi.ArgumentList.Add("--format");
+            psi.ArgumentList.Add("json");
+
+            var process = new Process { StartInfo = psi };
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync();
             await process.WaitForExitAsync();
@@ -343,18 +364,21 @@ public class TemplateBuildService : ITemplateBuildService
     {
         try
         {
-            var process = new Process
+            // rivoli-ai/andy-containers#126. ArgumentList for the same
+            // reason as InspectImageAsync above.
+            var psi = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "docker",
-                    Arguments = $"image inspect {imageReference}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                }
+                FileName = "docker",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
             };
+            psi.ArgumentList.Add("image");
+            psi.ArgumentList.Add("inspect");
+            psi.ArgumentList.Add(imageReference);
+
+            var process = new Process { StartInfo = psi };
             process.Start();
             await process.WaitForExitAsync();
             return process.ExitCode == 0;
