@@ -384,6 +384,83 @@ paths:
         '204':
           description: Template published
 
+  # --- Environment profiles (Epic X) ---
+  # Read-only catalog. CRUD is deliberately out of scope: profiles are
+  # governance artefacts seeded from config/environments/global/*.yaml
+  # at API startup (X2) and edited via that pipeline, not over HTTP.
+  /api/environments:
+    get:
+      tags: [Environments]
+      summary: List environment profiles
+      description: |
+        Returns the seeded `EnvironmentProfile` catalog. Each row declares
+        the runtime shape (`HeadlessContainer` / `Terminal` / `Desktop`),
+        the base image used for provisioning, and the capability envelope
+        (network allowlist, secrets scope, GUI, audit mode). Used by the
+        workspace-create flow (X5) and by AP runs to substitute the
+        right base image and side-cars (X4).
+      parameters:
+        - name: kind
+          in: query
+          description: Optional filter; case-insensitive match against `EnvironmentProfile.kind`.
+          schema:
+            type: string
+            enum: [HeadlessContainer, Terminal, Desktop]
+        - name: skip
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+        - name: take
+          in: query
+          schema: { type: integer, default: 50, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Environment-profile listing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentProfileList' }
+        '400':
+          description: Unknown `kind` filter (typo vs. empty result — surfaced as 400, not silent narrow).
+
+  /api/environments/{id}:
+    get:
+      tags: [Environments]
+      summary: Get one environment profile by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Profile details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentProfile' }
+        '404':
+          description: No profile with that id
+
+  /api/environments/by-code/{code}:
+    get:
+      tags: [Environments]
+      summary: Get one environment profile by stable slug
+      description: |
+        The slug is stable across renames; use this when binding profiles
+        to workspaces (X5) or referencing them from agent-allowed lists
+        (Epic W3).
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string, example: headless-container }
+      responses:
+        '200':
+          description: Profile details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentProfile' }
+        '404':
+          description: No profile with that code
+
   # --- Images ---
   /api/images/{templateId}:
     get:
@@ -629,7 +706,13 @@ components:
 
     CreateWorkspaceRequest:
       type: object
-      required: [name]
+      # X5 (rivoli-ai/andy-containers#94): environmentProfileCode is the
+      # governance anchor for every container the workspace later
+      # provisions. The C# DTO carries it as optional for source-compat
+      # but the controller validates as required and returns 400 when
+      # missing/blank/unknown — documented here as required so contract
+      # consumers don't omit it.
+      required: [name, environmentProfileCode]
       properties:
         name: { type: string }
         description: { type: string }
@@ -639,6 +722,10 @@ components:
         gitBranch: { type: string }
         templateId: { type: string, format: uuid }
         templateCode: { type: string }
+        environmentProfileCode:
+          type: string
+          description: Slug from the `/api/environments` catalog (e.g. `headless-container`).
+          example: headless-container
 
     UpdateWorkspaceRequest:
       type: object
@@ -789,3 +876,69 @@ components:
         supportsPortForwarding: { type: boolean }
         supportsExec: { type: boolean }
         supportsOfflineBuild: { type: boolean }
+
+    # --- Environment-profile catalog (Epic X) ---
+
+    EnvironmentProfile:
+      type: object
+      description: |
+        Governance descriptor for a runtime shape. Bound to workspaces
+        (X5) and runs (AP1); resolved at container-creation time to
+        substitute the base image and side-car configuration (X4).
+      required: [id, code, displayName, kind, baseImageRef, capabilities, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        code:
+          type: string
+          description: Stable slug (e.g. `headless-container`); unique across the catalog.
+        displayName: { type: string }
+        kind:
+          type: string
+          enum: [HeadlessContainer, Terminal, Desktop]
+        baseImageRef:
+          type: string
+          description: OCI reference the run starts from (e.g. `ghcr.io/rivoli-ai/andy-headless:latest`).
+        capabilities: { $ref: '#/components/schemas/EnvironmentCapabilities' }
+        createdAt: { type: string, format: date-time }
+      example:
+        id: 7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b
+        code: headless-container
+        displayName: Headless container
+        kind: HeadlessContainer
+        baseImageRef: ghcr.io/rivoli-ai/andy-headless:latest
+        capabilities:
+          networkAllowlist: [registry.rivoli.ai, api.github.com, pypi.org, nuget.org]
+          secretsScope: WorkspaceScoped
+          hasGui: false
+          auditMode: Strict
+        createdAt: '2026-04-27T00:00:00Z'
+
+    EnvironmentCapabilities:
+      type: object
+      description: Capability envelope. Stored as a single JSON column so the shape can grow without per-field migrations.
+      required: [networkAllowlist, secretsScope, hasGui, auditMode]
+      properties:
+        networkAllowlist:
+          type: array
+          items: { type: string }
+          description: Hostnames or wildcards permitted for outbound traffic. Empty array = no egress.
+        secretsScope:
+          type: string
+          enum: [None, RunScoped, WorkspaceScoped, OrganizationScoped]
+          description: Couples to AP10 — `RunScoped` tokens are revoked on terminal events; broader scopes are not.
+        hasGui:
+          type: boolean
+          description: True when the profile attaches a graphical session (X server / VNC).
+        auditMode:
+          type: string
+          enum: [None, Standard, Strict]
+          description: Audit-trail intensity. `Strict` captures every tool call pre-redaction.
+
+    EnvironmentProfileList:
+      type: object
+      required: [items, totalCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/EnvironmentProfile' }
+        totalCount: { type: integer }

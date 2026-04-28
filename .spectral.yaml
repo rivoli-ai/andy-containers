@@ -1,0 +1,15 @@
+# X8 (rivoli-ai/andy-containers#98). Spectral ruleset for OpenAPI
+# linting. Uses Stoplight's recommended OpenAPI ruleset; loosen
+# individual rules here when there's a documented reason, not as a
+# blanket suppression.
+extends:
+  - spectral:oas
+
+# Local overrides ---------------------------------------------------
+# `info-contact` is informational; the file already has a contact
+# block but the warning level is excessive for our setup. Promote /
+# demote others as needed.
+rules:
+  # Tags are nice-to-have; we use them for grouping but not every path
+  # warrants a per-tag description. Keep at hint, not warn.
+  oas3-unused-component: hint
