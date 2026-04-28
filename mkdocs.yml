@@ -43,6 +43,11 @@ nav:
     - CLI Reference: cli-reference.md
   - API:
     - REST Endpoints: api-reference.md
+  - Concepts:
+    - Environment profiles: environment-profiles.md
+  - ADRs:
+    - ADR 0001 — Messaging: adr/0001-messaging.md
+    - ADR 0002 — Environment profiles: adr/0002-environment-profiles.md
 
 markdown_extensions:
   - admonition
