@@ -17,6 +17,7 @@ Development container management platform for the Andy ecosystem.
 ## Features
 
 - **Container Lifecycle** - Create from templates, start/stop/destroy, live resize CPU/RAM
+- **Environment profiles** - Governance descriptors (`headless-container` / `terminal` / `desktop`) bound at workspace-create time. Drives base-image selection, VNC sidecar wiring, network allowlist, secrets scope, and audit mode (see [docs/environment-profiles.md](docs/environment-profiles.md))
 - **12 Templates** - Including 4 VNC desktop variants (dotnet-8-desktop, dotnet-8-alpine-desktop, dotnet-10-alpine-desktop, python-3.12-desktop)
 - **10 Code Assistants** - Claude Code, Aider, OpenCode, Codex CLI, Continue, Qwen Coder, Gemini Code, GitHub Copilot, Amazon Q, Cline with model/base URL configuration
 - **Web Terminal** - xterm.js + tmux session persistence, 18 themes with per-container persistence, WebGL rendering
