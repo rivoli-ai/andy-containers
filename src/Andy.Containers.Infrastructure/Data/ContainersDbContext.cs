@@ -137,6 +137,16 @@ public class ContainersDbContext : DbContext
             }
             e.HasOne(w => w.DefaultContainer).WithMany().HasForeignKey(w => w.DefaultContainerId);
             e.HasMany(w => w.Containers).WithMany();
+            // X5 (rivoli-ai/andy-containers#94). Governance binding to the
+            // EnvironmentProfile catalog. SetNull on profile-delete so a
+            // profile retirement doesn't cascade-destroy workspaces; the
+            // workspace stays addressable but loses its image/sidecar
+            // derivation until an operator rebinds it.
+            e.HasOne(w => w.EnvironmentProfile)
+                .WithMany()
+                .HasForeignKey(w => w.EnvironmentProfileId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(w => w.EnvironmentProfileId);
         });
 
         // InfrastructureProvider

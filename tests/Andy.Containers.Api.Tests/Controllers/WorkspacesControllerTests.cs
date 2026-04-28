@@ -37,7 +37,12 @@ public class WorkspacesControllerTests : IDisposable
     [Fact]
     public async Task Create_ShouldReturnCreatedWorkspace()
     {
-        var dto = new CreateWorkspaceDto("My Workspace", "A test workspace", null, null, "https://github.com/test/repo", "main");
+        // X5 (#94): EnvironmentProfileCode is now required at create time.
+        var profile = await SeedHeadlessProfile();
+        var dto = new CreateWorkspaceDto(
+            "My Workspace", "A test workspace", null, null,
+            "https://github.com/test/repo", "main",
+            EnvironmentProfileCode: profile.Name);
 
         var result = await _controller.Create(dto, CancellationToken.None);
 
@@ -48,6 +53,87 @@ public class WorkspacesControllerTests : IDisposable
         ws.OwnerId.Should().Be("test-user");
         ws.GitRepositoryUrl.Should().Be("https://github.com/test/repo");
         ws.GitBranch.Should().Be("main");
+        ws.EnvironmentProfileId.Should().Be(profile.Id,
+            "the bound profile is the workspace's governance anchor");
+    }
+
+    // X5 (#94) -----------------------------------------------------------
+
+    [Fact]
+    public async Task Create_MissingEnvironmentProfileCode_ReturnsBadRequest()
+    {
+        var dto = new CreateWorkspaceDto(
+            "no-profile", null, null, null, null, null);
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>(
+            "profile binding is the governance anchor; missing it can't fall through silently");
+    }
+
+    [Fact]
+    public async Task Create_BlankEnvironmentProfileCode_ReturnsBadRequest()
+    {
+        var dto = new CreateWorkspaceDto(
+            "blank", null, null, null, null, null,
+            EnvironmentProfileCode: "   ");
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Create_UnknownEnvironmentProfileCode_ReturnsBadRequest()
+    {
+        var dto = new CreateWorkspaceDto(
+            "unknown-profile", null, null, null, null, null,
+            EnvironmentProfileCode: "totally-fake");
+
+        var result = await _controller.Create(dto, CancellationToken.None);
+
+        var bad = result.Should().BeOfType<BadRequestObjectResult>().Subject;
+        bad.Value!.ToString().Should().Contain("totally-fake");
+    }
+
+    [Fact]
+    public async Task Update_DoesNotExposeProfileChange()
+    {
+        // UpdateWorkspaceDto deliberately omits EnvironmentProfileCode —
+        // the FK is a governance anchor that should require workspace
+        // recreation to change. Pin that the field can't be sneaked
+        // through via Update by asserting the profile id is preserved.
+        var profile = await SeedHeadlessProfile();
+        var ws = new Workspace
+        {
+            Name = "ws", OwnerId = "test-user",
+            EnvironmentProfileId = profile.Id,
+        };
+        _db.Workspaces.Add(ws);
+        await _db.SaveChangesAsync();
+
+        var dto = new UpdateWorkspaceDto("renamed", null, null);
+        var result = await _controller.Update(ws.Id, dto, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        var reloaded = await _db.Workspaces.FindAsync(ws.Id);
+        reloaded!.EnvironmentProfileId.Should().Be(profile.Id,
+            "Update has no profile field — re-binding requires workspace recreation");
+    }
+
+    private async Task<Andy.Containers.Models.EnvironmentProfile> SeedHeadlessProfile()
+    {
+        var profile = new Andy.Containers.Models.EnvironmentProfile
+        {
+            Id = Guid.NewGuid(),
+            Name = "headless-container",
+            DisplayName = "Headless container",
+            Kind = Andy.Containers.Models.EnvironmentKind.HeadlessContainer,
+            BaseImageRef = "ghcr.io/rivoli-ai/andy-headless:latest",
+        };
+        _db.EnvironmentProfiles.Add(profile);
+        await _db.SaveChangesAsync();
+        return profile;
     }
 
     [Fact]

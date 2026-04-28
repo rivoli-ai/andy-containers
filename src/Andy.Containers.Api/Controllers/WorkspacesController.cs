@@ -79,6 +79,29 @@ public class WorkspacesController : ControllerBase
             if (!isMember) return Forbid();
         }
 
+        // X5 (rivoli-ai/andy-containers#94). Profile binding is required at
+        // create time — it's the governance anchor for every container the
+        // workspace later provisions (X4 substitutes image + GuiType from
+        // the bound profile). 400 on missing/unknown rather than letting
+        // the row land profile-less and surfacing the gap downstream.
+        if (string.IsNullOrWhiteSpace(dto.EnvironmentProfileCode))
+        {
+            return BadRequest(new
+            {
+                error = "environmentProfileCode is required (e.g. 'headless-container').",
+            });
+        }
+
+        var profile = await _db.EnvironmentProfiles
+            .FirstOrDefaultAsync(p => p.Name == dto.EnvironmentProfileCode, ct);
+        if (profile is null)
+        {
+            return BadRequest(new
+            {
+                error = $"EnvironmentProfile '{dto.EnvironmentProfileCode}' not found in catalog.",
+            });
+        }
+
         // Validate uniqueness of git repo URLs
         var repos = dto.GitRepositories ?? [];
         var duplicateUrl = repos.GroupBy(r => r.Url, StringComparer.OrdinalIgnoreCase)
@@ -95,7 +118,8 @@ public class WorkspacesController : ControllerBase
             TeamId = dto.TeamId,
             GitRepositoryUrl = dto.GitRepositoryUrl,
             GitBranch = dto.GitBranch,
-            GitRepositories = repos.Count > 0 ? JsonSerializer.Serialize(repos) : null
+            GitRepositories = repos.Count > 0 ? JsonSerializer.Serialize(repos) : null,
+            EnvironmentProfileId = profile.Id,
         };
         _db.Workspaces.Add(workspace);
         await _db.SaveChangesAsync(ct);
@@ -150,5 +174,9 @@ public class WorkspacesController : ControllerBase
 }
 
 public record WorkspaceGitRepoDto(string Url, string? Branch = null, string? CredentialRef = null, string? TargetPath = null);
-public record CreateWorkspaceDto(string Name, string? Description, Guid? OrganizationId, Guid? TeamId, string? GitRepositoryUrl, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null);
+// X5 (rivoli-ai/andy-containers#94): EnvironmentProfileCode is the slug from
+// the X3 catalog (e.g. "headless-container"). Optional in the C# signature
+// so existing callers don't break at compile time, but the controller
+// validates it as required and returns 400 when omitted on Create.
+public record CreateWorkspaceDto(string Name, string? Description, Guid? OrganizationId, Guid? TeamId, string? GitRepositoryUrl, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null, string? EnvironmentProfileCode = null);
 public record UpdateWorkspaceDto(string? Name, string? Description, string? GitBranch, List<WorkspaceGitRepoDto>? GitRepositories = null);

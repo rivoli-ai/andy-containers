@@ -21,6 +21,19 @@ public class Workspace
     public string? Metadata { get; set; }
 
     public ICollection<Container> Containers { get; set; } = new List<Container>();
+
+    /// <summary>
+    /// X5 (rivoli-ai/andy-containers#94). Governance anchor: every new
+    /// workspace binds an <see cref="EnvironmentProfile"/> at creation
+    /// time which dictates the runtime shape (headless / terminal /
+    /// desktop) and capability envelope for every container the
+    /// workspace provisions. Nullable for back-compat with rows
+    /// created before X5; new workspaces require it via the
+    /// <c>CreateWorkspaceDto</c> contract.
+    /// </summary>
+    public Guid? EnvironmentProfileId { get; set; }
+
+    public EnvironmentProfile? EnvironmentProfile { get; set; }
 }
 
 public enum WorkspaceStatus
