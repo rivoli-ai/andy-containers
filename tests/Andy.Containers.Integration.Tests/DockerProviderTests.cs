@@ -101,4 +101,51 @@ public class DockerProviderTests : IAsyncLifetime
         caps.SupportsExec.Should().BeTrue();
         caps.SupportsPortForwarding.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task DestroyContainer_PhantomRow_TreatsNotFoundAsSuccess()
+    {
+        // Repro the user's "I can't destroy stale containers" bug:
+        // andy-containers' DB still has rows pointing at containers
+        // that the docker daemon has already removed out-of-band
+        // (manual `docker rm`, host reboot, prune, …). Calling
+        // DestroyContainerAsync against such a phantom must succeed
+        // — the goal "make this container be gone" is already met,
+        // and throwing here keeps the orchestration layer from
+        // marking the DB row Destroyed, leaving it stuck forever.
+        // Conductor #826 item 3.
+
+        // Create a real container so we have a real externalId.
+        var spec = new ContainerSpec
+        {
+            Name = $"phantom-test-{Guid.NewGuid().ToString()[..8]}",
+            ImageReference = "alpine:latest",
+            Resources = new ResourceSpec { CpuCores = 1, MemoryMb = 64 }
+        };
+        var created = await _provider.CreateContainerAsync(spec, CancellationToken.None);
+        var externalId = created.ExternalId;
+
+        // Remove the container directly via Docker.DotNet, bypassing
+        // andy-containers — simulating the out-of-band removal that
+        // creates phantoms.
+        var rawClient = new Docker.DotNet.DockerClientConfiguration(
+            new Uri(File.Exists("/var/run/docker.sock")
+                ? "unix:///var/run/docker.sock"
+                : $"unix://{Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".docker/run/docker.sock")}"))
+            .CreateClient();
+        await rawClient.Containers.RemoveContainerAsync(
+            externalId,
+            new Docker.DotNet.Models.ContainerRemoveParameters { Force = true });
+
+        // Now destroy via our provider. Should succeed silently —
+        // catches DockerContainerNotFoundException and treats it as
+        // already-destroyed.
+        var act = async () => await _provider.DestroyContainerAsync(externalId, CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "phantom containers must be destroyable so the user can clear stale DB rows");
+
+        // Don't try to re-clean up in DisposeAsync — the container
+        // is already gone.
+        _externalId = null;
+    }
 }

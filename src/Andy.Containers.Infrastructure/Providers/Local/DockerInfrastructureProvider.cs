@@ -253,12 +253,42 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
     public async Task StopContainerAsync(string externalId, CancellationToken ct)
     {
-        await _client.Containers.StopContainerAsync(externalId, new ContainerStopParameters { WaitBeforeKillSeconds = 10 }, ct);
+        try
+        {
+            await _client.Containers.StopContainerAsync(externalId, new ContainerStopParameters { WaitBeforeKillSeconds = 10 }, ct);
+        }
+        catch (DockerContainerNotFoundException)
+        {
+            // Phantom container — already gone from the daemon's
+            // perspective is the same as "stopped" for our purposes.
+            // Mirrors the symmetric handling in DestroyContainerAsync.
+            // Conductor #826 item 3.
+            _logger.LogWarning(
+                "[CONTAINERS-STOP] phantom container {ExternalId} — daemon reports not-found, treating as already stopped",
+                externalId);
+        }
     }
 
     public async Task DestroyContainerAsync(string externalId, CancellationToken ct)
     {
-        await _client.Containers.RemoveContainerAsync(externalId, new ContainerRemoveParameters { Force = true }, ct);
+        try
+        {
+            await _client.Containers.RemoveContainerAsync(externalId, new ContainerRemoveParameters { Force = true }, ct);
+        }
+        catch (DockerContainerNotFoundException)
+        {
+            // Phantom container: the andy-containers DB row still
+            // references this externalId, but the docker daemon has
+            // already removed it (out-of-band `docker rm`, host
+            // reboot, daemon restart with prune, …). The goal of
+            // DestroyContainer is "make this container be gone" —
+            // it already is. Treat as success so the orchestration
+            // layer can flip the DB row to Destroyed and the user
+            // sees their phantom cleared. Conductor #826 item 3.
+            _logger.LogWarning(
+                "[CONTAINERS-DESTROY] phantom container {ExternalId} — daemon reports not-found, marking destroyed",
+                externalId);
+        }
     }
 
     public async Task<ContainerRuntimeInfo> GetContainerInfoAsync(string externalId, CancellationToken ct)
