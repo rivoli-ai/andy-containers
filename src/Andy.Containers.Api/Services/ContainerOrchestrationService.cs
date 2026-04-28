@@ -379,7 +379,11 @@ public class ContainerOrchestrationService : IContainerService
                 {
                     var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
                     envVars[baseUrlEnv] = baseUrl;
-                    _logger.LogInformation("Injecting base URL {Url} as {EnvVar}", baseUrl, baseUrlEnv);
+                    // rivoli-ai/andy-containers#131: redact userinfo before
+                    // emitting. Logs ship to OTLP / shared sinks; embedded
+                    // user:token in a proxy URL is exfiltration-by-default.
+                    _logger.LogInformation("Injecting base URL {Url} as {EnvVar}",
+                        UrlRedactor.Redact(baseUrl), baseUrlEnv);
                 }
 
                 // Inject model name from credential (code assistant config overrides credential)
