@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "run_id": "0c000000-0000-0000-0000-000000000001",
+  "agent": {
+    "slug": "execute-agent",
+    "revision": 11,
+    "instructions": "Carry out the next step in the plan and report results.",
+    "output_format": "json-execute-v1"
+  },
+  "model": {
+    "provider": "anthropic",
+    "id": "claude-opus-4-7",
+    "api_key_ref": "env:ANDY_MODEL_KEY"
+  },
+  "tools": [
+    {
+      "name": "fs.read",
+      "transport": "mcp",
+      "endpoint": "https://mcp.internal/tools/fs.read"
+    },
+    {
+      "name": "fs.write",
+      "transport": "mcp",
+      "endpoint": "https://mcp.internal/tools/fs.write"
+    },
+    {
+      "name": "git",
+      "transport": "cli",
+      "binary": "/usr/bin/git",
+      "command": [
+        "git"
+      ]
+    }
+  ],
+  "workspace": {
+    "root": "/workspace",
+    "branch": "main"
+  },
+  "env_vars": {
+    "ANDY_AUDIT_MODE": "Strict",
+    "ANDY_PROXY_URL": "https://proxy.andy.local"
+  },
+  "output": {
+    "file": "/workspace/.andy-run/output.json",
+    "stream": "stdout"
+  },
+  "event_sink": {
+    "nats_subject": "andy.containers.events.run.0c000000-0000-0000-0000-000000000001.progress"
+  },
+  "policy_id": "0c000000-0000-0000-0000-000000000003",
+  "boundaries": [
+    "branch:feature/*",
+    "fs:/workspace/**"
+  ],
+  "limits": {
+    "max_iterations": 100,
+    "timeout_seconds": 900
+  }
+}

@@ -20,4 +20,12 @@
     <PackageReference Include="FluentAssertions" />
   </ItemGroup>
 
+  <!-- AP12 (rivoli-ai/andy-containers#115). Golden-file fixtures for
+       HeadlessConfigBuilder. Copied alongside the test binary so
+       AppContext.BaseDirectory + "Configurator/__snapshots__/" resolves
+       at runtime. PreserveNewest = the source tree is authoritative. -->
+  <ItemGroup>
+    <None Include="Configurator\__snapshots__\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
