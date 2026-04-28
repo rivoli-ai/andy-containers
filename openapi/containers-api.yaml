@@ -461,6 +461,108 @@ paths:
         '404':
           description: No profile with that code
 
+  # --- Agent runs (Epic AP) ---
+  # Submit, observe, cancel, and stream lifecycle events for an agent
+  # run. The four endpoints map 1:1 to AP2 + AP7 + AP9; downstream
+  # services subscribe to the matching `andy.containers.events.run.*`
+  # subjects (per ADR 0001 / 0002).
+  /api/runs:
+    post:
+      tags: [Runs]
+      summary: Submit a new agent run
+      description: |
+        Persists the run as `Pending`, builds the AQ3 headless config (AP3),
+        and hands off to the AP5 mode dispatcher. The 201 response reflects
+        whatever lifecycle state the run reached before the controller
+        returned (typically still `Pending` once AP5 moves dispatch off the
+        request thread; today it can be terminal because the dispatcher is
+        synchronous).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRunRequest' }
+      responses:
+        '201':
+          description: Run accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '400':
+          description: Invalid environmentProfileId, workspaceRef, or other validation failure
+        '403':
+          description: Caller lacks the `run:write` scope
+
+  /api/runs/{id}:
+    get:
+      tags: [Runs]
+      summary: Get a run by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Run details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '404':
+          description: No run with that id
+
+  /api/runs/{id}/cancel:
+    post:
+      tags: [Runs]
+      summary: Cancel a non-terminal run
+      description: |
+        Signals the active runner via the in-process cancellation
+        registry (AP7). When a runner is registered the controller
+        awaits its terminal write up to a 30 s grace; otherwise the
+        row is flipped directly. Either way an
+        `andy.containers.events.run.{id}.cancelled` event lands in
+        the outbox.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Run cancelled (state reflects committed terminal write)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '404':
+          description: No run with that id
+        '409':
+          description: Run is already terminal — Succeeded / Failed / Cancelled / Timeout
+
+  /api/runs/{id}/events:
+    get:
+      tags: [Runs]
+      summary: Stream lifecycle events for a run as newline-delimited JSON
+      description: |
+        Each line is a serialised `RunEvent`. The response closes when
+        the run reaches a terminal status (after a final drain pass) or
+        the caller disconnects. Used by `andy-containers-cli runs events`
+        and any HTTP consumer that wants the same stream shape MCP
+        clients get via `run.events`. Returns 404 if the run is unknown
+        so callers don't sit on an empty stream forever.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: NDJSON event stream
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/RunEvent' }
+        '404':
+          description: No run with that id
+
   # --- Images ---
   /api/images/{templateId}:
     get:
@@ -876,6 +978,163 @@ components:
         supportsPortForwarding: { type: boolean }
         supportsExec: { type: boolean }
         supportsOfflineBuild: { type: boolean }
+
+    # --- Agent runs (Epic AP) ---
+
+    RunMode:
+      type: string
+      enum: [Headless, Terminal, Desktop]
+      description: |
+        Execution surface for the run. `Headless` spawns andy-cli inside the
+        container, captures the AQ2 exit-code contract, and writes a terminal
+        event to the outbox. `Terminal` is operator-attached (TTY exec).
+        `Desktop` is GUI-attached (VNC); routing rules live in AP5.
+
+    RunStatus:
+      type: string
+      enum: [Pending, Provisioning, Running, Succeeded, Failed, Cancelled, Timeout]
+      description: |
+        AP1 state-machine. Forward edges only: terminal states (Succeeded /
+        Failed / Cancelled / Timeout) cannot transition further. The cancel
+        endpoint maps `Running` → `Cancelled`; AQ2 exit codes 0/1/2/3/4 map
+        to Succeeded / Failed / Failed / Cancelled / Timeout respectively.
+
+    WorkspaceRef:
+      type: object
+      description: Owned value object on `Run` pinning workspace + branch.
+      properties:
+        workspaceId: { type: string, format: uuid }
+        branch: { type: string, nullable: true }
+
+    CreateRunRequest:
+      type: object
+      required: [agentId, mode, environmentProfileId]
+      properties:
+        agentId:
+          type: string
+          description: Agent slug from andy-agents (e.g. `triage-agent`).
+        agentRevision:
+          type: integer
+          description: Optional pin to a specific agent revision; null = head.
+          nullable: true
+        mode: { $ref: '#/components/schemas/RunMode' }
+        environmentProfileId:
+          type: string
+          format: uuid
+          description: Bound profile id; X4 substitutes its image + GuiType into provisioning.
+        workspaceRef: { $ref: '#/components/schemas/WorkspaceRef' }
+        policyId:
+          type: string
+          format: uuid
+          nullable: true
+        correlationId:
+          type: string
+          format: uuid
+          description: |
+            Optional ADR-0001 root causation id. When omitted the controller
+            mints one so every run carries a chain anchor.
+          nullable: true
+
+    Run:
+      type: object
+      description: |
+        Wire shape for agent-run responses (AP2). `links.cancel` is null once
+        the run is in a terminal state, signalling to clients that the row
+        is observation-only.
+      required: [id, agentId, mode, environmentProfileId, workspaceRef, status, correlationId, createdAt, updatedAt, links]
+      properties:
+        id: { type: string, format: uuid }
+        agentId: { type: string }
+        agentRevision:
+          type: integer
+          nullable: true
+        mode: { $ref: '#/components/schemas/RunMode' }
+        environmentProfileId: { type: string, format: uuid }
+        workspaceRef: { $ref: '#/components/schemas/WorkspaceRef' }
+        policyId:
+          type: string
+          format: uuid
+          nullable: true
+        containerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set once AP5's mode dispatcher has provisioned or selected a container.
+        status: { $ref: '#/components/schemas/RunStatus' }
+        startedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        exitCode:
+          type: integer
+          nullable: true
+          description: Process exit code (AQ2 contract); null when the runner never spawned andy-cli.
+        error:
+          type: string
+          nullable: true
+        correlationId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        links: { $ref: '#/components/schemas/RunLinks' }
+      example:
+        id: 7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b
+        agentId: triage-agent
+        agentRevision: 3
+        mode: Headless
+        environmentProfileId: 1f0e2d3c-4b5a-4c6d-9e8f-7a6b5c4d3e2f
+        workspaceRef:
+          workspaceId: 11111111-2222-3333-4444-555555555555
+          branch: main
+        policyId: null
+        containerId: c1c1c1c1-c2c2-c3c3-c4c4-c5c5c5c5c5c5
+        status: Running
+        startedAt: '2026-04-27T12:00:00Z'
+        endedAt: null
+        exitCode: null
+        error: null
+        correlationId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+        createdAt: '2026-04-27T11:59:50Z'
+        updatedAt: '2026-04-27T12:00:00Z'
+        links:
+          self: /api/runs/7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b
+          cancel: /api/runs/7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b/cancel
+
+    RunLinks:
+      type: object
+      required: [self]
+      properties:
+        self: { type: string }
+        cancel:
+          type: string
+          nullable: true
+          description: Null once the run is in a terminal state.
+
+    RunEvent:
+      type: object
+      description: |
+        One outbox row, surfaced as a single line in the
+        `GET /api/runs/{id}/events` NDJSON stream and as a single
+        `IAsyncEnumerable<RunEventDto>` element via the matching MCP /
+        CLI consumers. Subject suffix (`.finished` / `.failed` /
+        `.cancelled` / `.timeout`) repeats in the `kind` field for
+        consumers that want the discriminator without parsing.
+      required: [runId, subject, kind, status, timestamp, correlationId]
+      properties:
+        runId: { type: string, format: uuid }
+        subject:
+          type: string
+          example: andy.containers.events.run.7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b.finished
+        kind:
+          type: string
+          enum: [finished, failed, cancelled, timeout]
+        status: { $ref: '#/components/schemas/RunStatus' }
+        exitCode:
+          type: integer
+          nullable: true
+        durationSeconds:
+          type: number
+          format: double
+          nullable: true
+        timestamp: { type: string, format: date-time }
+        correlationId: { type: string, format: uuid }
 
     # --- Environment-profile catalog (Epic X) ---
 
