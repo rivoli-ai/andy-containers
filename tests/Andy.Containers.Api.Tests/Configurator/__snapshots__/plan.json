@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "run_id": "0b000000-0000-0000-0000-000000000001",
+  "agent": {
+    "slug": "planning-agent",
+    "revision": 7,
+    "instructions": "Decompose the user story into ordered steps.",
+    "output_format": "json-plan-v1"
+  },
+  "model": {
+    "provider": "openai",
+    "id": "gpt-4o"
+  },
+  "tools": [
+    {
+      "name": "tasks.create",
+      "transport": "mcp",
+      "endpoint": "https://mcp.internal/tools/tasks.create"
+    }
+  ],
+  "workspace": {
+    "root": "/workspace",
+    "branch": "feature/x"
+  },
+  "output": {
+    "file": "/workspace/.andy-run/output.json",
+    "stream": "stdout"
+  },
+  "event_sink": {
+    "nats_subject": "andy.containers.events.run.0b000000-0000-0000-0000-000000000001.progress"
+  },
+  "limits": {
+    "max_iterations": 10,
+    "timeout_seconds": 120
+  }
+}

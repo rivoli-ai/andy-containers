@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "run_id": "0a000000-0000-0000-0000-000000000001",
+  "agent": {
+    "slug": "triage-agent",
+    "revision": 3,
+    "instructions": "Read the issue, classify it, and emit a triage record.",
+    "output_format": "json-triage-output-v1"
+  },
+  "model": {
+    "provider": "anthropic",
+    "id": "claude-sonnet-4-6",
+    "api_key_ref": "env:ANDY_MODEL_KEY"
+  },
+  "tools": [
+    {
+      "name": "issues.get",
+      "transport": "mcp",
+      "endpoint": "https://mcp.internal/tools/issues.get"
+    },
+    {
+      "name": "repo.search",
+      "transport": "cli",
+      "binary": "andy-issues-cli",
+      "command": [
+        "andy-issues-cli",
+        "search"
+      ]
+    }
+  ],
+  "workspace": {
+    "root": "/workspace",
+    "branch": "main"
+  },
+  "output": {
+    "file": "/workspace/.andy-run/output.json",
+    "stream": "stdout"
+  },
+  "event_sink": {
+    "nats_subject": "andy.containers.events.run.0a000000-0000-0000-0000-000000000001.progress"
+  },
+  "policy_id": "0a000000-0000-0000-0000-000000000003",
+  "boundaries": [
+    "read-only"
+  ],
+  "limits": {
+    "max_iterations": 25,
+    "timeout_seconds": 180
+  }
+}
