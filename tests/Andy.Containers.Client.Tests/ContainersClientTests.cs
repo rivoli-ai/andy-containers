@@ -540,4 +540,115 @@ public class ContainersClientTests
         await act.Should().ThrowAsync<ContainersApiException>()
             .Where(e => e.StatusCode == HttpStatusCode.NotFound);
     }
+
+    // rivoli-ai/andy-containers#191. Provider client wrappers.
+
+    [Fact]
+    public async Task ListProvidersAsync_NoFilter_HitsBareCollectionUrl()
+    {
+        var handler = new CannedHandler("[]", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var providers = await client.ListProvidersAsync();
+
+        providers.Should().BeEmpty();
+        handler.LastMethod.Should().Be(HttpMethod.Get);
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/providers");
+        handler.LastRequestUri.Query.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ListProvidersAsync_WithOrgFilter_AppendsQuery()
+    {
+        var handler = new CannedHandler("[]", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var orgId = Guid.NewGuid();
+        await client.ListProvidersAsync(orgId);
+
+        handler.LastRequestUri!.Query.Should().Contain($"organizationId={orgId}");
+    }
+
+    [Fact]
+    public async Task ListProvidersAsync_DeserialisesRichDetail()
+    {
+        var id = Guid.NewGuid();
+        var body = $$"""
+            [{
+              "id": "{{id}}",
+              "code": "docker-local",
+              "name": "Local Docker",
+              "type": "Docker",
+              "region": "local",
+              "isEnabled": true,
+              "healthStatus": "Healthy",
+              "lastHealthCheck": "2026-04-28T00:00:00Z",
+              "organizationId": null
+            }]
+            """;
+        var http = new HttpClient(new CannedHandler(body, "application/json"))
+        {
+            BaseAddress = new Uri("https://example.local/"),
+        };
+        var client = new ContainersClient(http);
+
+        var providers = await client.ListProvidersAsync();
+
+        providers.Should().ContainSingle();
+        providers[0].Code.Should().Be("docker-local");
+        providers[0].HealthStatus.Should().Be("Healthy");
+        providers[0].LastHealthCheck.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetProviderHealthAsync_HitsHealthRoute_AndUnpacksEnvelope()
+    {
+        var id = Guid.NewGuid();
+        var body = """
+            {
+              "status": "Healthy",
+              "capabilities": {
+                "type": "Docker",
+                "supportedArchitectures": ["amd64", "arm64"],
+                "supportedOperatingSystems": ["linux"],
+                "maxCpuCores": 8,
+                "maxMemoryMb": 16384,
+                "maxDiskGb": 100,
+                "supportsGpu": false,
+                "supportsVolumeMount": true,
+                "supportsPortForwarding": true,
+                "supportsExec": true
+              }
+            }
+            """;
+        var handler = new CannedHandler(body, "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var health = await client.GetProviderHealthAsync(id.ToString());
+
+        handler.LastRequestUri!.AbsolutePath.Should().Be($"/api/providers/{id}/health");
+        health.Status.Should().Be("Healthy");
+        health.Capabilities.Should().NotBeNull();
+        health.Capabilities!.SupportedArchitectures.Should().Contain("amd64");
+        health.Capabilities.MaxCpuCores.Should().Be(8);
+    }
+
+    [Fact]
+    public async Task GetProviderHealthAsync_404_ThrowsContainersApiException()
+    {
+        var http = new HttpClient(
+            new CannedHandler("", "application/json", HttpStatusCode.NotFound))
+        {
+            BaseAddress = new Uri("https://example.local/"),
+        };
+        var client = new ContainersClient(http);
+
+        var act = async () => await client.GetProviderHealthAsync(Guid.NewGuid().ToString());
+
+        await act.Should().ThrowAsync<ContainersApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+    }
 }

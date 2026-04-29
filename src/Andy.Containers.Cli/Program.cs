@@ -43,4 +43,7 @@ rootCommand.AddCommand(WorkspaceCommands.Create());
 // Template commands (rivoli-ai/andy-containers#190).
 rootCommand.AddCommand(TemplateCommands.Create());
 
+// Provider commands (rivoli-ai/andy-containers#191).
+rootCommand.AddCommand(ProviderCommands.Create());
+
 return await rootCommand.InvokeAsync(args);
