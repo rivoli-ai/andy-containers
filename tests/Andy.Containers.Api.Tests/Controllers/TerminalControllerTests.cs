@@ -660,4 +660,60 @@ public class TerminalControllerTests : IDisposable
         text.Should().NotContain("tmux ",
             "post-attach injection must not type tmux commands into the user's shell");
     }
+
+    // MARK: - Capture-pane args (#839)
+
+    [Fact]
+    public void BuildTmuxCaptureArguments_ContainsCorrectInvocation()
+    {
+        // The capture endpoint shells out to
+        // `<provider> exec -u <user> <id> tmux capture-pane …`. The
+        // argument string must match what we pass to Process.Start
+        // verbatim — a typo on the `-t` target or the `-S -<N>`
+        // offset would make every preview return either an error
+        // or the wrong slice of scrollback.
+        var args = TerminalController.BuildTmuxCaptureArguments(
+            containerUser: "developer",
+            externalId: "abc123",
+            lines: 8);
+
+        args.Should().StartWith("exec -u developer abc123 ",
+            "the provider command shape (-u + externalId) must match the docker/container CLI");
+        args.Should().Contain("tmux capture-pane",
+            "the actual tmux subcommand we depend on for read-only scrollback access");
+        args.Should().Contain("-p",
+            "-p prints the pane to stdout; without it the response is empty");
+        args.Should().Contain("-J",
+            "-J joins wrapped lines so a single visual row doesn't double-count");
+        args.Should().Contain("-t web",
+            "captures the canonical 'web' session name (TmuxSessionName)");
+        args.Should().Contain("-S -8",
+            "starts capture 8 lines back from the cursor so we get the last N");
+    }
+
+    [Fact]
+    public void BuildTmuxCaptureArguments_HonorsLineCountVariations()
+    {
+        // The endpoint clamps lines to [1, 50]; the arg builder
+        // itself takes whatever is passed. Spot-check both ends so
+        // a future signature change doesn't silently break the
+        // small / large preview cases.
+        var oneLine = TerminalController.BuildTmuxCaptureArguments("root", "x", 1);
+        oneLine.Should().Contain("-S -1");
+
+        var fiftyLines = TerminalController.BuildTmuxCaptureArguments("root", "x", 50);
+        fiftyLines.Should().Contain("-S -50");
+    }
+
+    [Fact]
+    public void BuildTmuxCaptureArguments_UsesSameSessionNameAsConnect()
+    {
+        // Capture and Connect must target the same tmux session —
+        // otherwise the preview would render scrollback from a
+        // different shell than the one the user opens via the
+        // detach path. Lock to TmuxSessionName so a constant rename
+        // can't desync them.
+        var args = TerminalController.BuildTmuxCaptureArguments("root", "x", 8);
+        args.Should().Contain($"-t {TerminalController.TmuxSessionName}");
+    }
 }

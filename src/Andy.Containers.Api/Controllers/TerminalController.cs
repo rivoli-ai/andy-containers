@@ -112,6 +112,205 @@ public class TerminalController : ControllerBase
     }
 
     /// <summary>
+    /// One-shot capture of the last <c>lines</c> rows of the
+    /// container's invisible-tmux session. Conductor #839.
+    ///
+    /// Powers the mini-terminal preview rendered on every running
+    /// container card in <c>ContainersFleetView</c>: a
+    /// 6–8-line live read-only window into the shell so the user
+    /// can confirm at a glance "yes, my agent loop is still
+    /// printing" without opening the full terminal.
+    ///
+    /// Read-only by design — does NOT count as a second tmux
+    /// client, so the single-host invariant from Conductor #830
+    /// holds. We shell out to
+    /// <c>&lt;provider&gt; exec -u &lt;user&gt; &lt;externalId&gt;
+    /// tmux capture-pane -p -t web -S -&lt;N&gt;</c> which prints
+    /// the last N lines of scrollback to stdout and exits.
+    ///
+    /// Failure modes:
+    /// <list type="bullet">
+    /// <item>Container missing → 404.</item>
+    /// <item>Caller can't access → 403.</item>
+    /// <item>Container not running → 422 with structured envelope.</item>
+    /// <item>tmux session not yet alive (cold container) → 422
+    ///   so the client can render "preview unavailable" without
+    ///   logging a real error.</item>
+    /// <item>Capture timeout (3 s) → 504 (gateway timeout —
+    ///   tmux is unresponsive or the container is paging).</item>
+    /// </list>
+    ///
+    /// Output is capped at 4 KB; if the captured pane is larger
+    /// (deep wrapping, very wide terminal) we truncate from the
+    /// FRONT — the user wants the most recent lines, not the
+    /// earliest ones.
+    /// </summary>
+    [HttpGet("capture")]
+    [RequirePermission("container:read")]
+    public async Task<IActionResult> Capture(Guid id, [FromQuery] int lines = 8)
+    {
+        // Clamp request size — keep the per-card budget tight.
+        // 1 line is a degenerate but valid request; 50 is a hard
+        // cap to keep the response under 4 KB even with wide
+        // terminals.
+        if (lines < 1) lines = 1;
+        if (lines > 50) lines = 50;
+
+        var container = await _db.Containers
+            .Include(c => c.Provider)
+            .FirstOrDefaultAsync(c => c.Id == id);
+
+        if (container is null)
+        {
+            return NotFound();
+        }
+
+        if (!CanAccess(container))
+        {
+            return Forbid();
+        }
+
+        if (container.Status != ContainerStatus.Running)
+        {
+            return UnprocessableEntity(new
+            {
+                code = "container_not_running",
+                message = $"Container is {container.Status}, must be Running to capture.",
+            });
+        }
+
+        var externalId = container.ExternalId;
+        if (string.IsNullOrEmpty(externalId))
+        {
+            return UnprocessableEntity(new
+            {
+                code = "no_external_id",
+                message = "Container has no external runtime id yet — provisioning still in progress.",
+            });
+        }
+
+        var providerType = container.Provider?.Type ?? ProviderType.Docker;
+        var providerCommand = providerType == ProviderType.AppleContainer ? "container" : "docker";
+        var containerUser = container.ContainerUser ?? "root";
+
+        var args = BuildTmuxCaptureArguments(containerUser, externalId, lines);
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = providerCommand,
+                Arguments = args,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                _logger.LogWarning(
+                    "[TMUX-CAPTURE] Process.Start returned null — provider={Provider} args={Args}",
+                    providerCommand, args);
+                return StatusCode(500, new { code = "process_start_failed" });
+            }
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+            cts.CancelAfter(TimeSpan.FromSeconds(3));
+
+            string stdout;
+            string stderr;
+            try
+            {
+                stdout = await process.StandardOutput.ReadToEndAsync(cts.Token);
+                stderr = await process.StandardError.ReadToEndAsync(cts.Token);
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested && !HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                try { process.Kill(true); } catch { /* ignore */ }
+                _logger.LogInformation(
+                    "[TMUX-CAPTURE] timed out — provider={Provider} args={Args} elapsed={ElapsedMs}ms",
+                    providerCommand, args, sw.ElapsedMilliseconds);
+                return StatusCode(504, new
+                {
+                    code = "capture_timeout",
+                    message = "tmux capture timed out after 3s.",
+                });
+            }
+
+            if (process.ExitCode != 0)
+            {
+                // Most common path: the tmux session doesn't exist
+                // yet (cold container, never attached). Surface this
+                // as 422 so the client renders "preview unavailable"
+                // without logging an error.
+                _logger.LogDebug(
+                    "[TMUX-CAPTURE] non-zero exit — provider={Provider} exit={ExitCode} stderr={Stderr}",
+                    providerCommand, process.ExitCode, stderr);
+                return UnprocessableEntity(new
+                {
+                    code = "no_tmux_session",
+                    message = "Container has no active tmux session — open the terminal at least once to start one.",
+                });
+            }
+
+            // Cap raw output at 4 KB total. Truncate from the
+            // FRONT — the most recent lines are at the bottom.
+            const int maxBytes = 4096;
+            if (stdout.Length > maxBytes)
+            {
+                stdout = stdout[^maxBytes..];
+            }
+
+            // Split into lines. tmux emits trailing newlines; drop
+            // an empty final entry so the client gets a clean array.
+            var splitLines = stdout
+                .Replace("\r\n", "\n")
+                .Split('\n');
+            if (splitLines.Length > 0 && splitLines[^1].Length == 0)
+            {
+                splitLines = splitLines[..^1];
+            }
+
+            // Take the last N (cheaper than asking tmux for more).
+            // Already limited by `-S -<N>` but be defensive — wrapping
+            // can produce extra lines.
+            if (splitLines.Length > lines)
+            {
+                splitLines = splitLines[^lines..];
+            }
+
+            return Ok(new
+            {
+                lines = splitLines,
+                capturedAt = DateTimeOffset.UtcNow,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[TMUX-CAPTURE] threw — provider={Provider} args={Args} elapsed={ElapsedMs}ms",
+                providerCommand, args, sw.ElapsedMilliseconds);
+            return StatusCode(500, new { code = "capture_failed", message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Builds the provider-exec arguments for capture-pane.
+    /// Internal-static so unit tests can pin the exact arg string
+    /// without spinning up a real container.
+    /// </summary>
+    /// <remarks>
+    /// <c>-p</c> prints to stdout, <c>-J</c> joins wrapped lines so
+    /// the response doesn't double-count visual wraps, <c>-S -N</c>
+    /// captures starting N lines back from the current cursor.
+    /// </remarks>
+    internal static string BuildTmuxCaptureArguments(string containerUser, string externalId, int lines)
+        => $"exec -u {containerUser} {externalId} tmux capture-pane -p -J -t {TmuxSessionName} -S -{lines}";
+
+    /// <summary>
     /// Wait for the client to send its terminal size as the first message.
     /// Format: {"cols":120,"rows":40}
     /// Falls back to 120x40 if not received within 5 seconds.
