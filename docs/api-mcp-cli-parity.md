@@ -8,13 +8,13 @@ Authoritative sources read at audit time:
 - MCP — every `[McpServerTool(...)]` method in `src/Andy.Containers.Api/Mcp/`
 - CLI — every command tree assembled in `src/Andy.Containers.Cli/Program.cs` from `src/Andy.Containers.Cli/Commands/`
 
-Last refreshed: **2026-04-28** ([rivoli-ai/andy-containers#76](https://github.com/rivoli-ai/andy-containers/issues/76)).
+Last refreshed: **2026-04-27** — after the #76 follow-ups landed (#189 workspace CLI, #190 template CLI, #191 provider CLI).
 
 ## Counts at a glance
 
 - **REST endpoints (business)**: 75
-- **MCP coverage**: 14 tools across ~19% of REST endpoints
-- **CLI coverage**: 19 commands across ~25% of REST endpoints
+- **MCP coverage**: ~35 tools (~47% of REST endpoints)
+- **CLI coverage**: ~28 commands (~37% of REST endpoints)
 
 Numbers exclude health checks, Swagger, and WebSocket attach surfaces (which don't map to MCP/CLI by design).
 
@@ -29,10 +29,10 @@ Numbers exclude health checks, Swagger, and WebSocket attach surfaces (which don
 | `GET /api/containers` | `ListContainers` ✅ | `andy-containers-cli list` ✅ |
 | `GET /api/containers/{id}` | `GetContainer` ✅ | `andy-containers-cli info {id}` ✅ |
 | `POST /api/containers` | ❌ | `andy-containers-cli create` ✅ |
-| `POST /api/containers/{id}/start` | ✅ (this PR) | `andy-containers-cli start {id}` ✅ |
-| `POST /api/containers/{id}/stop` | ✅ (this PR) | `andy-containers-cli stop {id}` ✅ |
-| `DELETE /api/containers/{id}` | ✅ (this PR) | `andy-containers-cli destroy {id}` ✅ |
-| `POST /api/containers/{id}/exec` | ✅ (this PR) | `andy-containers-cli exec {id} ...` ✅ |
+| `POST /api/containers/{id}/start` | ✅ | `andy-containers-cli start {id}` ✅ |
+| `POST /api/containers/{id}/stop` | ✅ | `andy-containers-cli stop {id}` ✅ |
+| `DELETE /api/containers/{id}` | ✅ | `andy-containers-cli destroy {id}` ✅ |
+| `POST /api/containers/{id}/exec` | ✅ | `andy-containers-cli exec {id} ...` ✅ |
 | `GET /api/containers/{id}/connection` | ❌ | ❌ |
 | `PUT /api/containers/{id}/resources` | ❌ | ❌ |
 | `GET /api/containers/{id}/screenshot` | — | — |
@@ -69,22 +69,22 @@ The catalog is read-only; by-id is rarely the access path (slug lookup is canoni
 
 | REST | MCP | CLI |
 |---|---|---|
-| `GET /api/workspaces` | `ListWorkspaces` ✅ | stub |
-| `GET /api/workspaces/{id}` | ❌ | ❌ |
-| `POST /api/workspaces` | ❌ | stub |
-| `PUT /api/workspaces/{id}` | ❌ | ❌ |
-| `DELETE /api/workspaces/{id}` | ❌ | ❌ |
+| `GET /api/workspaces` | `ListWorkspaces` ✅ | `andy-containers-cli workspace list` ✅ |
+| `GET /api/workspaces/{id}` | ❌ | `andy-containers-cli workspace get` ✅ |
+| `POST /api/workspaces` | ❌ | `andy-containers-cli workspace create` ✅ |
+| `PUT /api/workspaces/{id}` | ❌ | — |
+| `DELETE /api/workspaces/{id}` | ❌ | `andy-containers-cli workspace delete` ✅ |
 
-CLI stubs exist in `Program.cs` but aren't wired to real commands. Tracked as a follow-up.
+`workspace update` is intentionally absent from CLI: `UpdateWorkspaceDto` doesn't expose the governance fields anyway (X5 keeps the EnvironmentProfile binding immutable for the workspace's life), and operators rarely reach for it.
 
 ### Templates
 
 | REST | MCP | CLI |
 |---|---|---|
-| `GET /api/templates` | `BrowseTemplates` ✅ | stub |
+| `GET /api/templates` | `BrowseTemplates` ✅ | `andy-containers-cli templates list` ✅ |
 | `GET /api/templates/{id}` | ❌ | ❌ |
-| `GET /api/templates/by-code/{code}` | ❌ | ❌ |
-| `GET /api/templates/{id}/definition` | ❌ | ❌ |
+| `GET /api/templates/by-code/{code}` | ❌ | `andy-containers-cli templates info` ✅ |
+| `GET /api/templates/{id}/definition` | ❌ | `andy-containers-cli templates definition` ✅ |
 | `POST /api/templates` | ❌ | ❌ |
 | `PUT /api/templates/{id}` | ❌ | ❌ |
 | `POST /api/templates/{id}/publish` | ❌ | ❌ |
@@ -102,14 +102,14 @@ The CRUD + publish + validate surface is admin-only and lives behind `template:w
 
 | REST | MCP | CLI |
 |---|---|---|
-| `GET /api/providers` | `ListProviders` ✅ | ❌ |
+| `GET /api/providers` | `ListProviders` ✅ | `andy-containers-cli providers list` ✅ |
 | `GET /api/providers/{id}` | ❌ | ❌ |
-| `POST /api/providers` | ❌ | ❌ |
-| `GET /api/providers/{id}/health` | ❌ | ❌ |
+| `POST /api/providers` | ❌ | — |
+| `GET /api/providers/{id}/health` | ❌ | `andy-containers-cli providers health` ✅ |
 | `GET /api/providers/{id}/cost-estimate` | ❌ | ❌ |
-| `DELETE /api/providers/{id}` | ❌ | ❌ |
+| `DELETE /api/providers/{id}` | ❌ | — |
 
-CRUD is admin-only. `list` + `health` over CLI would unblock ops; tracked as a follow-up.
+CRUD is admin-only via REST; deliberately not wired to the user CLI. Ops-shaped operations (`list`, `health`) are surfaced.
 
 ### Images
 
@@ -153,21 +153,27 @@ Org admin lives in the platform-admin UI / a separate admin CLI; mixing it into 
 
 Device flow is interactive and CLI-shaped; not an MCP-tool concern.
 
-## Top 5 highest-value gaps
+## Recently closed gaps
 
-The following are tracked as separate follow-up issues, ordered by impact-to-effort ratio:
+- **Container lifecycle MCP tools** — `start` / `stop` / `destroy` / `exec` over MCP. Closed in #192.
+- **Workspace CLI** (full implementation) — `list` / `get` / `create` / `delete`. Closed in #189.
+- **Template CLI** (full implementation) — `list` / `info` / `definition`. Closed in #190.
+- **Provider CLI** — `list` + `health`. Closed in #191.
 
-1. **Container lifecycle MCP tools** — start / stop / destroy / exec. **Closed in this PR.**
-2. **Workspace CLI** (full implementation) — stubs exist; ~2-3 hours to wire real `create` / `list` / `get` / `delete`.
-3. **Template CLI** (full implementation) — stubs exist; ~1-2 hours for `list` / `info` / `definition`.
-4. **Provider CLI** (`list` + `health`) — ops visibility for multi-provider deployments.
-5. **Image-build CLI** (`build` + `status`) — ops trigger for custom-image rebuilds without dropping to curl.
+## Remaining open gaps
+
+Ordered by impact-to-effort ratio. Open one issue per item if/when prioritised:
+
+1. **Image-build CLI** (`build` + `status`) — ops trigger for custom-image rebuilds without dropping to curl.
+2. **Container resource update** (`PUT /api/containers/{id}/resources`) — neither MCP nor CLI; rare path, but the only way to bump CPU/RAM today is HTTP.
+3. **Container events SSE** — MCP cannot stream; CLI could mirror the NDJSON pattern from `runs events`.
+4. **Provider cost-estimate** — CLI surface would help capacity-planning runs.
 
 ## Top 3 deliberate omissions
 
 1. **API keys + git credentials over MCP/CLI** — secrets shouldn't transit shell history or the MCP wire. REST + HTTPS only.
 2. **File uploads via MCP** (e.g. custom Dockerfiles in container-create) — MCP has no streaming primitive. REST multipart is the right shape.
-3. **Admin operations (org / provider / template publish) over CLI** — separate-concern surface; should not share a binary with user-facing commands.
+3. **Admin operations (org / provider / template publish / workspace update) over CLI** — separate-concern surface; should not share a binary with user-facing commands.
 
 ## Maintaining this document
 
