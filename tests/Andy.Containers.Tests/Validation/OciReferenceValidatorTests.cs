@@ -85,4 +85,37 @@ public class OciReferenceValidatorTests
         act.Should().Throw<ArgumentException>()
             .Which.ParamName.Should().Be("templateBaseImage");
     }
+
+    // rivoli-ai/andy-containers#125 — IsDigestPinned ----------------------
+
+    [Theory]
+    [InlineData("ubuntu@sha256:1a2b3c4d5e6f7890abcdef0123456789abcdef0123456789abcdef0123456789")]
+    [InlineData("ghcr.io/rivoli-ai/andy:1.0@sha256:abcdef0123456789")]
+    [InlineData("name@sha512:abcdef00")]
+    public void IsDigestPinned_AcceptsDigestPinnedRefs(string reference)
+    {
+        OciReferenceValidator.IsDigestPinned(reference).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("ubuntu")]
+    [InlineData("ubuntu:24.04")]
+    [InlineData("ghcr.io/rivoli-ai/andy:latest")]
+    [InlineData("registry.rivoli.ai:5000/team/repo:v1.2.3")]
+    [InlineData("ubuntu@")]                              // bare @
+    [InlineData("ubuntu@:abc")]                          // missing algorithm
+    [InlineData("ubuntu@sha256:")]                       // empty hex
+    [InlineData("ubuntu@sha256:notHexChars$$$")]         // non-hex
+    public void IsDigestPinned_RejectsUnpinnedOrMalformed(string reference)
+    {
+        OciReferenceValidator.IsDigestPinned(reference).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsDigestPinned_NullOrBlank_ReturnsFalse()
+    {
+        OciReferenceValidator.IsDigestPinned(null).Should().BeFalse();
+        OciReferenceValidator.IsDigestPinned("").Should().BeFalse();
+        OciReferenceValidator.IsDigestPinned("   ").Should().BeFalse();
+    }
 }

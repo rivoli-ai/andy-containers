@@ -816,6 +816,25 @@ public class ContainerOrchestrationServiceTests : IDisposable
             config, new Mock<ILogger<ContainerOrchestrationService>>().Object);
     }
 
+    /// <summary>
+    /// rivoli-ai/andy-containers#125. Builds a service with strict
+    /// digest pinning enabled. Strict-mode operators flip this on
+    /// in production deployments to refuse mutable-tag images.
+    /// </summary>
+    private ContainerOrchestrationService BuildServiceWithDigestPinRequired()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Containers:Image:RequireDigestPin"] = "true"
+            })
+            .Build();
+        return new ContainerOrchestrationService(
+            _db, _mockRouting.Object, _mockFactory.Object, _queue,
+            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            config, new Mock<ILogger<ContainerOrchestrationService>>().Object);
+    }
+
     private async Task SeedContainersFor(string ownerId, int count, ContainerStatus status, ContainerTemplate template, InfrastructureProvider provider)
     {
         for (var i = 0; i < count; i++)
@@ -1240,5 +1259,123 @@ public class ContainerOrchestrationServiceTests : IDisposable
         _db.Workspaces.Add(workspace);
         await _db.SaveChangesAsync();
         return workspace;
+    }
+
+    // rivoli-ai/andy-containers#125 — RequireDigestPin enforcement -------
+
+    [Fact]
+    public async Task CreateContainer_RequireDigestPin_RejectsTaggedImage()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        // Default template seed uses `ubuntu:24.04` — a mutable tag.
+        var service = BuildServiceWithDigestPinRequired();
+
+        var act = () => service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "tagged",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+        }, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<ArgumentException>();
+        ex.Which.Message.Should().Contain("RequireDigestPin",
+            "the error must name the flag so operators know which knob to flip or which template to fix");
+        ex.Which.Message.Should().Contain("ubuntu:24.04",
+            "the error must echo the offending image so operators can self-correct");
+
+        _queue.Reader.TryRead(out _).Should().BeFalse(
+            "strict-mode rejection must short-circuit before any provisioning is enqueued");
+    }
+
+    [Fact]
+    public async Task CreateContainer_RequireDigestPin_AcceptsDigestPinnedImage()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+        // Pin the template to a digest. Strict mode must not reject this.
+        template.BaseImage = "ubuntu@sha256:1a2b3c4d5e6f7890abcdef0123456789abcdef0123456789abcdef0123456789";
+        await _db.SaveChangesAsync();
+
+        var service = BuildServiceWithDigestPinRequired();
+
+        await service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "pinned",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().StartWith("ubuntu@sha256:");
+    }
+
+    [Fact]
+    public async Task CreateContainer_RequireDigestPin_ExemptsLocallyBuiltAndyDesktopImages()
+    {
+        // andy-desktop-* images are built from the repo's own Dockerfiles
+        // and never pulled from a registry, so a substitution attacker
+        // can't reach them. Strict mode must not refuse them.
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.BaseImage = "andy-desktop-dotnet:latest";
+        await _db.SaveChangesAsync();
+
+        var service = BuildServiceWithDigestPinRequired();
+
+        await service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "local-build",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be("andy-desktop-dotnet:latest");
+    }
+
+    [Fact]
+    public async Task CreateContainer_RequireDigestPinDisabled_AcceptsTaggedImages()
+    {
+        // Default config (flag absent or false) must accept mutable tags
+        // — every dev workflow + the seeded templates depend on this.
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        await _service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "default",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+        }, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue(
+            "default config must accept tagged images — strict mode is opt-in");
+        job!.TemplateBaseImage.Should().Be(template.BaseImage);
+    }
+
+    [Fact]
+    public async Task CreateContainer_RequireDigestPin_AppliesAfterProfileResolution()
+    {
+        // X4: a bound profile's BaseImageRef wins over the template's
+        // BaseImage. Strict mode must check the *resolved* image — a
+        // tagged profile must be rejected even when the underlying
+        // template happens to be digest-pinned.
+        var (template, provider) = await SeedTemplateAndProvider();
+        template.BaseImage = "ubuntu@sha256:1a2b3c4d5e6f7890abcdef0123456789abcdef0123456789abcdef0123456789";
+        var profile = await SeedProfile(
+            "headless-container", EnvironmentKind.HeadlessContainer,
+            "ghcr.io/rivoli-ai/andy-headless:latest");
+        await _db.SaveChangesAsync();
+
+        var service = BuildServiceWithDigestPinRequired();
+
+        var act = () => service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "profile-tagged",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            EnvironmentProfileId = profile.Id,
+        }, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<ArgumentException>();
+        ex.Which.Message.Should().Contain("ghcr.io/rivoli-ai/andy-headless:latest",
+            "the resolved (profile) image is the one strict mode must check");
     }
 }
