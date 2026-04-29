@@ -224,6 +224,31 @@ public sealed class ContainersClient
         return (await r.Content.ReadFromJsonAsync<TemplateDefinitionDto>(_json, ct))!;
     }
 
+    // Providers (rivoli-ai/andy-containers#191). Read-only ops surface
+    // for multi-provider deployments. CRUD remains admin-only via
+    // REST/UI. The legacy GetProvidersAsync keeps its narrow shape for
+    // ContainerCommands; ListProvidersAsync is the rich CLI view.
+
+    public async Task<ProviderDetailDto[]> ListProvidersAsync(
+        Guid? organizationId = null, CancellationToken ct = default)
+    {
+        var url = "api/providers";
+        if (organizationId.HasValue)
+        {
+            url += $"?organizationId={organizationId.Value}";
+        }
+        var r = await _http.GetAsync(url, ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<ProviderDetailDto[]>(_json, ct))!;
+    }
+
+    public async Task<ProviderHealthDto> GetProviderHealthAsync(string id, CancellationToken ct = default)
+    {
+        var r = await _http.GetAsync($"api/providers/{id}/health", ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<ProviderHealthDto>(_json, ct))!;
+    }
+
     public async Task<RunDto> CreateRunAsync(CreateRunRequest request, CancellationToken ct = default)
     {
         var r = await _http.PostAsJsonAsync("api/runs", request, _json, ct);
@@ -384,6 +409,40 @@ public sealed class ContainersClient
     /// when the file isn't on disk).
     /// </summary>
     public record TemplateDefinitionDto(string Code, string Content);
+
+    // Providers (rivoli-ai/andy-containers#191). Slim wire shape for
+    // the rich list+health CLI views.
+    public record ProviderDetailDto(
+        Guid Id,
+        string Code,
+        string Name,
+        string Type,
+        string? Region,
+        bool IsEnabled,
+        string HealthStatus,
+        DateTime? LastHealthCheck,
+        Guid? OrganizationId);
+
+    /// <summary>
+    /// Wire shape for <c>GET /api/providers/{id}/health</c>:
+    /// <c>{ status, capabilities }</c>. <c>capabilities</c> is the
+    /// provider's full <c>ProviderCapabilities</c> blob; we surface
+    /// it as a free-form record so a provider-side schema change
+    /// doesn't ripple into the CLI.
+    /// </summary>
+    public record ProviderHealthDto(string Status, ProviderCapabilitiesDto? Capabilities);
+
+    public record ProviderCapabilitiesDto(
+        string? Type,
+        string[]? SupportedArchitectures,
+        string[]? SupportedOperatingSystems,
+        int? MaxCpuCores,
+        int? MaxMemoryMb,
+        int? MaxDiskGb,
+        bool? SupportsGpu,
+        bool? SupportsVolumeMount,
+        bool? SupportsPortForwarding,
+        bool? SupportsExec);
 }
 
 public sealed class ContainersApiException : HttpRequestException

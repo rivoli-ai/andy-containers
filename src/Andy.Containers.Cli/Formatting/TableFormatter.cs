@@ -380,4 +380,80 @@ public static class TableFormatter
 
         AnsiConsole.Write(table);
     }
+
+    // rivoli-ai/andy-containers#191. Provider list + health views.
+
+    public static void PrintProviderTable(IReadOnlyList<ContainersClient.ProviderDetailDto> providers)
+    {
+        if (providers.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No providers found.[/]");
+            return;
+        }
+
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .AddColumn("Code")
+            .AddColumn("Name")
+            .AddColumn("Type")
+            .AddColumn("Region")
+            .AddColumn("Health")
+            .AddColumn("Enabled")
+            .AddColumn("Last check");
+
+        foreach (var p in providers)
+        {
+            table.AddRow(
+                Markup.Escape(p.Code),
+                Markup.Escape(p.Name),
+                Markup.Escape(p.Type),
+                Markup.Escape(p.Region ?? "—"),
+                ProviderHealthColor(p.HealthStatus),
+                p.IsEnabled ? "[green]yes[/]" : "[dim]no[/]",
+                p.LastHealthCheck is { } lc
+                    ? lc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                    : "[dim]—[/]");
+        }
+
+        AnsiConsole.Write(table);
+    }
+
+    public static void PrintProviderHealth(string providerId, ContainersClient.ProviderHealthDto health)
+    {
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .HideHeaders()
+            .AddColumn("")
+            .AddColumn("");
+
+        table.AddRow("Provider id", providerId);
+        table.AddRow("Status", ProviderHealthColor(health.Status));
+
+        if (health.Capabilities is { } caps)
+        {
+            if (!string.IsNullOrEmpty(caps.Type)) table.AddRow("Type", Markup.Escape(caps.Type));
+            if (caps.SupportedArchitectures is { Length: > 0 } a)
+                table.AddRow("Architectures", string.Join(", ", a.Select(Markup.Escape)));
+            if (caps.SupportedOperatingSystems is { Length: > 0 } o)
+                table.AddRow("OS", string.Join(", ", o.Select(Markup.Escape)));
+            if (caps.MaxCpuCores is { } cpu) table.AddRow("Max CPU", cpu.ToString());
+            if (caps.MaxMemoryMb is { } mem) table.AddRow("Max RAM", $"{mem} MB");
+            if (caps.MaxDiskGb is { } disk) table.AddRow("Max disk", $"{disk} GB");
+            table.AddRow("GPU", caps.SupportsGpu == true ? "[green]yes[/]" : "[dim]no[/]");
+            table.AddRow("Volume mounts", caps.SupportsVolumeMount == true ? "[green]yes[/]" : "[dim]no[/]");
+            table.AddRow("Port forwarding", caps.SupportsPortForwarding == true ? "[green]yes[/]" : "[dim]no[/]");
+            table.AddRow("Exec", caps.SupportsExec == true ? "[green]yes[/]" : "[dim]no[/]");
+        }
+
+        AnsiConsole.Write(table);
+    }
+
+    private static string ProviderHealthColor(string status) => status switch
+    {
+        "Healthy" => "[green]Healthy[/]",
+        "Degraded" => "[yellow]Degraded[/]",
+        "Unreachable" => "[red]Unreachable[/]",
+        "Unknown" => "[dim]Unknown[/]",
+        _ => Markup.Escape(status),
+    };
 }
