@@ -438,4 +438,106 @@ public class ContainersClientTests
         await act.Should().ThrowAsync<ContainersApiException>()
             .Where(e => e.StatusCode == HttpStatusCode.NotFound);
     }
+
+    // rivoli-ai/andy-containers#190. Template client wrappers.
+
+    [Fact]
+    public async Task ListTemplatesAsync_NoFilters_HitsBareCollectionUrl()
+    {
+        var handler = new CannedHandler(
+            """{"items":[],"totalCount":0}""", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var page = await client.ListTemplatesAsync();
+
+        page.TotalCount.Should().Be(0);
+        handler.LastMethod.Should().Be(HttpMethod.Get);
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/templates");
+        handler.LastRequestUri.Query.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ListTemplatesAsync_WithFilters_AppendsQueryParams()
+    {
+        var handler = new CannedHandler(
+            """{"items":[],"totalCount":0}""", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        await client.ListTemplatesAsync(scope: "Global", search: "andy cli", take: 50);
+
+        var query = handler.LastRequestUri!.Query;
+        query.Should().Contain("scope=Global");
+        query.Should().Contain("search=andy%20cli", "spaces in --search must URL-encode");
+        query.Should().Contain("take=50");
+    }
+
+    [Fact]
+    public async Task GetTemplateByCodeAsync_HitsByCodeRoute_AndDeserialises()
+    {
+        var id = Guid.NewGuid();
+        var body = $$"""
+            {
+              "id": "{{id}}",
+              "code": "andy-cli-dev",
+              "name": "Andy CLI Development",
+              "description": "Pre-installed CLI",
+              "version": "1.0.0",
+              "baseImage": "ubuntu:24.04",
+              "catalogScope": "Global",
+              "ideType": "CodeServer",
+              "gpuRequired": false,
+              "gpuPreferred": false,
+              "isPublished": true,
+              "organizationId": null,
+              "teamId": null,
+              "tags": null,
+              "createdAt": "2026-04-28T00:00:00Z",
+              "updatedAt": null
+            }
+            """;
+        var handler = new CannedHandler(body, "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var t = await client.GetTemplateByCodeAsync("andy-cli-dev");
+
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/templates/by-code/andy-cli-dev");
+        t.Code.Should().Be("andy-cli-dev");
+        t.CatalogScope.Should().Be("Global");
+        t.IsPublished.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetTemplateDefinitionAsync_HitsDefinitionRoute_AndUnpacksContentEnvelope()
+    {
+        var id = Guid.NewGuid();
+        var body = """{"code":"andy-cli-dev","content":"code: andy-cli-dev\nname: Demo\n"}""";
+        var handler = new CannedHandler(body, "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var def = await client.GetTemplateDefinitionAsync(id.ToString());
+
+        handler.LastRequestUri!.AbsolutePath.Should().Be($"/api/templates/{id}/definition");
+        def.Code.Should().Be("andy-cli-dev");
+        def.Content.Should().Contain("name: Demo");
+    }
+
+    [Fact]
+    public async Task GetTemplateByCodeAsync_404_ThrowsContainersApiException()
+    {
+        var http = new HttpClient(
+            new CannedHandler("", "application/json", HttpStatusCode.NotFound))
+        {
+            BaseAddress = new Uri("https://example.local/"),
+        };
+        var client = new ContainersClient(http);
+
+        var act = async () => await client.GetTemplateByCodeAsync("nope");
+
+        await act.Should().ThrowAsync<ContainersApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+    }
 }

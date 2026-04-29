@@ -189,6 +189,41 @@ public sealed class ContainersClient
         await EnsureSuccessAsync(r, ct);
     }
 
+    // Templates (rivoli-ai/andy-containers#190). Read-only catalog
+    // surface from the CLI. CRUD + publish + image-build remain
+    // admin-only via REST/UI; CLI covers what operators routinely
+    // script against.
+
+    public async Task<PaginatedResult<TemplateDetailDto>> ListTemplatesAsync(
+        string? scope = null, string? search = null,
+        int? skip = null, int? take = null, CancellationToken ct = default)
+    {
+        var query = new List<string>();
+        if (!string.IsNullOrWhiteSpace(scope)) query.Add($"scope={Uri.EscapeDataString(scope)}");
+        if (!string.IsNullOrWhiteSpace(search)) query.Add($"search={Uri.EscapeDataString(search)}");
+        if (skip.HasValue) query.Add($"skip={skip.Value}");
+        if (take.HasValue) query.Add($"take={take.Value}");
+        var url = "api/templates" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
+
+        var r = await _http.GetAsync(url, ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<PaginatedResult<TemplateDetailDto>>(_json, ct))!;
+    }
+
+    public async Task<TemplateDetailDto> GetTemplateByCodeAsync(string code, CancellationToken ct = default)
+    {
+        var r = await _http.GetAsync($"api/templates/by-code/{Uri.EscapeDataString(code)}", ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<TemplateDetailDto>(_json, ct))!;
+    }
+
+    public async Task<TemplateDefinitionDto> GetTemplateDefinitionAsync(string id, CancellationToken ct = default)
+    {
+        var r = await _http.GetAsync($"api/templates/{id}/definition", ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<TemplateDefinitionDto>(_json, ct))!;
+    }
+
     public async Task<RunDto> CreateRunAsync(CreateRunRequest request, CancellationToken ct = default)
     {
         var r = await _http.PostAsJsonAsync("api/runs", request, _json, ct);
@@ -319,6 +354,36 @@ public sealed class ContainersClient
         string? GitRepositoryUrl,
         string? GitBranch,
         string EnvironmentProfileCode);
+
+    // Templates (rivoli-ai/andy-containers#190). Slim wire shape pinned
+    // here so a server-side EF schema change on ContainerTemplate
+    // doesn't ripple into the CLI silently. Mirrors the controller
+    // payload (entity-direct serialisation).
+    public record TemplateDetailDto(
+        Guid Id,
+        string Code,
+        string Name,
+        string? Description,
+        string Version,
+        string BaseImage,
+        string CatalogScope,
+        string IdeType,
+        bool GpuRequired,
+        bool GpuPreferred,
+        bool IsPublished,
+        Guid? OrganizationId,
+        Guid? TeamId,
+        string? Tags,
+        DateTime CreatedAt,
+        DateTime? UpdatedAt);
+
+    /// <summary>
+    /// YAML-definition envelope returned by
+    /// <c>GET /api/templates/{id}/definition</c>: <c>{ code, content }</c>
+    /// where <c>content</c> is the raw YAML (or a synthesised stand-in
+    /// when the file isn't on disk).
+    /// </summary>
+    public record TemplateDefinitionDto(string Code, string Content);
 }
 
 public sealed class ContainersApiException : HttpRequestException
