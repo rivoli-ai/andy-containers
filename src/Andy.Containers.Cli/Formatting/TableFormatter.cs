@@ -310,4 +310,74 @@ public static class TableFormatter
 
         AnsiConsole.Write(table);
     }
+
+    // rivoli-ai/andy-containers#190. Template catalog views.
+
+    public static void PrintTemplateTable(IReadOnlyList<ContainersClient.TemplateDetailDto> templates)
+    {
+        if (templates.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No templates found.[/]");
+            return;
+        }
+
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .AddColumn("Code")
+            .AddColumn("Name")
+            .AddColumn("Version")
+            .AddColumn("Scope")
+            .AddColumn("IDE")
+            .AddColumn("GPU")
+            .AddColumn("Base image");
+
+        foreach (var t in templates)
+        {
+            var scopeColor = t.CatalogScope switch
+            {
+                "Global" => "green",
+                "Organization" => "cyan",
+                "Team" => "yellow",
+                "User" => "magenta",
+                _ => "white",
+            };
+            table.AddRow(
+                Markup.Escape(t.Code),
+                Markup.Escape(t.Name),
+                Markup.Escape(t.Version),
+                $"[{scopeColor}]{t.CatalogScope}[/]",
+                Markup.Escape(t.IdeType),
+                t.GpuRequired ? "[yellow]required[/]" : (t.GpuPreferred ? "[dim]preferred[/]" : "[dim]no[/]"),
+                Markup.Escape(t.BaseImage));
+        }
+
+        AnsiConsole.Write(table);
+    }
+
+    public static void PrintTemplateDetail(ContainersClient.TemplateDetailDto t)
+    {
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .HideHeaders()
+            .AddColumn("")
+            .AddColumn("");
+
+        table.AddRow("Id", t.Id.ToString());
+        table.AddRow("Code", Markup.Escape(t.Code));
+        table.AddRow("Name", Markup.Escape(t.Name));
+        if (!string.IsNullOrEmpty(t.Description)) table.AddRow("Description", Markup.Escape(t.Description));
+        table.AddRow("Version", Markup.Escape(t.Version));
+        table.AddRow("Base image", Markup.Escape(t.BaseImage));
+        table.AddRow("Scope", t.CatalogScope);
+        table.AddRow("IDE type", t.IdeType);
+        table.AddRow("GPU", t.GpuRequired ? "required" : (t.GpuPreferred ? "preferred" : "not used"));
+        table.AddRow("Published", t.IsPublished ? "[green]yes[/]" : "[dim]no[/]");
+        if (t.OrganizationId is { } o) table.AddRow("Organization", o.ToString());
+        if (t.TeamId is { } tm) table.AddRow("Team", tm.ToString());
+        if (!string.IsNullOrEmpty(t.Tags)) table.AddRow("Tags", Markup.Escape(t.Tags));
+        table.AddRow("Created", t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        if (t.UpdatedAt is { } u) table.AddRow("Updated", u.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+
+        AnsiConsole.Write(table);
+    }
 }

@@ -40,9 +40,7 @@ rootCommand.AddCommand(EnvironmentCommands.Create());
 // Workspace commands (rivoli-ai/andy-containers#189).
 rootCommand.AddCommand(WorkspaceCommands.Create());
 
-// Template commands (stubs for future)
-var templatesCommand = new Command("templates", "Manage template catalog");
-templatesCommand.AddCommand(new Command("list", "Browse template catalog"));
-rootCommand.AddCommand(templatesCommand);
+// Template commands (rivoli-ai/andy-containers#190).
+rootCommand.AddCommand(TemplateCommands.Create());
 
 return await rootCommand.InvokeAsync(args);
