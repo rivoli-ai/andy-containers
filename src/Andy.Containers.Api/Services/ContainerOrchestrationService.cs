@@ -436,6 +436,25 @@ public class ContainerOrchestrationService : IContainerService
             ? template.GuiType
             : (profile.Kind == EnvironmentKind.Desktop ? "vnc" : "none");
 
+        // rivoli-ai/andy-containers#125. Strict mode: refuse to
+        // provision against a mutable tag. The flag is opt-in
+        // (default false) so dev workflows that rely on `:latest`
+        // still work; production deploys flip it on and pin every
+        // template to `@sha256:...`. Locally-built `andy-desktop-*`
+        // images are exempt — they're built from the repo's own
+        // Dockerfiles and never pulled from a registry, so a
+        // substitution attacker can't reach them.
+        var requireDigestPin = _configuration.GetValue<bool?>("Containers:Image:RequireDigestPin") ?? false;
+        if (requireDigestPin
+            && !effectiveImage.StartsWith("andy-desktop-", StringComparison.Ordinal)
+            && !Andy.Containers.Validation.OciReferenceValidator.IsDigestPinned(effectiveImage))
+        {
+            throw new ArgumentException(
+                $"Containers:Image:RequireDigestPin is enabled and image '{effectiveImage}' is not digest-pinned. " +
+                $"Use a reference of the form 'name@sha256:<hex>' to pin against mutable-tag substitution.",
+                nameof(request));
+        }
+
         // Enqueue the provisioning job for the background worker
         var job = new ContainerProvisionJob(
             ContainerId: container.Id,

@@ -172,6 +172,30 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
                         null,
                         new Progress<JSONMessage>(m => _logger.LogDebug("Pull: {Status}", m.Status)),
                         ct);
+
+                    // rivoli-ai/andy-containers#125. Audit-log the resolved
+                    // RepoDigests after a successful pull so operators see
+                    // exactly which content-addressed blob the daemon
+                    // accepted. Lets a deploy detect tag-mutation
+                    // (different digest for the same tag across pulls)
+                    // even when RequireDigestPin isn't set.
+                    try
+                    {
+                        var inspect = await _client.Images.InspectImageAsync(spec.ImageReference, ct);
+                        var resolvedDigest = inspect.RepoDigests is { Count: > 0 }
+                            ? inspect.RepoDigests[0]
+                            : "(no repo digest reported)";
+                        _logger.LogInformation(
+                            "Pulled image {Image}; resolved digest: {Digest}",
+                            spec.ImageReference, resolvedDigest);
+                    }
+                    catch (Exception inspectEx)
+                    {
+                        // Best-effort; never fail provisioning because the
+                        // audit lookup didn't pan out.
+                        _logger.LogDebug(inspectEx,
+                            "Could not inspect resolved digest for {Image}", spec.ImageReference);
+                    }
                 }
                 catch (Exception ex)
                 {

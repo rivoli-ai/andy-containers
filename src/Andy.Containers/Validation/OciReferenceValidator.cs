@@ -67,4 +67,38 @@ public static partial class OciReferenceValidator
                 paramName);
         }
     }
+
+    /// <summary>
+    /// True when <paramref name="reference"/> includes a content-addressed
+    /// digest (e.g. <c>name@sha256:abc...</c>). A digest-pinned reference
+    /// is immune to mutable-tag substitution: the daemon refuses to pull
+    /// any blob whose hash doesn't match.
+    /// </summary>
+    /// <remarks>
+    /// rivoli-ai/andy-containers#125. Used by
+    /// <c>Containers:Image:RequireDigestPin</c> in
+    /// <c>ContainerOrchestrationService</c> to reject unpinned refs in
+    /// strict-mode deployments. Doesn't re-validate the overall reference
+    /// structure (<see cref="IsValid"/> covers that) — only checks that
+    /// the canonical <c>@algorithm:hex</c> discriminator is present and
+    /// well-formed.
+    /// </remarks>
+    public static bool IsDigestPinned(string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return false;
+        var atIdx = reference.LastIndexOf('@');
+        if (atIdx < 0 || atIdx == reference.Length - 1) return false;
+
+        var digestPart = reference.AsSpan(atIdx + 1);
+        var colonIdx = digestPart.IndexOf(':');
+        if (colonIdx <= 0 || colonIdx == digestPart.Length - 1) return false;
+
+        // Hex part must be at least one char and contain only hex.
+        var hex = digestPart[(colonIdx + 1)..];
+        foreach (var c in hex)
+        {
+            if (!Uri.IsHexDigit(c)) return false;
+        }
+        return true;
+    }
 }
