@@ -212,4 +212,153 @@ public class ContainersMcpToolsTests : IDisposable
 
         result.Should().BeEmpty();
     }
+
+    // rivoli-ai/andy-containers#76. Container lifecycle MCP tools.
+    // Each test pins one observable behaviour: invalid id short-
+    // circuits, ownership gates non-admin users, the tool delegates
+    // to IContainerService, the response shape matches the controller.
+
+    private static readonly Guid LifecycleContainerId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+
+    private static Container LifecycleContainer(string ownerId = "test-user", ContainerStatus status = ContainerStatus.Running)
+    {
+        var template = new ContainerTemplate
+        {
+            Code = "full-stack",
+            Name = "Full Stack",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+        };
+        var provider = new InfrastructureProvider
+        {
+            Code = "docker-local",
+            Name = "Local Docker",
+            Type = ProviderType.Docker,
+        };
+        return new Container
+        {
+            Id = LifecycleContainerId,
+            Name = "lifecycle-test",
+            OwnerId = ownerId,
+            Template = template,
+            Provider = provider,
+            Status = status,
+        };
+    }
+
+    [Fact]
+    public async Task StartContainer_HappyPath_ReturnsRefreshedDetail()
+    {
+        var c = LifecycleContainer(status: ContainerStatus.Stopped);
+        _mockContainerService.Setup(s => s.GetContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(c);
+
+        var result = await _tools.StartContainer(LifecycleContainerId.ToString());
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(LifecycleContainerId);
+        _mockContainerService.Verify(s => s.StartContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartContainer_InvalidGuid_ReturnsNull_DoesNotCallService()
+    {
+        var result = await _tools.StartContainer("not-a-guid");
+
+        result.Should().BeNull();
+        _mockContainerService.Verify(s => s.StartContainerAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartContainer_KeyNotFound_ReturnsNull()
+    {
+        _mockContainerService.Setup(s => s.GetContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new KeyNotFoundException());
+
+        var result = await _tools.StartContainer(LifecycleContainerId.ToString());
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StopContainer_HappyPath_ReturnsRefreshedDetail()
+    {
+        var c = LifecycleContainer(status: ContainerStatus.Running);
+        _mockContainerService.Setup(s => s.GetContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(c);
+
+        var result = await _tools.StopContainer(LifecycleContainerId.ToString());
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(LifecycleContainerId);
+        _mockContainerService.Verify(s => s.StopContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DestroyContainer_HappyPath_ReturnsConfirmationString()
+    {
+        var c = LifecycleContainer();
+        _mockContainerService.Setup(s => s.GetContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(c);
+
+        var result = await _tools.DestroyContainer(LifecycleContainerId.ToString());
+
+        result.Should().Contain("destroyed");
+        result.Should().Contain(LifecycleContainerId.ToString());
+        _mockContainerService.Verify(s => s.DestroyContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DestroyContainer_InvalidGuid_ReturnsErrorString_DoesNotCallService()
+    {
+        var result = await _tools.DestroyContainer("not-a-guid");
+
+        result.Should().Contain("Invalid container ID");
+        _mockContainerService.Verify(s => s.DestroyContainerAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DestroyContainer_NotFound_ReturnsNotFoundString()
+    {
+        _mockContainerService.Setup(s => s.GetContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new KeyNotFoundException());
+
+        var result = await _tools.DestroyContainer(LifecycleContainerId.ToString());
+
+        result.Should().Contain("not found");
+    }
+
+    [Fact]
+    public async Task ExecCommand_HappyPath_ReturnsExecResult()
+    {
+        var c = LifecycleContainer();
+        _mockContainerService.Setup(s => s.GetContainerAsync(LifecycleContainerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(c);
+        _mockContainerService
+            .Setup(s => s.ExecAsync(LifecycleContainerId, "ls /tmp", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0, StdOut = "hello.txt\n", StdErr = "" });
+
+        var result = await _tools.ExecCommand(LifecycleContainerId.ToString(), "ls /tmp");
+
+        result.Should().NotBeNull();
+        result!.ExitCode.Should().Be(0);
+        result.StdOut.Should().Be("hello.txt\n");
+    }
+
+    [Fact]
+    public async Task ExecCommand_BlankCommand_ReturnsNull()
+    {
+        var result = await _tools.ExecCommand(LifecycleContainerId.ToString(), "   ");
+
+        result.Should().BeNull();
+        _mockContainerService.Verify(s => s.ExecAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecCommand_InvalidGuid_ReturnsNull()
+    {
+        var result = await _tools.ExecCommand("not-a-guid", "ls");
+
+        result.Should().BeNull();
+    }
 }

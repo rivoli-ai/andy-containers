@@ -90,6 +90,119 @@ public class ContainersMcpTools
         }
     }
 
+    // rivoli-ai/andy-containers#76. Container lifecycle MCP tools mirror
+    // the corresponding /api/containers/{id}/* HTTP actions. Identity +
+    // ownership checks match the existing tool convention: admin
+    // bypasses, non-admin must own the container. A missing or
+    // unauthorised container surfaces as null / "not found" so the MCP
+    // wire stays uniform — no error envelopes for absent business state.
+
+    [McpServerTool, Description("Start a stopped container")]
+    public async Task<McpContainerDetail?> StartContainer(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return null;
+        try
+        {
+            var existing = await _containerService.GetContainerAsync(id);
+            if (!CanAccessContainer(existing)) return null;
+
+            // Match the controller's 30s out-of-band timeout — the MCP
+            // request thread isn't bounded by a browser cancel, so a
+            // separate CTS prevents hanging when a provider stalls.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await _containerService.StartContainerAsync(id, cts.Token);
+
+            var refreshed = await _containerService.GetContainerAsync(id);
+            return ToDetail(refreshed);
+        }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    [McpServerTool, Description("Stop a running container")]
+    public async Task<McpContainerDetail?> StopContainer(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return null;
+        try
+        {
+            var existing = await _containerService.GetContainerAsync(id);
+            if (!CanAccessContainer(existing)) return null;
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await _containerService.StopContainerAsync(id, cts.Token);
+
+            var refreshed = await _containerService.GetContainerAsync(id);
+            return ToDetail(refreshed);
+        }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    [McpServerTool, Description("Destroy a container permanently. The row is removed and the underlying provider resource is freed.")]
+    public async Task<string> DestroyContainer(
+        [Description("Container ID (GUID)")] string containerId)
+    {
+        if (!Guid.TryParse(containerId, out var id))
+        {
+            return "Invalid container ID — expected a GUID.";
+        }
+        try
+        {
+            var existing = await _containerService.GetContainerAsync(id);
+            if (!CanAccessContainer(existing))
+            {
+                return $"Container '{id}' is not accessible to this caller.";
+            }
+
+            await _containerService.DestroyContainerAsync(id);
+            return $"Container '{id}' destroyed.";
+        }
+        catch (KeyNotFoundException)
+        {
+            return $"Container '{id}' not found.";
+        }
+    }
+
+    [McpServerTool, Description("Run a command inside a container via 'docker exec' (or the provider equivalent) and return the exit code, stdout, and stderr.")]
+    public async Task<McpExecResult?> ExecCommand(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("Shell command to run inside the container (executed via 'sh -c').")] string command)
+    {
+        if (!Guid.TryParse(containerId, out var id)) return null;
+        if (string.IsNullOrWhiteSpace(command)) return null;
+
+        try
+        {
+            var existing = await _containerService.GetContainerAsync(id);
+            if (!CanAccessContainer(existing)) return null;
+
+            var result = await _containerService.ExecAsync(id, command);
+            return new McpExecResult(result.ExitCode, result.StdOut, result.StdErr);
+        }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private bool CanAccessContainer(Andy.Containers.Models.Container container)
+    {
+        if (_currentUser.IsAdmin()) return true;
+        return container.OwnerId == _currentUser.GetUserId();
+    }
+
+    private static McpContainerDetail ToDetail(Andy.Containers.Models.Container c) =>
+        new(c.Id, c.Name, c.Template?.Name ?? "", c.Template?.Code ?? "",
+            c.Provider?.Name ?? "", c.Provider?.Type.ToString() ?? "",
+            c.Status.ToString(), c.OwnerId, c.IdeEndpoint, c.VncEndpoint,
+            c.ExternalId, c.CreatedAt, c.StartedAt, c.StoppedAt, c.ExpiresAt);
+
     [McpServerTool, Description("Browse the container template catalog")]
     public async Task<IReadOnlyList<McpTemplateInfo>> BrowseTemplates(
         [Description("Search by name or description")] string? search = null,
@@ -555,6 +668,10 @@ public record McpGitRepositoryInfo(Guid Id, string Url, string Branch, string Ta
 public record McpGitCredentialInfo(Guid Id, string Label, string GitHost, string CredentialType, DateTime CreatedAt, DateTime? LastUsedAt);
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
 public record McpContainerDetail(Guid Id, string Name, string TemplateName, string TemplateCode, string ProviderName, string ProviderType, string Status, string OwnerId, string? IdeEndpoint, string? VncEndpoint, string? ExternalId, DateTime CreatedAt, DateTime? StartedAt, DateTime? StoppedAt, DateTime? ExpiresAt);
+// rivoli-ai/andy-containers#76. Shape returned by ExecCommand. Mirrors
+// the controller's ExecResult so MCP consumers see the same fields a
+// REST caller would.
+public record McpExecResult(int ExitCode, string? StdOut, string? StdErr);
 public record McpTemplateInfo(Guid Id, string Code, string Name, string Description, string Version, string CatalogScope, string IdeType, bool GpuRequired, bool GpuPreferred, string[] Tags);
 public record McpProviderInfo(Guid Id, string Code, string Name, string Type, string Region, bool IsEnabled, string HealthStatus, DateTime? LastHealthCheck);
 public record McpWorkspaceInfo(Guid Id, string Name, string Description, string Status, string GitRepositoryUrl, string GitBranch, DateTime CreatedAt);
