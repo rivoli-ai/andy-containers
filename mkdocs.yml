@@ -43,6 +43,7 @@ nav:
     - CLI Reference: cli-reference.md
   - API:
     - REST Endpoints: api-reference.md
+    - REST / MCP / CLI parity: api-mcp-cli-parity.md
   - Concepts:
     - Environment profiles: environment-profiles.md
     - Agent runs: runs.md
