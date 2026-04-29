@@ -144,6 +144,51 @@ public sealed class ContainersClient
         return (await r.Content.ReadFromJsonAsync<EnvironmentProfileDto>(_json, ct))!;
     }
 
+    // Workspaces (rivoli-ai/andy-containers#189).
+    //
+    // The controller returns the Workspace EF entity directly, but the
+    // CLI only needs a small shape (name, owner, status, profile id,
+    // git binding, timestamps). WorkspaceDto pins that subset so a
+    // future EF schema change on the server doesn't silently change
+    // the client's deserialisation surface.
+
+    public async Task<PaginatedResult<WorkspaceDto>> ListWorkspacesAsync(
+        string? ownerId = null, Guid? organizationId = null,
+        int? skip = null, int? take = null, CancellationToken ct = default)
+    {
+        var query = new List<string>();
+        if (!string.IsNullOrWhiteSpace(ownerId)) query.Add($"ownerId={Uri.EscapeDataString(ownerId)}");
+        if (organizationId.HasValue) query.Add($"organizationId={organizationId.Value}");
+        if (skip.HasValue) query.Add($"skip={skip.Value}");
+        if (take.HasValue) query.Add($"take={take.Value}");
+        var url = "api/workspaces" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
+
+        var r = await _http.GetAsync(url, ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<PaginatedResult<WorkspaceDto>>(_json, ct))!;
+    }
+
+    public async Task<WorkspaceDto> GetWorkspaceAsync(string id, CancellationToken ct = default)
+    {
+        var r = await _http.GetAsync($"api/workspaces/{id}", ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<WorkspaceDto>(_json, ct))!;
+    }
+
+    public async Task<WorkspaceDto> CreateWorkspaceAsync(
+        CreateWorkspaceRequest request, CancellationToken ct = default)
+    {
+        var r = await _http.PostAsJsonAsync("api/workspaces", request, _json, ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<WorkspaceDto>(_json, ct))!;
+    }
+
+    public async Task DeleteWorkspaceAsync(string id, CancellationToken ct = default)
+    {
+        var r = await _http.DeleteAsync($"api/workspaces/{id}", ct);
+        await EnsureSuccessAsync(r, ct);
+    }
+
     public async Task<RunDto> CreateRunAsync(CreateRunRequest request, CancellationToken ct = default)
     {
         var r = await _http.PostAsJsonAsync("api/runs", request, _json, ct);
@@ -246,6 +291,34 @@ public sealed class ContainersClient
         double MemoryPercent, long DiskUsageBytes, long DiskLimitBytes, double DiskPercent);
     public record ConnectionInfoDto(string? IpAddress, string? SshEndpoint, string? IdeEndpoint,
         string? VncEndpoint, Dictionary<string, int>? PortMappings);
+
+    // Workspaces (rivoli-ai/andy-containers#189). Slim wire shape pinned
+    // here so a server-side EF schema change on Workspace doesn't ripple
+    // into the CLI silently. Add fields when a CLI command needs them.
+    public record WorkspaceDto(
+        Guid Id,
+        string Name,
+        string? Description,
+        string OwnerId,
+        Guid? OrganizationId,
+        Guid? TeamId,
+        string Status,
+        Guid? DefaultContainerId,
+        string? GitRepositoryUrl,
+        string? GitBranch,
+        Guid? EnvironmentProfileId,
+        DateTime CreatedAt,
+        DateTime? UpdatedAt,
+        DateTime? LastAccessedAt);
+
+    public record CreateWorkspaceRequest(
+        string Name,
+        string? Description,
+        Guid? OrganizationId,
+        Guid? TeamId,
+        string? GitRepositoryUrl,
+        string? GitBranch,
+        string EnvironmentProfileCode);
 }
 
 public sealed class ContainersApiException : HttpRequestException

@@ -244,4 +244,70 @@ public static class TableFormatter
         AuditMode.None => "[dim]None[/]",
         _ => mode.ToString(),
     };
+
+    // rivoli-ai/andy-containers#189. Workspace catalog views.
+
+    public static void PrintWorkspaceTable(IReadOnlyList<ContainersClient.WorkspaceDto> workspaces)
+    {
+        if (workspaces.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No workspaces found.[/]");
+            return;
+        }
+
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .AddColumn("Name")
+            .AddColumn("Status")
+            .AddColumn("Owner")
+            .AddColumn("Profile")
+            .AddColumn("Branch")
+            .AddColumn("ID");
+
+        foreach (var w in workspaces)
+        {
+            var statusColor = w.Status switch
+            {
+                "Active" => "green",
+                "Suspended" => "yellow",
+                "Archived" => "dim",
+                _ => "white",
+            };
+            table.AddRow(
+                Markup.Escape(w.Name),
+                $"[{statusColor}]{w.Status}[/]",
+                Markup.Escape(w.OwnerId),
+                w.EnvironmentProfileId is { } pid ? Markup.Escape(pid.ToString()[..8]) : "[dim]—[/]",
+                w.GitBranch is { } b ? Markup.Escape(b) : "[dim]—[/]",
+                w.Id.ToString()[..8]);
+        }
+
+        AnsiConsole.Write(table);
+    }
+
+    public static void PrintWorkspaceDetail(ContainersClient.WorkspaceDto w)
+    {
+        var table = new Table()
+            .Border(TableBorder.Rounded)
+            .HideHeaders()
+            .AddColumn("")
+            .AddColumn("");
+
+        table.AddRow("Id", w.Id.ToString());
+        table.AddRow("Name", Markup.Escape(w.Name));
+        if (!string.IsNullOrEmpty(w.Description)) table.AddRow("Description", Markup.Escape(w.Description));
+        table.AddRow("Status", w.Status);
+        table.AddRow("Owner", Markup.Escape(w.OwnerId));
+        if (w.OrganizationId is { } o) table.AddRow("Organization", o.ToString());
+        if (w.TeamId is { } t) table.AddRow("Team", t.ToString());
+        if (w.EnvironmentProfileId is { } p) table.AddRow("Environment profile", p.ToString());
+        if (w.DefaultContainerId is { } c) table.AddRow("Default container", c.ToString());
+        if (!string.IsNullOrEmpty(w.GitRepositoryUrl)) table.AddRow("Git repository", Markup.Escape(w.GitRepositoryUrl));
+        if (!string.IsNullOrEmpty(w.GitBranch)) table.AddRow("Git branch", Markup.Escape(w.GitBranch));
+        table.AddRow("Created", w.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        if (w.UpdatedAt is { } u) table.AddRow("Updated", u.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        if (w.LastAccessedAt is { } a) table.AddRow("Last accessed", a.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+
+        AnsiConsole.Write(table);
+    }
 }
