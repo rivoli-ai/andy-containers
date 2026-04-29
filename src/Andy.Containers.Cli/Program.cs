@@ -37,11 +37,8 @@ rootCommand.AddCommand(RunCommands.Create());
 // Environment-profile catalog (X7 — rivoli-ai/andy-containers#97).
 rootCommand.AddCommand(EnvironmentCommands.Create());
 
-// Workspace commands (stubs for future)
-var workspaceCommand = new Command("workspace", "Manage workspaces");
-workspaceCommand.AddCommand(new Command("create", "Create a workspace"));
-workspaceCommand.AddCommand(new Command("list", "List workspaces"));
-rootCommand.AddCommand(workspaceCommand);
+// Workspace commands (rivoli-ai/andy-containers#189).
+rootCommand.AddCommand(WorkspaceCommands.Create());
 
 // Template commands (stubs for future)
 var templatesCommand = new Command("templates", "Manage template catalog");

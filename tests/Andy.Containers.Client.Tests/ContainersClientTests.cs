@@ -304,4 +304,138 @@ public class ContainersClientTests
         await act.Should().ThrowAsync<ContainersApiException>()
             .Where(e => e.StatusCode == HttpStatusCode.NotFound);
     }
+
+    // rivoli-ai/andy-containers#189. Workspace client wrappers. Same
+    // pattern as the environment cases above: pin URL shapes and
+    // round-tripping so a future regression breaks here, not in the
+    // CLI integration.
+
+    [Fact]
+    public async Task ListWorkspacesAsync_NoFilters_HitsBareCollectionUrl()
+    {
+        var handler = new CannedHandler(
+            """{"items":[],"totalCount":0}""", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var page = await client.ListWorkspacesAsync();
+
+        page.TotalCount.Should().Be(0);
+        handler.LastMethod.Should().Be(HttpMethod.Get);
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/workspaces");
+        handler.LastRequestUri.Query.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ListWorkspacesAsync_WithFilters_AppendsQueryParams()
+    {
+        var handler = new CannedHandler(
+            """{"items":[],"totalCount":0}""", "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var orgId = Guid.NewGuid();
+        await client.ListWorkspacesAsync(ownerId: "alice user", organizationId: orgId, take: 50);
+
+        var query = handler.LastRequestUri!.Query;
+        query.Should().Contain("ownerId=alice%20user", "spaces in user-supplied owner must URL-encode");
+        query.Should().Contain($"organizationId={orgId}");
+        query.Should().Contain("take=50");
+    }
+
+    [Fact]
+    public async Task GetWorkspaceAsync_HitsByIdRoute_AndDeserialises()
+    {
+        var id = Guid.NewGuid();
+        var body = $$"""
+            {
+              "id": "{{id}}",
+              "name": "demo",
+              "description": "test ws",
+              "ownerId": "alice",
+              "organizationId": null,
+              "teamId": null,
+              "status": "Active",
+              "defaultContainerId": null,
+              "gitRepositoryUrl": null,
+              "gitBranch": null,
+              "environmentProfileId": "11111111-2222-3333-4444-555555555555",
+              "createdAt": "2026-04-28T00:00:00Z",
+              "updatedAt": null,
+              "lastAccessedAt": null
+            }
+            """;
+        var handler = new CannedHandler(body, "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var ws = await client.GetWorkspaceAsync(id.ToString());
+
+        handler.LastRequestUri!.AbsolutePath.Should().Be($"/api/workspaces/{id}");
+        ws.Name.Should().Be("demo");
+        ws.Status.Should().Be("Active");
+        ws.EnvironmentProfileId.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task CreateWorkspaceAsync_PostsRequest_AndReturnsDto()
+    {
+        var newId = Guid.NewGuid();
+        var responseBody = $$"""
+            {
+              "id": "{{newId}}",
+              "name": "new",
+              "description": null,
+              "ownerId": "alice",
+              "organizationId": null,
+              "teamId": null,
+              "status": "Active",
+              "defaultContainerId": null,
+              "gitRepositoryUrl": null,
+              "gitBranch": null,
+              "environmentProfileId": null,
+              "createdAt": "2026-04-28T00:00:00Z",
+              "updatedAt": null,
+              "lastAccessedAt": null
+            }
+            """;
+        var handler = new CannedHandler(responseBody, "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var request = new ContainersClient.CreateWorkspaceRequest(
+            "new", null, null, null, null, null, "headless-container");
+        var ws = await client.CreateWorkspaceAsync(request);
+
+        handler.LastMethod.Should().Be(HttpMethod.Post);
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/workspaces");
+        ws.Id.Should().Be(newId);
+    }
+
+    [Fact]
+    public async Task DeleteWorkspaceAsync_HitsByIdRoute()
+    {
+        var id = Guid.NewGuid();
+        var handler = new CannedHandler("", "application/json", HttpStatusCode.NoContent);
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        await client.DeleteWorkspaceAsync(id.ToString());
+
+        handler.LastMethod.Should().Be(HttpMethod.Delete);
+        handler.LastRequestUri!.AbsolutePath.Should().Be($"/api/workspaces/{id}");
+    }
+
+    [Fact]
+    public async Task DeleteWorkspaceAsync_404_ThrowsContainersApiException()
+    {
+        var handler = new CannedHandler("", "application/json", HttpStatusCode.NotFound);
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var act = async () => await client.DeleteWorkspaceAsync(Guid.NewGuid().ToString());
+
+        await act.Should().ThrowAsync<ContainersApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+    }
 }
