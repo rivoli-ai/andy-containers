@@ -413,14 +413,21 @@ public class TerminalControllerTests : IDisposable
     }
 
     [Fact]
-    public void BuildContainerShellCommand_ExecsTmuxNewSessionAttachOrCreate()
+    public void BuildContainerShellCommand_ExecsTmuxNewSessionAttachOrCreateAndDetachOthers()
     {
         // The end of the command must launch tmux in attach-if-exists,
-        // create-if-not mode. `-A` is the flag; `-s web` is the fixed
-        // session name shared with the probe. Conductor #875 PR 2.
+        // create-if-not mode AND detach any prior client. -A gives
+        // attach-or-create (persistence across reconnects); -D, when
+        // combined with -A, makes attach evict any client already on
+        // the session — without that we leak one tmux client per
+        // attach because the docker-exec PTY chain doesn't
+        // propagate SIGHUP into the container reliably when the
+        // WebSocket drops. Single-attach is the design invariant
+        // (embedded XOR detached, see Conductor #830). Conductor
+        // #875 PR 2 + tmux-leak fix.
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain($"new-session -A -s {TerminalController.TmuxSessionName} bash -i",
-            "tmux must use -A for attach-or-create — that gives us persistence across reconnects");
+        cmd.Should().Contain($"new-session -A -D -s {TerminalController.TmuxSessionName} bash -i",
+            "tmux must use -A -D so each attach replaces the prior client instead of stacking on top");
     }
 
     [Fact]
