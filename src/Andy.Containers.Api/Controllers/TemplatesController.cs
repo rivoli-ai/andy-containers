@@ -199,6 +199,24 @@ public class TemplatesController : ControllerBase
         template.Version = update.Version;
         template.IdeType = update.IdeType;
         template.Tags = update.Tags;
+        // Conductor #886. ThemeId may be set, cleared, or left
+        // unchanged via this endpoint. Validate against the
+        // catalog when set — unknown id → 422.
+        if (!string.IsNullOrEmpty(update.ThemeId))
+        {
+            var themeExists = await _db.Themes
+                .AsNoTracking()
+                .AnyAsync(t => t.Id == update.ThemeId, ct);
+            if (!themeExists)
+            {
+                return UnprocessableEntity(new
+                {
+                    code = "unknown_theme",
+                    message = $"Theme '{update.ThemeId}' is not in the catalog.",
+                });
+            }
+        }
+        template.ThemeId = update.ThemeId;
         template.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return Ok(template);

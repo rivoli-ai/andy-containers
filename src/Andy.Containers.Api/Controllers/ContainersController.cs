@@ -245,6 +245,44 @@ public class ContainersController : ControllerBase
         return Ok(info);
     }
 
+    /// <summary>
+    /// Conductor #886. Sets or clears the container's preferred
+    /// theme. The body is <c>{ "themeId": "..." }</c> for set,
+    /// <c>{ "themeId": null }</c> for clear (resolves back to
+    /// template default → user pref → hardcoded).
+    ///
+    /// Validates against the catalog — unknown id returns 422
+    /// with a structured envelope so the client can show the
+    /// rejection without a generic error.
+    /// </summary>
+    [HttpPatch("{id:guid}/theme")]
+    [RequirePermission("container:write")]
+    public async Task<IActionResult> SetTheme(Guid id, [FromBody] SetThemeRequest request, CancellationToken ct)
+    {
+        var container = await _db.Containers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (container is null) return NotFound();
+        if (!CanAccess(container)) return Forbid();
+
+        if (!string.IsNullOrEmpty(request.ThemeId))
+        {
+            var themeExists = await _db.Themes
+                .AsNoTracking()
+                .AnyAsync(t => t.Id == request.ThemeId, ct);
+            if (!themeExists)
+            {
+                return UnprocessableEntity(new
+                {
+                    code = "unknown_theme",
+                    message = $"Theme '{request.ThemeId}' is not in the catalog.",
+                });
+            }
+        }
+
+        container.ThemeId = string.IsNullOrEmpty(request.ThemeId) ? null : request.ThemeId;
+        await _db.SaveChangesAsync(ct);
+        return Ok(container);
+    }
+
     [HttpPut("{id:guid}/resources")]
     [RequirePermission("container:execute")]
     public async Task<IActionResult> Resize(Guid id, [FromBody] ResizeRequest request, CancellationToken ct)
@@ -510,4 +548,17 @@ public class ResizeRequest
     public double CpuCores { get; set; } = 2;
     public int MemoryMb { get; set; } = 4096;
     public int DiskGb { get; set; } = 20;
+}
+
+/// <summary>
+/// Body for PATCH /api/containers/{id}/theme. Conductor #886.
+/// </summary>
+public class SetThemeRequest
+{
+    /// <summary>
+    /// Theme catalog id ("dracula", "github-dark", …). Pass null
+    /// or empty to clear the override and fall back through the
+    /// resolution chain (template → user pref → hardcoded).
+    /// </summary>
+    public string? ThemeId { get; set; }
 }

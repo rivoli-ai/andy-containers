@@ -30,6 +30,16 @@ public class ContainerTemplate
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public string? Metadata { get; set; }
+
+    /// <summary>
+    /// Optional reference to a <see cref="Theme"/> id. Containers
+    /// created from this template inherit this as their initial
+    /// theme. Operators can change it later via the template
+    /// detail editor; existing containers are NOT retroactively
+    /// updated (per-container theme overrides are sticky).
+    /// Conductor #886.
+    /// </summary>
+    public string? ThemeId { get; set; }
 }
 
 public enum CatalogScope

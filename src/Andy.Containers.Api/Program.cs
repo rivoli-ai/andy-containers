@@ -326,6 +326,15 @@ try
             .GetRequiredService<ILoggerFactory>()
             .CreateLogger(typeof(EnvironmentProfileSeeder));
         await EnvironmentProfileSeeder.SeedAsync(db, app.Environment, seederLogger);
+
+        // Conductor #886. Theme catalog from config/themes/global/*.yaml.
+        // Unlike EnvironmentProfile, themes are read-only (no POST API
+        // in v1) so re-seeding always reconciles existing rows to
+        // whatever the YAML says.
+        var themeSeederLogger = scope.ServiceProvider
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger(typeof(ThemeSeeder));
+        await ThemeSeeder.SeedAsync(db, app.Environment, themeSeederLogger);
     }
 
     app.UseHttpsRedirection();

@@ -301,4 +301,100 @@ public class ContainersControllerTests : IDisposable
         type.GetProperty("message")!.GetValue(payload).Should().BeOfType<string>()
             .Which.Should().Contain("32 containers");
     }
+
+    // MARK: - SetTheme (#886)
+
+    [Fact]
+    public async Task SetTheme_ValidThemeId_PersistsAndReturnsContainer()
+    {
+        var containerId = Guid.NewGuid();
+        _db.Containers.Add(new Container
+        {
+            Id = containerId,
+            Name = "test",
+            OwnerId = "test-user",
+        });
+        _db.Themes.Add(new Theme
+        {
+            Id = "dracula",
+            Name = "dracula",
+            DisplayName = "Dracula",
+            Kind = "terminal",
+            PaletteJson = "{}",
+            Version = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.SetTheme(
+            containerId,
+            new SetThemeRequest { ThemeId = "dracula" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        var updated = await _db.Containers.FindAsync(containerId);
+        updated!.ThemeId.Should().Be("dracula",
+            "the per-container theme override is what makes the persistence story work — losing it here breaks the whole feature");
+    }
+
+    [Fact]
+    public async Task SetTheme_NullThemeId_ClearsOverride()
+    {
+        // Clearing the override falls through to template /
+        // user-pref / hardcoded resolution — explicitly setting
+        // null is how the picker says "go back to the default".
+        var containerId = Guid.NewGuid();
+        _db.Containers.Add(new Container
+        {
+            Id = containerId,
+            Name = "test",
+            OwnerId = "test-user",
+            ThemeId = "dracula",
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.SetTheme(
+            containerId,
+            new SetThemeRequest { ThemeId = null },
+            CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        var updated = await _db.Containers.FindAsync(containerId);
+        updated!.ThemeId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetTheme_UnknownThemeId_Returns422()
+    {
+        // The catalog is authoritative — accepting an unknown id
+        // would let stale clients write ghost references that the
+        // resolver would then silently drop on every attach.
+        var containerId = Guid.NewGuid();
+        _db.Containers.Add(new Container
+        {
+            Id = containerId,
+            Name = "test",
+            OwnerId = "test-user",
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _controller.SetTheme(
+            containerId,
+            new SetThemeRequest { ThemeId = "doesnotexist" },
+            CancellationToken.None);
+
+        var unprocessable = result.Should().BeOfType<UnprocessableEntityObjectResult>().Subject;
+        var payload = unprocessable.Value!;
+        payload.GetType().GetProperty("code")!.GetValue(payload).Should().Be("unknown_theme");
+    }
+
+    [Fact]
+    public async Task SetTheme_UnknownContainer_Returns404()
+    {
+        var result = await _controller.SetTheme(
+            Guid.NewGuid(),
+            new SetThemeRequest { ThemeId = "dracula" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
 }

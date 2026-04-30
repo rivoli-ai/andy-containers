@@ -55,6 +55,17 @@ public class Container
     /// </summary>
     public string? OsLabel { get; set; }
 
+    /// <summary>
+    /// Optional reference to a <see cref="Theme"/> id. When set,
+    /// this container's terminal / IDE / VNC surfaces use the
+    /// referenced palette regardless of what the source template
+    /// or the user preference says. When null, resolution falls
+    /// through to <see cref="Template"/>.<see cref="ContainerTemplate.ThemeId"/>,
+    /// then to the Conductor user pref, then to the hardcoded
+    /// default. Conductor #886.
+    /// </summary>
+    public string? ThemeId { get; set; }
+
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();
     public ICollection<ContainerGitRepository> GitRepositories { get; set; } = new List<ContainerGitRepository>();
