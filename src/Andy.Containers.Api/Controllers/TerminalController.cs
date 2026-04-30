@@ -1082,7 +1082,22 @@ public class TerminalController : ControllerBase
                     $"fi; " +
                $"fi; " +
                $"if command -v tmux >/dev/null 2>&1; then " +
-                    $"exec tmux -f \"$TMUX_CONF\" new-session -A -s {TmuxSessionName} bash -i; " +
+                    // -A: attach if session exists, otherwise create.
+                    // -D: when -A attaches, detach all OTHER clients
+                    //     first. Without -D, every reconnect spawned
+                    //     a fresh tmux client without ever sending
+                    //     SIGHUP to the prior one — clients piled up
+                    //     (one per attach) because the docker-exec
+                    //     PTY chain doesn't reliably propagate SIGHUP
+                    //     into the container when the WebSocket
+                    //     drops. -D makes tmux itself evict the
+                    //     stale client, which it does cleanly via
+                    //     its own client-detach path. Conductor
+                    //     enforces a single-attach invariant per
+                    //     container (embedded XOR detached, see
+                    //     #830), so detach-others is the right
+                    //     semantic.
+                    $"exec tmux -f \"$TMUX_CONF\" new-session -A -D -s {TmuxSessionName} bash -i; " +
                $"else " +
                     $"exec bash -i; " +
                $"fi";
