@@ -49,4 +49,36 @@
     <Protobuf Include="..\..\proto\containers.proto" GrpcServices="Server" />
   </ItemGroup>
 
+  <!--
+    Bundle the YAML seed catalogs alongside the API binary so that
+    `dotnet publish` produces a self-contained service. Without
+    these `<Content>` rules, `EnvironmentProfileSeeder` and
+    `ThemeSeeder` run at startup, fail to find their config
+    directories, and silently log "no config/* directory found;
+    skipping seed." Conductor users would then see empty catalogs
+    in the picker UIs (Conductor #899 caught this for themes;
+    environments had been silently broken since #91 first
+    shipped — same root cause).
+
+    The `Link` attribute keeps the directory structure under the
+    publish output (e.g. `config/themes/global/dracula.yaml`),
+    matching one of the seeders' search-path candidates. The
+    `*.yaml` glob picks up new files automatically — adding a
+    new theme YAML doesn't require a csproj edit.
+
+    Regression guard: tests/Andy.Containers.Api.Tests/
+    Data/SeedConfigBundleGuardTests.cs asserts these rules stay
+    in place + the seed YAMLs are well-formed.
+  -->
+  <ItemGroup>
+    <Content Include="..\..\config\themes\global\*.yaml"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             Link="config\themes\global\%(Filename)%(Extension)" />
+    <Content Include="..\..\config\environments\global\*.yaml"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             Link="config\environments\global\%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>
