@@ -1,0 +1,27 @@
+# Monokai — Wimer Hazenberg's high-contrast palette popularised by Sublime Text.
+id: monokai
+name: monokai
+display_name: Monokai
+kind: terminal
+version: 1
+palette:
+  background: "#272822"
+  foreground: "#f8f8f2"
+  cursor: "#f8f8f0"
+  selection: "#49483e"
+  ansi_0: "#272822"
+  ansi_1: "#f92672"
+  ansi_2: "#a6e22e"
+  ansi_3: "#f4bf75"
+  ansi_4: "#66d9ef"
+  ansi_5: "#ae81ff"
+  ansi_6: "#a1efe4"
+  ansi_7: "#f8f8f2"
+  ansi_8: "#75715e"
+  ansi_9: "#f92672"
+  ansi_10: "#a6e22e"
+  ansi_11: "#f4bf75"
+  ansi_12: "#66d9ef"
+  ansi_13: "#ae81ff"
+  ansi_14: "#a1efe4"
+  ansi_15: "#f9f8f5"

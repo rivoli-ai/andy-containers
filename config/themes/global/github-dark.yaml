@@ -1,0 +1,27 @@
+# GitHub Dark — the dark variant of the GitHub editor theme.
+id: github-dark
+name: github-dark
+display_name: GitHub Dark
+kind: terminal
+version: 1
+palette:
+  background: "#0d1117"
+  foreground: "#c9d1d9"
+  cursor: "#c9d1d9"
+  selection: "#3392ff44"
+  ansi_0: "#484f58"
+  ansi_1: "#ff7b72"
+  ansi_2: "#3fb950"
+  ansi_3: "#d29922"
+  ansi_4: "#58a6ff"
+  ansi_5: "#bc8cff"
+  ansi_6: "#39c5cf"
+  ansi_7: "#b1bac4"
+  ansi_8: "#6e7681"
+  ansi_9: "#ffa198"
+  ansi_10: "#56d364"
+  ansi_11: "#e3b341"
+  ansi_12: "#79c0ff"
+  ansi_13: "#d2a8ff"
+  ansi_14: "#56d4dd"
+  ansi_15: "#f0f6fc"

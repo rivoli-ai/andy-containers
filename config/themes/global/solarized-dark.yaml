@@ -1,0 +1,27 @@
+# Solarized Dark — Ethan Schoonover's classic high-contrast palette.
+id: solarized-dark
+name: solarized-dark
+display_name: Solarized Dark
+kind: terminal
+version: 1
+palette:
+  background: "#002b36"
+  foreground: "#839496"
+  cursor: "#93a1a1"
+  selection: "#073642"
+  ansi_0: "#073642"
+  ansi_1: "#dc322f"
+  ansi_2: "#859900"
+  ansi_3: "#b58900"
+  ansi_4: "#268bd2"
+  ansi_5: "#d33682"
+  ansi_6: "#2aa198"
+  ansi_7: "#eee8d5"
+  ansi_8: "#002b36"
+  ansi_9: "#cb4b16"
+  ansi_10: "#586e75"
+  ansi_11: "#657b83"
+  ansi_12: "#839496"
+  ansi_13: "#6c71c4"
+  ansi_14: "#93a1a1"
+  ansi_15: "#fdf6e3"

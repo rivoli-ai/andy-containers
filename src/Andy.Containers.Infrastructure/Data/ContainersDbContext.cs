@@ -26,6 +26,7 @@ public class ContainersDbContext : DbContext
     public DbSet<OutboxEntry> OutboxEntries => Set<OutboxEntry>();
     public DbSet<Run> Runs => Set<Run>();
     public DbSet<EnvironmentProfile> EnvironmentProfiles => Set<EnvironmentProfile>();
+    public DbSet<Theme> Themes => Set<Theme>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -305,5 +306,41 @@ public class ContainersDbContext : DbContext
                 c.Property(x => x.AuditMode).HasConversion<string>();
             });
         });
+
+        // Theme — predefined visual catalog (Conductor #886).
+        // String primary key matches the YAML-seeded slug ("dracula",
+        // "github-dark", …) so cross-deploy ids stay predictable. The
+        // palette is JSON-encoded as TEXT so the catalog is portable
+        // between Postgres and the embedded-SQLite host without
+        // dialect-aware schema. Deletion of a referenced theme falls
+        // through as ON DELETE SET NULL on the FK columns below — the
+        // container/template stays alive, picker just reverts to
+        // resolution fallback.
+        modelBuilder.Entity<Theme>(e =>
+        {
+            e.HasKey(t => t.Id);
+            e.Property(t => t.Id).IsRequired().HasMaxLength(64);
+            e.Property(t => t.Name).IsRequired().HasMaxLength(64);
+            e.Property(t => t.DisplayName).IsRequired().HasMaxLength(200);
+            e.Property(t => t.Kind).IsRequired().HasMaxLength(32);
+            e.Property(t => t.PaletteJson).IsRequired();
+            e.HasIndex(t => t.Name).IsUnique();
+            e.HasIndex(t => t.Kind);
+        });
+
+        // Container.ThemeId / ContainerTemplate.ThemeId → Theme.Id
+        // FK with ON DELETE SET NULL (the container is independent
+        // of the catalog row's lifetime).
+        modelBuilder.Entity<Container>()
+            .HasOne<Theme>()
+            .WithMany()
+            .HasForeignKey(c => c.ThemeId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ContainerTemplate>()
+            .HasOne<Theme>()
+            .WithMany()
+            .HasForeignKey(t => t.ThemeId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

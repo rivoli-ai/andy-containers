@@ -1,0 +1,28 @@
+# Dracula — the popular dark theme with vibrant accents.
+# Source: https://draculatheme.com/contribute (canonical palette)
+id: dracula
+name: dracula
+display_name: Dracula
+kind: terminal
+version: 1
+palette:
+  background: "#282a36"
+  foreground: "#f8f8f2"
+  cursor: "#f8f8f2"
+  selection: "#44475a"
+  ansi_0: "#21222c"
+  ansi_1: "#ff5555"
+  ansi_2: "#50fa7b"
+  ansi_3: "#f1fa8c"
+  ansi_4: "#bd93f9"
+  ansi_5: "#ff79c6"
+  ansi_6: "#8be9fd"
+  ansi_7: "#f8f8f2"
+  ansi_8: "#6272a4"
+  ansi_9: "#ff6e6e"
+  ansi_10: "#69ff94"
+  ansi_11: "#ffffa5"
+  ansi_12: "#d6acff"
+  ansi_13: "#ff92df"
+  ansi_14: "#a4ffff"
+  ansi_15: "#ffffff"
