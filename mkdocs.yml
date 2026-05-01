@@ -48,6 +48,8 @@ nav:
     - Environment profiles: environment-profiles.md
     - Agent runs: runs.md
     - Run configurator: run-configurator.md
+  - Operations:
+    - Registry credentials: operations/registry-credentials.md
   - ADRs:
     - ADR 0001 — Messaging: adr/0001-messaging.md
     - ADR 0002 — Environment profiles: adr/0002-environment-profiles.md
