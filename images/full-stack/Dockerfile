@@ -1,4 +1,8 @@
-FROM andy-containers-base:latest
+# BASE_IMAGE defaults to the locally-built `andy-containers-base` so existing
+# `docker build images/full-stack` invocations keep working. CI overrides it
+# with the registry-published base via `--build-arg BASE_IMAGE=...`.
+ARG BASE_IMAGE=andy-containers-base:latest
+FROM ${BASE_IMAGE}
 
 LABEL description="Andy Containers - Full Stack (.NET 8, Python 3.12, Node 20, Angular 18)"
 

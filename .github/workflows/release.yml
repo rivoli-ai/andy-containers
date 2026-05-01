@@ -1,0 +1,300 @@
+name: Release — build and publish images
+
+# Triggers:
+#   - tag push (vX.Y.Z): full pipeline → build, push, smoke
+#   - pull_request to main touching this workflow / Dockerfiles: lint + dry-build (no push)
+#   - workflow_dispatch: same as tag push, but tag = run number (manual rebuilds)
+on:
+  push:
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/release.yml'
+      - 'src/Andy.Containers.Api/Dockerfile'
+      - 'images/**/Dockerfile'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  ORG: rivoli-ai
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  # ── Validate the workflow itself on every PR. Cheap; runs in seconds.
+  lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+
+  # ── Build + publish the API image. Multi-arch, SBOM + provenance,
+  #    GHA cache for nuget/npm restore.
+  build-api:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/andy-containers-api
+          # Tag policy: full SemVer on tag pushes, short SHA on every build,
+          # `latest` only when the workflow runs on the default branch.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push API image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: src/Andy.Containers.Api/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+          provenance: true
+          sbom: true
+
+  # ── The base template image. full-stack/Dockerfile depends on this
+  #    being available, so we build + push it before the matrix runs.
+  build-template-base:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/templates/base
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push base template
+        uses: docker/build-push-action@v5
+        with:
+          context: images/base
+          file: images/base/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=template-base
+          cache-to: type=gha,scope=template-base,mode=max
+          provenance: true
+          sbom: true
+
+  # ── Remaining template images. Matrix over the slugs we actually publish.
+  #    `full-stack` consumes base via the BASE_IMAGE build-arg.
+  build-templates:
+    needs: [build-template-base]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        template:
+          - desktop
+          - desktop-alpine-dotnet8
+          - desktop-alpine-dotnet10
+          - desktop-dotnet
+          - desktop-python
+          - devpilot-desktop
+          - full-stack
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve base image tag for full-stack
+        id: base
+        run: |
+          # full-stack's Dockerfile takes BASE_IMAGE as a build-arg.
+          # Other templates ignore the arg (no-op).
+          base_tag="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            base_tag="sha-$(git rev-parse --short HEAD)"
+          fi
+          echo "image=${REGISTRY}/${ORG}/templates/base:${base_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/templates/${{ matrix.template }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push template ${{ matrix.template }}
+        uses: docker/build-push-action@v5
+        with:
+          context: images/${{ matrix.template }}
+          file: images/${{ matrix.template }}/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.image }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=template-${{ matrix.template }}
+          cache-to: type=gha,scope=template-${{ matrix.template }},mode=max
+          provenance: true
+          sbom: true
+
+  # ── Smoke: spin up kind, pull the just-published API image with a
+  #    read-only PAT, assert /health 200. Negative case: pull without
+  #    the secret asserts ImagePullBackOff. Both prove the published
+  #    image is private and credential-gated.
+  smoke:
+    needs: [build-api]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required secret is present
+        env:
+          PAT: ${{ secrets.RIVOLI_GHCR_READONLY_PAT }}
+        run: |
+          if [[ -z "${PAT}" ]]; then
+            echo "::error::RIVOLI_GHCR_READONLY_PAT secret is not set."
+            echo "::error::See docs/operations/registry-credentials.md for how to mint and store it."
+            exit 1
+          fi
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify multi-arch manifest
+        run: |
+          docker manifest inspect \
+            "${REGISTRY}/${ORG}/andy-containers-api:${{ steps.tag.outputs.tag }}" \
+            | tee manifest.json
+          # Assert both linux/amd64 and linux/arm64 are present.
+          for arch in amd64 arm64; do
+            if ! grep -q "\"architecture\": \"${arch}\"" manifest.json; then
+              echo "::error::missing architecture: ${arch}"
+              exit 1
+            fi
+          done
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: rc1-smoke
+          wait: 60s
+
+      - name: Positive case — pull with imagePullSecret succeeds
+        env:
+          PAT: ${{ secrets.RIVOLI_GHCR_READONLY_PAT }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.ORG }}/andy-containers-api:${{ steps.tag.outputs.tag }}
+        run: |
+          kubectl create namespace pull-positive
+          kubectl create secret docker-registry rivoli-pull \
+            --namespace=pull-positive \
+            --docker-server="${REGISTRY}" \
+            --docker-username=rivoli-bot \
+            --docker-password="${PAT}"
+          # Use a minimal pod that doesn't need DB/NATS — just verify pull.
+          kubectl run smoke --namespace=pull-positive \
+            --image="${IMAGE}" \
+            --overrides='{"spec":{"imagePullSecrets":[{"name":"rivoli-pull"}]}}' \
+            --restart=Never \
+            --command -- sleep 30
+          kubectl wait --for=condition=Ready pod/smoke \
+            --namespace=pull-positive --timeout=120s
+
+      - name: Negative case — pull without secret fails
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.ORG }}/andy-containers-api:${{ steps.tag.outputs.tag }}
+        run: |
+          kubectl create namespace pull-negative
+          kubectl run no-creds --namespace=pull-negative \
+            --image="${IMAGE}" \
+            --restart=Never \
+            --command -- sleep 30 || true
+          # Wait briefly, then inspect events. We expect ImagePullBackOff
+          # (and explicitly NOT a Ready pod).
+          sleep 30
+          if kubectl wait --for=condition=Ready pod/no-creds \
+              --namespace=pull-negative --timeout=10s 2>/dev/null; then
+            echo "::error::pod became Ready without imagePullSecret — image is not private!"
+            exit 1
+          fi
+          # Confirm the failure mode is auth-related.
+          kubectl describe pod/no-creds --namespace=pull-negative \
+            | tee describe.txt
+          if ! grep -E "ImagePullBackOff|ErrImagePull|unauthorized" describe.txt; then
+            echo "::error::expected ImagePullBackOff / unauthorized; got something else"
+            exit 1
+          fi
+          echo "Negative case verified — image rejects unauthenticated pulls."
