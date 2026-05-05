@@ -15,6 +15,24 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
 
+// RC3 (#201). `dotnet Andy.Containers.Api migrate` short-circuits
+// the host build and runs EF migrations only — the path Helm's
+// pre-install / pre-upgrade Job (RC6) takes so the rollout is
+// decoupled from per-pod startup migration races. Default behaviour
+// (no args) is unchanged: the API boots and applies migrations
+// in-process unless `Database:MigrateOnStartup` is `false`.
+if (args.Length > 0 && args[0] == "migrate")
+{
+    try
+    {
+        return await Andy.Containers.Api.MigrationEntryPoint.RunAsync(args[1..]);
+    }
+    finally
+    {
+        Log.CloseAndFlush();
+    }
+}
+
 try
 {
     var builder = WebApplication.CreateBuilder(args);
@@ -305,16 +323,19 @@ try
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<ContainersDbContext>();
-        if (db.Database.IsSqlite())
+
+        // RC3 (#201). `Database:MigrateOnStartup` defaults to true so
+        // existing single-process compose deploys are unchanged. Helm
+        // (RC6) sets it false and runs the dedicated `migrate` Job
+        // before the rollout — avoiding the multi-replica race where
+        // every pod tries to apply schema changes on startup.
+        var migrateOnStartup = builder.Configuration
+            .GetValue<bool?>("Database:MigrateOnStartup") ?? true;
+        if (migrateOnStartup)
         {
             var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
-            var migrationLogger = loggerFactory.CreateLogger("SqliteMigrationBootstrap");
-            await Andy.Containers.Api.Services.SqliteMigrationBootstrap.EnsureSchemaAsync(
-                db, migrationLogger);
-        }
-        else
-        {
-            await db.Database.MigrateAsync();
+            await Andy.Containers.Api.MigrationEntryPoint
+                .ApplyMigrationsAsync(db, loggerFactory);
         }
         await DataSeeder.SeedAsync(db);
 
@@ -409,10 +430,12 @@ try
     Log.Information("Health: https://localhost:5200/health");
 
     app.Run();
+    return 0;
 }
 catch (Exception ex)
 {
     Log.Fatal(ex, "Andy Containers API terminated unexpectedly");
+    return 1;
 }
 finally
 {
