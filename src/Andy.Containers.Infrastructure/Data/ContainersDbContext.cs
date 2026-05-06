@@ -1,12 +1,22 @@
 using Andy.Containers.Messaging;
 using Andy.Containers.Models;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace Andy.Containers.Infrastructure.Data;
 
-public class ContainersDbContext : DbContext
+// IDataProtectionKeyContext lets ASP.NET Core's Data Protection store
+// its key ring in our schema (RC2 #200). The interface only requires
+// the DataProtectionKeys DbSet — the framework owns the row contract
+// (id, friendly name, XML payload). Persisting in the DB instead of a
+// filesystem volume removes the multi-replica blocker for Helm rollouts:
+// cookies / anti-forgery tokens issued by one pod must decrypt in any
+// other pod, which a per-pod RWO PVC can't guarantee.
+public class ContainersDbContext : DbContext, IDataProtectionKeyContext
 {
     public ContainersDbContext(DbContextOptions<ContainersDbContext> options) : base(options) { }
+
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
     public DbSet<Container> Containers => Set<Container>();
     public DbSet<ContainerTemplate> Templates => Set<ContainerTemplate>();
