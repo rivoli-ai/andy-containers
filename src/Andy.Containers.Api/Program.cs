@@ -5,6 +5,7 @@ using Andy.Containers.Api.Services;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Andy.Containers.Api.Telemetry;
 using Andy.Rbac.Client;
@@ -112,7 +113,17 @@ try
     builder.Services.AddHostedService<ImageBuildWorker>();
 
     // Git credential + clone services
-    builder.Services.AddDataProtection();
+    //
+    // RC2 (#200). Persist the Data Protection key ring in the DB
+    // (`DataProtectionKeys` table) rather than the previous on-disk
+    // volume mount. Two API replicas behind a Service must decrypt
+    // each other's cookies / anti-forgery tokens; an RWO PVC can't
+    // guarantee that, so the DB row store is the multi-replica path.
+    // SetApplicationName isolates this app's keys from any other DP
+    // user on the same DB (defensive — there isn't one today).
+    builder.Services.AddDataProtection()
+        .SetApplicationName("andy-containers")
+        .PersistKeysToDbContext<ContainersDbContext>();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
     builder.Services.AddScoped<IGitCloneService, GitCloneService>();
     builder.Services.AddScoped<IGitRepositoryProbeService, GitRepositoryProbeService>();

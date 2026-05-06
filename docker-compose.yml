@@ -71,7 +71,10 @@ services:
       - ./certs:/usr/local/share/ca-certificates/custom:ro
       - ./images:/app/images:ro
       - ./scripts/container:/app/scripts/container:ro
-      - dataprotection_keys:/root/.aspnet/DataProtection-Keys
+      # Note: prior `dataprotection_keys:/root/.aspnet/DataProtection-Keys`
+      # mount removed in RC2 (#200) — Data Protection keys now live in
+      # the `DataProtectionKeys` Postgres table so multiple replicas
+      # share the key ring. See docs/operations/data-protection.md.
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,5 +126,4 @@ services:
 
 volumes:
   postgres_data:
-  dataprotection_keys:
   nats_data:
