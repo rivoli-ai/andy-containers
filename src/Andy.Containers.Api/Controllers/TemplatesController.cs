@@ -301,16 +301,11 @@ public class TemplatesController : ControllerBase
                     Version: existing.Version));
             }
 
-            // Same code, different spec — reject as a structured
-            // 409 so callers see the conflict explicitly. Mirrors
-            // the 'template.code.in-use' error code in IM5.
-            return Conflict(new
-            {
-                code = "template.code.in-use",
-                message = $"template '{existing.Code}' is already registered with a different specHash. " +
-                          "Bump the template version or update the existing template via PUT /templates/{id}/definition.",
-                field = "code",
-            });
+            // IM10 (#264). 409 mapping moved into the shared
+            // ImageManagementProblemDetailsFactory so the response
+            // shape matches every other 4xx/5xx in this surface.
+            return ImageManagementProblemDetailsFactory.FromCodeInUse(
+                existing.Code, existing.Id);
         }
 
         _db.Templates.Add(template);
