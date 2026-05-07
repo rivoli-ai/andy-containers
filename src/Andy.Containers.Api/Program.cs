@@ -3,8 +3,11 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Data;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Configurator;
+using Andy.Containers.DependencyInjection;
+using Andy.Containers.Infrastructure.Build.Local;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Infrastructure.Registries.Local;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Andy.Containers.Api.Telemetry;
@@ -134,6 +137,19 @@ try
     builder.Services.AddScoped<IToolVersionDetector, ToolVersionDetector>();
     builder.Services.AddScoped<IImageManifestService, ImageManifestService>();
     builder.Services.AddScoped<IImageDiffService, ImageDiffService>();
+
+    // IM8 (rivoli-ai/andy-containers#262). First time the IM6 +
+    // IM7 wiring composes into the API host. AddImageManagement
+    // wires the abstraction layer (IRegistryConfiguration);
+    // AddLocalZotRegistry registers the local-zot adapter +
+    // DockerCliUploader; AddLocalBuildBackend registers the
+    // engine detector + LocalBuildBackend; the orchestrator
+    // ties the lot together for ImagesController.Build.
+    builder.Services.AddImageManagement(builder.Configuration);
+    builder.Services.AddLocalZotRegistry();
+    builder.Services.AddLocalBuildBackend();
+    builder.Services.AddScoped<Andy.Containers.Storage.IImageBuildOrchestrator, Andy.Containers.Infrastructure.Build.ImageBuildOrchestrator>();
+    builder.Services.AddScoped<Andy.Containers.Storage.IBuildArtifactStore, Andy.Containers.Infrastructure.Data.BuildArtifactStore>();
 
     // Current user service for RBAC
     builder.Services.AddHttpContextAccessor();

@@ -95,6 +95,17 @@ public class ContainerTemplate
     /// without having to introspect the filesystem.
     /// </summary>
     public string? Markers { get; set; }
+
+    /// <summary>
+    /// IM8 (rivoli-ai/andy-containers#262). Content-addressable hash
+    /// of the spec at register-time —
+    /// <c>sha256(canonicalJson(parsedSpec) || sortedFileDigests)</c>.
+    /// Indexed alongside the template id so the orchestrator can
+    /// short-circuit a build when an artifact already exists for
+    /// this template + this spec. Null on legacy rows that pre-date
+    /// IM8; populated on every register-from-yaml call thereafter.
+    /// </summary>
+    public string? SpecHash { get; set; }
 }
 
 public enum CatalogScope

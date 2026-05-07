@@ -1,6 +1,8 @@
+using Andy.Containers.Abstractions.Images;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Containers.Storage;
 using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,19 +20,22 @@ public class ImagesController : ControllerBase
     private readonly IImageDiffService _diffService;
     private readonly ICurrentUserService _currentUser;
     private readonly IOrganizationMembershipService _orgMembership;
+    private readonly IImageBuildOrchestrator _orchestrator;
 
     public ImagesController(
         ContainersDbContext db,
         IImageManifestService manifestService,
         IImageDiffService diffService,
         ICurrentUserService currentUser,
-        IOrganizationMembershipService orgMembership)
+        IOrganizationMembershipService orgMembership,
+        IImageBuildOrchestrator orchestrator)
     {
         _db = db;
         _manifestService = manifestService;
         _diffService = diffService;
         _currentUser = currentUser;
         _orgMembership = orgMembership;
+        _orchestrator = orchestrator;
     }
 
     [RequirePermission("image:read")]
@@ -87,12 +92,16 @@ public class ImagesController : ControllerBase
     [HttpPost("{templateId:guid}/build")]
     public async Task<IActionResult> Build(Guid templateId, [FromBody] BuildRequest? request, CancellationToken ct)
     {
+        // IM8 (#262). Replaced the legacy ContainerImage path with
+        // a delegation to IImageBuildOrchestrator. The orchestrator
+        // owns cache-hit short-circuit, build invocation via
+        // IBuildBackend, push via IRegistryAdapter, and persistence
+        // of BuildArtifactEntity + RegistryReferenceEntity rows.
+        // Response shape is BuildHandle per the IM5 OpenAPI.
         var template = await _db.Templates.FindAsync([templateId], ct);
         if (template is null) return NotFound();
 
-        Guid? organizationId = request?.OrganizationId;
-
-        // Validate org membership and permission for org-scoped builds
+        var organizationId = request?.OrganizationId;
         if (organizationId.HasValue && !_currentUser.IsAdmin())
         {
             var hasPermission = await _orgMembership.HasPermissionAsync(
@@ -100,51 +109,81 @@ public class ImagesController : ControllerBase
             if (!hasPermission) return Forbid();
         }
 
-        // Create the image record with a temporary content hash
-        var image = new ContainerImage
+        var result = await _orchestrator.BuildAsync(
+            new ImageBuildRequest(
+                TemplateId: templateId,
+                RegistryId: request?.RegistryId,
+                Force: request?.Force ?? false,
+                RequestedBy: _currentUser.GetUserId()),
+            new Progress<BuildProgressEvent>(_ => { /* IM9 wires SSE here */ }),
+            ct);
+
+        var handle = new BuildHandle(
+            BuildId: result.BuildId,
+            Status: result.Status switch
+            {
+                BuildResultStatus.Cached => "cached",
+                BuildResultStatus.Succeeded => "succeeded",
+                BuildResultStatus.Failed => "failed",
+                _ => "unknown",
+            },
+            Digest: result.Digest,
+            References: result.References
+                .Select(r => new BuildHandleReference(
+                    RegistryId: r.RegistryId,
+                    Ref: $"{r.RegistryId}/{r.RepoPath}:{r.Tag}",
+                    PushedAt: r.PushedAt))
+                .ToList());
+
+        return result.Status switch
         {
-            TemplateId = templateId,
-            ContentHash = $"sha256:{Guid.NewGuid():N}",
-            Tag = $"{template.Code}:{template.Version}-{DateTime.UtcNow:yyyyMMddHHmmss}",
-            ImageReference = $"andy-containers/{template.Code}:{template.Version}",
-            BaseImageDigest = $"sha256:{Guid.NewGuid():N}",
-            DependencyManifest = "{}",
-            DependencyLock = "{}",
-            BuildNumber = await _db.Images.CountAsync(i => i.TemplateId == templateId, ct) + 1,
-            BuildStatus = ImageBuildStatus.Building,
-            BuildStartedAt = DateTime.UtcNow,
-            BuiltOffline = request?.Offline ?? false,
-            OrganizationId = organizationId,
-            OwnerId = _currentUser.GetUserId(),
-            Visibility = organizationId.HasValue ? ImageVisibility.Organization : ImageVisibility.Global
+            BuildResultStatus.Cached => Ok(handle),
+            BuildResultStatus.Succeeded => Accepted(handle),
+            BuildResultStatus.Failed => BuildFailureResponse(result),
+            _ => StatusCode(500, handle),
+        };
+    }
+
+    private IActionResult BuildFailureResponse(BuildResult result)
+    {
+        // IM10 will move this mapping into a shared
+        // ImageManagementProblemDetailsFactory; for IM8 we keep the
+        // mapping inline so the response shape is at least
+        // consistent with the OpenAPI ImageManagementError schema.
+        var status = result.ErrorCode switch
+        {
+            var c when c?.StartsWith("build.engine") == true => StatusCodes.Status503ServiceUnavailable,
+            var c when c?.StartsWith("registry.quota") == true => StatusCodes.Status507InsufficientStorage,
+            var c when c?.StartsWith("template.not_found") == true => StatusCodes.Status404NotFound,
+            var c when c?.StartsWith("registry.not_configured") == true => StatusCodes.Status503ServiceUnavailable,
+            _ => StatusCodes.Status422UnprocessableEntity,
         };
 
-        _db.Images.Add(image);
-        await _db.SaveChangesAsync(ct);
-
-        try
+        return StatusCode(status, new
         {
-            // Run introspection to populate the real manifest
-            var (manifest, finalImage) = await _manifestService.GenerateManifestAsync(image.Id, ct);
-
-            finalImage.BuildStatus = ImageBuildStatus.Succeeded;
-            finalImage.BuildCompletedAt = DateTime.UtcNow;
-            finalImage.Changelog = "Build with introspection";
-            await _db.SaveChangesAsync(ct);
-
-            return Accepted(finalImage);
-        }
-        catch (Exception)
-        {
-            // If introspection fails, the image still succeeds but without manifest data
-            image.BuildStatus = ImageBuildStatus.Succeeded;
-            image.BuildCompletedAt = DateTime.UtcNow;
-            image.Changelog = "Build completed (introspection unavailable)";
-            await _db.SaveChangesAsync(ct);
-
-            return Accepted(image);
-        }
+            code = result.ErrorCode ?? "build.failed",
+            message = result.ErrorMessage ?? "build failed",
+            buildLog = Truncate(result.FailureLog, 64 * 1024),
+            buildId = result.BuildId,
+        });
     }
+
+    private static string? Truncate(string? s, int max)
+        => string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max] + "…[truncated]";
+
+    /// <summary>
+    /// IM5 BuildHandle response shape — async-build acknowledgement.
+    /// </summary>
+    public sealed record BuildHandle(
+        Guid BuildId,
+        string Status,
+        string? Digest,
+        IReadOnlyList<BuildHandleReference> References);
+
+    public sealed record BuildHandleReference(
+        string RegistryId,
+        string Ref,
+        DateTimeOffset PushedAt);
 
     [RequirePermission("image:read")]
     [HttpGet("diff")]
@@ -232,4 +271,8 @@ public class ImagesController : ControllerBase
     }
 }
 
-public record BuildRequest(bool Offline = false, bool Force = false, Guid? OrganizationId = null);
+public record BuildRequest(
+    bool Offline = false,
+    bool Force = false,
+    Guid? OrganizationId = null,
+    string? RegistryId = null);

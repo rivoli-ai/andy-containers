@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Andy.Containers.Api.Services;
+using Andy.Containers.Crypto;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Andy.Rbac.Authorization;
@@ -267,10 +269,117 @@ public class TemplatesController : ControllerBase
 
         var template = _parser.Parse(request.Content);
         template.OwnerId = _currentUser.GetUserId();
+
+        // IM8 (#262). Compute the content-addressable spec hash so a
+        // future build against this template can short-circuit when
+        // the same spec has already been built. Files are not yet
+        // wired through this JSON-only endpoint, so the hash is
+        // computed against the canonical-JSON form alone (no file
+        // digests). The multipart variant (per IM5's contract) will
+        // mix file digests in once it lands as part of the
+        // orchestration in Phase 1.
+        template.SpecHash = ComputeSpecHash(template);
+
+        // IM8 (#262). Idempotent re-register: if a template with the
+        // same code AND the same spec hash already exists, return
+        // that existing row instead of creating a duplicate. This is
+        // what makes 'register the same spec twice' a no-op — the
+        // contract documented in the IM5 OpenAPI for
+        // RegisteredTemplate.created.
+        var existing = await _db.Templates
+            .FirstOrDefaultAsync(t => t.Code == template.Code, ct);
+        if (existing is not null)
+        {
+            if (existing.SpecHash == template.SpecHash)
+            {
+                return Ok(new RegisteredTemplate(
+                    TemplateId: existing.Id,
+                    SpecHash: existing.SpecHash ?? string.Empty,
+                    Created: false,
+                    Code: existing.Code,
+                    Name: existing.Name,
+                    Version: existing.Version));
+            }
+
+            // Same code, different spec — reject as a structured
+            // 409 so callers see the conflict explicitly. Mirrors
+            // the 'template.code.in-use' error code in IM5.
+            return Conflict(new
+            {
+                code = "template.code.in-use",
+                message = $"template '{existing.Code}' is already registered with a different specHash. " +
+                          "Bump the template version or update the existing template via PUT /templates/{id}/definition.",
+                field = "code",
+            });
+        }
+
         _db.Templates.Add(template);
         await _db.SaveChangesAsync(ct);
-        return CreatedAtAction(nameof(Get), new { id = template.Id }, template);
+        return CreatedAtAction(
+            nameof(Get),
+            new { id = template.Id },
+            new RegisteredTemplate(
+                TemplateId: template.Id,
+                SpecHash: template.SpecHash ?? string.Empty,
+                Created: true,
+                Code: template.Code,
+                Name: template.Name,
+                Version: template.Version));
     }
+
+    /// <summary>
+    /// Compute the IM3 content-addressable spec hash for a parsed
+    /// template. Aligns with the formula in the architecture memo:
+    /// <c>sha256(canonicalJson(parsedSpec) || sortedFileDigests)</c>.
+    /// In the JSON-only register endpoint there are no uploaded
+    /// files, so the file-digest map is empty.
+    /// </summary>
+    private static string ComputeSpecHash(ContainerTemplate template)
+    {
+        // Build a stable JSON projection of the template fields that
+        // matter for the build outcome. Canonical-JSON normalisation
+        // handles key ordering and whitespace; the projection just
+        // needs to be deterministic and complete.
+        var projection = new
+        {
+            code = template.Code,
+            version = template.Version,
+            base_image = template.BaseImage,
+            extends = template.Extends,
+            packages = SafeDeserialize(template.Packages),
+            files = SafeDeserialize(template.Files),
+            install = SafeDeserialize(template.Install),
+            entrypoint = template.EntryPoint,
+            markers = SafeDeserialize(template.Markers),
+            // Toolchains (the existing dependency model) is part of
+            // the template too; include it so changes to dependencies
+            // bust the cache the same way changes to imperative
+            // fields do.
+            toolchains = SafeDeserialize(template.Toolchains),
+        };
+        var json = JsonSerializer.Serialize(projection);
+        var canonical = CanonicalJson.Serialize(json);
+        return CanonicalJson.ComputeSpecHash(
+            canonical,
+            new Dictionary<string, string>());
+    }
+
+    private static object? SafeDeserialize(string? json)
+        => string.IsNullOrWhiteSpace(json)
+            ? null
+            : JsonSerializer.Deserialize<JsonElement>(json);
+
+    /// <summary>
+    /// Response shape for <c>POST /api/templates/from-yaml</c>
+    /// matching the IM5 OpenAPI contract.
+    /// </summary>
+    public sealed record RegisteredTemplate(
+        Guid TemplateId,
+        string SpecHash,
+        bool Created,
+        string Code,
+        string Name,
+        string Version);
 
     [RequirePermission("template:write")]
     [HttpPut("{id:guid}/definition")]
