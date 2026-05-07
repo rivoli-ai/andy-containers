@@ -95,6 +95,11 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
                 e.Property(t => t.GitRepositories).HasColumnType(jsonColumnType);
                 e.Property(t => t.CodeAssistant).HasColumnType(jsonColumnType);
                 e.Property(t => t.Metadata).HasColumnType(jsonColumnType);
+                // IM4 (#253). M1.9 imperative-style fields.
+                e.Property(t => t.Packages).HasColumnType(jsonColumnType);
+                e.Property(t => t.Files).HasColumnType(jsonColumnType);
+                e.Property(t => t.Install).HasColumnType(jsonColumnType);
+                e.Property(t => t.Markers).HasColumnType(jsonColumnType);
             }
             e.HasOne(t => t.ParentTemplate).WithMany().HasForeignKey(t => t.ParentTemplateId);
         });
