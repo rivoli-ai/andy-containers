@@ -176,12 +176,10 @@ public class ImagesController : ControllerBase
         var state = _executionRegistry.TryGet(buildId);
         if (state is null)
         {
-            return Task.FromResult<IActionResult>(NotFound(new
-            {
-                code = "build.not_found",
-                message = $"no build with id {buildId} — either it never started or its registry record was evicted.",
-                buildId,
-            }));
+            return Task.FromResult<IActionResult>(
+                ImageManagementProblemDetailsFactory.NotFound(
+                    ImageManagementErrors.BuildNotFound,
+                    $"no build with id {buildId} — either it never started or its registry record was evicted."));
         }
 
         return Task.FromResult<IActionResult>(Ok(new
@@ -263,32 +261,18 @@ public class ImagesController : ControllerBase
         await Response.Body.FlushAsync(ct);
     }
 
+    /// <summary>
+    /// IM10 (#264). Map a synchronous-failure
+    /// <see cref="BuildResult"/> to the IM5
+    /// <c>ImageManagementError</c> response shape via the shared
+    /// <see cref="ImageManagementProblemDetailsFactory"/>. Replaces
+    /// the inline mapping that was carried in IM8.
+    /// </summary>
     private IActionResult BuildFailureResponse(BuildResult result)
-    {
-        // IM10 will move this mapping into a shared
-        // ImageManagementProblemDetailsFactory; for IM8 we keep the
-        // mapping inline so the response shape is at least
-        // consistent with the OpenAPI ImageManagementError schema.
-        var status = result.ErrorCode switch
-        {
-            var c when c?.StartsWith("build.engine") == true => StatusCodes.Status503ServiceUnavailable,
-            var c when c?.StartsWith("registry.quota") == true => StatusCodes.Status507InsufficientStorage,
-            var c when c?.StartsWith("template.not_found") == true => StatusCodes.Status404NotFound,
-            var c when c?.StartsWith("registry.not_configured") == true => StatusCodes.Status503ServiceUnavailable,
-            _ => StatusCodes.Status422UnprocessableEntity,
-        };
-
-        return StatusCode(status, new
-        {
-            code = result.ErrorCode ?? "build.failed",
-            message = result.ErrorMessage ?? "build failed",
-            buildLog = Truncate(result.FailureLog, 64 * 1024),
-            buildId = result.BuildId,
-        });
-    }
-
-    private static string? Truncate(string? s, int max)
-        => string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max] + "…[truncated]";
+        => ImageManagementProblemDetailsFactory.FromOrchestratorErrorCode(
+            result.ErrorCode,
+            result.ErrorMessage,
+            result.FailureLog);
 
     /// <summary>
     /// IM5 BuildHandle response shape — async-build acknowledgement.

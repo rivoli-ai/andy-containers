@@ -327,7 +327,11 @@ public class ImagesControllerTests : IDisposable
 
         var result = await _controller.GetBuildStatus(Guid.NewGuid(), CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundObjectResult>();
+        // IM10 (#264). 404 path now goes through the shared factory
+        // which returns ObjectResult with status 404 + the typed
+        // ImageManagementErrorBody body.
+        var notFound = result.Should().BeOfType<ObjectResult>().Subject;
+        notFound.StatusCode.Should().Be(StatusCodes.Status404NotFound);
     }
 
     [Fact]

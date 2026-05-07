@@ -112,12 +112,14 @@ The endpoints below ship the digest-anchored image identity model introduced in 
 
 | Status | Code prefix | Meaning |
 |---|---|---|
-| 400 | `template.spec.invalid` | YAML schema validation failed. |
+| 400 | `template.spec.invalid` | YAML schema validation failed; `field` carries the path. |
+| 400 | `template.code.invalid` | Bad template `code` regex. |
 | 401 | (auth) | Missing or expired JWT. |
 | 403 | (rbac) | Caller lacks `template:write` / `image:admin`. |
 | 404 | (resource) | Unknown templateId / digest / buildId / referenceId. |
 | 409 | `template.code.in-use` | Template `code` is already registered with a different `specHash`. |
-| 422 | `template.extends.cycle`, `build.failed` | Cycle in `extends:`, or build engine reported a non-zero exit (logs in `buildLog`). |
+| 404 | `template.not_found` / `image.not_found` / `build.not_found` / `reference.not_found` | Resource doesn't exist. |
+| 422 | `template.extends.cycle` / `template.extends.missing_parent` / `build.failed` | Cycle in `extends:`, missing parent, or build engine reported a non-zero exit (logs in `buildLog`, truncated to 64 KiB; full log via `GET /api/images/build/{buildId}`). |
 | 503 | `build.engine.unavailable` | No build engine on the host (no Docker daemon, no Apple Containers CLI). |
 | 507 | `registry.quota.exceeded` | Registry storage quota exhausted. |
 

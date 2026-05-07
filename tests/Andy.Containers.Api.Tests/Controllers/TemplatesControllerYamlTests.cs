@@ -5,6 +5,7 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using Xunit;
@@ -180,12 +181,15 @@ public class TemplatesControllerYamlTests : IDisposable
 
         var second = await _controller.CreateFromYaml(new YamlContentRequest(updatedYaml), CancellationToken.None);
 
-        var conflict = second.Should().BeOfType<ConflictObjectResult>().Subject;
-        conflict.Value.Should().BeEquivalentTo(new
-        {
-            code = "template.code.in-use",
-            field = "code",
-        }, options => options.ExcludingMissingMembers());
+        // IM10 (#264). The 409 path now flows through the shared
+        // ImageManagementProblemDetailsFactory which emits an
+        // ObjectResult with a typed body — assert by status code +
+        // body type rather than ConflictObjectResult.
+        var conflict = second.Should().BeOfType<ObjectResult>().Subject;
+        conflict.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+        var body = conflict.Value.Should().BeOfType<Andy.Containers.Api.Services.ImageManagementErrorBody>().Subject;
+        body.Code.Should().Be("template.code.in-use");
+        body.Field.Should().Be("code");
     }
 
     [Fact]
