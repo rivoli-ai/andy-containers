@@ -3,7 +3,9 @@ using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Containers.Storage;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using Xunit;
@@ -17,6 +19,7 @@ public class ImagesControllerTests : IDisposable
     private readonly Mock<IImageDiffService> _mockDiffService;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly Mock<IOrganizationMembershipService> _mockOrgMembership;
+    private readonly Mock<IImageBuildOrchestrator> _mockOrchestrator;
     private readonly ImagesController _controller;
 
     public ImagesControllerTests()
@@ -31,7 +34,28 @@ public class ImagesControllerTests : IDisposable
         _mockOrgMembership = new Mock<IOrganizationMembershipService>();
         _mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        _controller = new ImagesController(_db, _mockManifestService.Object, _mockDiffService.Object, _mockCurrentUser.Object, _mockOrgMembership.Object);
+        _mockOrchestrator = new Mock<IImageBuildOrchestrator>();
+        // IM8 (#262). Default: orchestrator returns a Succeeded result
+        // for any build call. Tests that need different outcomes
+        // (cache hit, failure) override this on a per-test basis.
+        _mockOrchestrator.Setup(o => o.BuildAsync(
+                It.IsAny<ImageBuildRequest>(),
+                It.IsAny<IProgress<Andy.Containers.Abstractions.Images.BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BuildResult
+            {
+                BuildId = Guid.NewGuid(),
+                Status = BuildResultStatus.Succeeded,
+                Digest = "sha256:test",
+                References = [new BuildResultReference("local-zot", "test", "sha256-test", DateTimeOffset.UtcNow)],
+            });
+        _controller = new ImagesController(
+            _db,
+            _mockManifestService.Object,
+            _mockDiffService.Object,
+            _mockCurrentUser.Object,
+            _mockOrgMembership.Object,
+            _mockOrchestrator.Object);
     }
 
     public void Dispose() => _db.Dispose();
@@ -148,76 +172,149 @@ public class ImagesControllerTests : IDisposable
         result.Should().BeOfType<NotFoundResult>();
     }
 
+    // IM8 (#262). Replaced the four legacy-ContainerImage build tests
+    // with the new orchestrator-delegated assertions. Old tests asserted
+    // BuildNumber / BuildStatus / BuiltOffline on a ContainerImage row;
+    // the new contract returns BuildHandle instead. ContainerImage
+    // creation is no longer the responsibility of the build endpoint —
+    // BuildArtifactEntity is the new digest-anchored row, and the
+    // ImageBuildOrchestrator owns persistence.
+
     [Fact]
-    public async Task Build_WithIntrospection_ShouldReturnAccepted()
+    public async Task Build_OrchestratorReturnsSucceeded_ReturnsAcceptedWithBuildHandle()
     {
         var template = SeedTemplate();
-        var manifest = CreateTestManifest();
-
-        _mockManifestService
-            .Setup(s => s.GenerateManifestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Guid imageId, CancellationToken _) =>
+        var buildId = Guid.NewGuid();
+        _mockOrchestrator
+            .Setup(o => o.BuildAsync(
+                It.Is<ImageBuildRequest>(r => r.TemplateId == template.Id),
+                It.IsAny<IProgress<Andy.Containers.Abstractions.Images.BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BuildResult
             {
-                var img = _db.Images.Find(imageId)!;
-                return (manifest, img);
+                BuildId = buildId,
+                Status = BuildResultStatus.Succeeded,
+                Digest = "sha256:abc",
+                References = [
+                    new BuildResultReference("local-zot", template.Code, "sha256-abc", DateTimeOffset.UtcNow),
+                ],
             });
 
         var result = await _controller.Build(template.Id, new BuildRequest(Offline: false), CancellationToken.None);
 
         var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
-        var image = accepted.Value.Should().BeOfType<ContainerImage>().Subject;
-        image.BuildStatus.Should().Be(ImageBuildStatus.Succeeded);
-        image.Changelog.Should().Be("Build with introspection");
+        accepted.Value.Should().NotBeNull();
+        var handleType = accepted.Value!.GetType();
+        var status = (string)handleType.GetProperty("Status")!.GetValue(accepted.Value)!;
+        var returnedBuildId = (Guid)handleType.GetProperty("BuildId")!.GetValue(accepted.Value)!;
+        var digest = (string?)handleType.GetProperty("Digest")!.GetValue(accepted.Value);
+
+        status.Should().Be("succeeded");
+        returnedBuildId.Should().Be(buildId);
+        digest.Should().Be("sha256:abc");
     }
 
     [Fact]
-    public async Task Build_IntrospectionFails_ShouldStillReturnAccepted()
+    public async Task Build_OrchestratorReturnsCached_ReturnsOk()
     {
         var template = SeedTemplate();
+        _mockOrchestrator
+            .Setup(o => o.BuildAsync(
+                It.IsAny<ImageBuildRequest>(),
+                It.IsAny<IProgress<Andy.Containers.Abstractions.Images.BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BuildResult
+            {
+                BuildId = Guid.NewGuid(),
+                Status = BuildResultStatus.Cached,
+                Digest = "sha256:cached",
+                References = [
+                    new BuildResultReference("local-zot", template.Code, "sha256-cached", DateTimeOffset.UtcNow),
+                ],
+            });
 
-        _mockManifestService
-            .Setup(s => s.GenerateManifestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Introspection failed"));
+        var result = await _controller.Build(template.Id, new BuildRequest(), CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var status = (string)ok.Value!.GetType().GetProperty("Status")!.GetValue(ok.Value)!;
+        status.Should().Be("cached",
+            "the IM5 contract: a cache hit returns 200 OK with status='cached' immediately, no rebuild.");
+    }
+
+    [Fact]
+    public async Task Build_OrchestratorReturnsFailedWithEngineUnavailable_Returns503()
+    {
+        var template = SeedTemplate();
+        _mockOrchestrator
+            .Setup(o => o.BuildAsync(
+                It.IsAny<ImageBuildRequest>(),
+                It.IsAny<IProgress<Andy.Containers.Abstractions.Images.BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BuildResult
+            {
+                BuildId = Guid.NewGuid(),
+                Status = BuildResultStatus.Failed,
+                ErrorCode = "build.engine-detect",
+                ErrorMessage = "no container build engine is available",
+            });
 
         var result = await _controller.Build(template.Id, null, CancellationToken.None);
 
-        var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
-        var image = accepted.Value.Should().BeOfType<ContainerImage>().Subject;
-        image.BuildStatus.Should().Be(ImageBuildStatus.Succeeded);
-        image.Changelog.Should().Contain("introspection unavailable");
+        var statusResult = result.Should().BeOfType<ObjectResult>().Subject;
+        statusResult.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
     }
 
     [Fact]
-    public async Task Build_ShouldIncrementBuildNumber()
+    public async Task Build_OrchestratorReturnsFailedWithBuildError_Returns422()
     {
         var template = SeedTemplate();
-        SeedImage(template.Id, 1);
-
-        _mockManifestService
-            .Setup(s => s.GenerateManifestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("skip"));
+        _mockOrchestrator
+            .Setup(o => o.BuildAsync(
+                It.IsAny<ImageBuildRequest>(),
+                It.IsAny<IProgress<Andy.Containers.Abstractions.Images.BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BuildResult
+            {
+                BuildId = Guid.NewGuid(),
+                Status = BuildResultStatus.Failed,
+                ErrorCode = "build.failed",
+                ErrorMessage = "Step 5/12 failed",
+                FailureLog = "stderr from the build engine here",
+            });
 
         var result = await _controller.Build(template.Id, null, CancellationToken.None);
 
-        var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
-        var image = accepted.Value.Should().BeOfType<ContainerImage>().Subject;
-        image.BuildNumber.Should().Be(2);
+        var statusResult = result.Should().BeOfType<ObjectResult>().Subject;
+        statusResult.StatusCode.Should().Be(StatusCodes.Status422UnprocessableEntity);
     }
 
     [Fact]
-    public async Task Build_OfflineFlag_ShouldBePreserved()
+    public async Task Build_ForceFlag_FlowsThroughToOrchestrator()
     {
         var template = SeedTemplate();
 
-        _mockManifestService
-            .Setup(s => s.GenerateManifestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("skip"));
+        await _controller.Build(template.Id, new BuildRequest(Force: true), CancellationToken.None);
 
-        var result = await _controller.Build(template.Id, new BuildRequest(Offline: true), CancellationToken.None);
+        _mockOrchestrator.Verify(o => o.BuildAsync(
+            It.Is<ImageBuildRequest>(r => r.Force == true),
+            It.IsAny<IProgress<Andy.Containers.Abstractions.Images.BuildProgressEvent>>(),
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "the controller's force flag must reach the orchestrator unchanged so the cache short-circuit is bypassed.");
+    }
 
-        var accepted = result.Should().BeOfType<AcceptedResult>().Subject;
-        var image = accepted.Value.Should().BeOfType<ContainerImage>().Subject;
-        image.BuiltOffline.Should().BeTrue();
+    [Fact]
+    public async Task Build_RegistryIdOverride_FlowsThroughToOrchestrator()
+    {
+        var template = SeedTemplate();
+
+        await _controller.Build(template.Id, new BuildRequest(RegistryId: "team-zot"), CancellationToken.None);
+
+        _mockOrchestrator.Verify(o => o.BuildAsync(
+            It.Is<ImageBuildRequest>(r => r.RegistryId == "team-zot"),
+            It.IsAny<IProgress<Andy.Containers.Abstractions.Images.BuildProgressEvent>>(),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // --- Diff ---

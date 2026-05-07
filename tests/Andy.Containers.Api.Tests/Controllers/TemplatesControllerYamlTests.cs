@@ -95,9 +95,97 @@ public class TemplatesControllerYamlTests : IDisposable
 
         var created = result.Should().BeOfType<CreatedAtActionResult>().Subject;
         created.StatusCode.Should().Be(201);
-        var template = created.Value.Should().BeOfType<ContainerTemplate>().Subject;
-        template.Code.Should().Be("test-template");
-        template.OwnerId.Should().Be("test-user");
+
+        // IM8 (#262). Response shape changed from ContainerTemplate
+        // to RegisteredTemplate { TemplateId, SpecHash, Created,
+        // Code, Name, Version }. The persisted ContainerTemplate
+        // still carries OwnerId; the response carries the
+        // content-addressable identity callers need to drive a
+        // build.
+        var registered = created.Value.Should().BeOfType<TemplatesController.RegisteredTemplate>().Subject;
+        registered.Code.Should().Be("test-template");
+        registered.Created.Should().BeTrue();
+        registered.SpecHash.Should().StartWith("sha256:",
+            "the registration response carries the content-addressable hash so callers can match it against future builds.");
+
+        // The persisted row still gets ownership correctly.
+        var persisted = _db.Templates.Single(t => t.Code == "test-template");
+        persisted.OwnerId.Should().Be("test-user");
+        persisted.SpecHash.Should().Be(registered.SpecHash);
+    }
+
+    [Fact]
+    public async Task CreateFromYaml_SameSpecTwice_IsIdempotent()
+    {
+        // IM8 (#262). Re-registering an identical spec returns the
+        // existing template id with Created=false. The contract is
+        // documented in the IM5 OpenAPI for RegisteredTemplate.
+        var validResult = new YamlValidationResult { IsValid = true };
+        _mockParser.Setup(p => p.Validate(ValidYaml)).Returns(validResult);
+        _mockParser.Setup(p => p.Parse(ValidYaml)).Returns(() => new ContainerTemplate
+        {
+            Code = "test-template",
+            Name = "Test Template",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+        });
+
+        var first = await _controller.CreateFromYaml(new YamlContentRequest(ValidYaml), CancellationToken.None);
+        var firstCreated = first.Should().BeOfType<CreatedAtActionResult>().Subject;
+        var firstRegistered = firstCreated.Value.Should().BeOfType<TemplatesController.RegisteredTemplate>().Subject;
+
+        var second = await _controller.CreateFromYaml(new YamlContentRequest(ValidYaml), CancellationToken.None);
+        var secondOk = second.Should().BeOfType<OkObjectResult>().Subject;
+        var secondRegistered = secondOk.Value.Should().BeOfType<TemplatesController.RegisteredTemplate>().Subject;
+
+        secondRegistered.TemplateId.Should().Be(firstRegistered.TemplateId,
+            "the same spec hashed to the same value must return the existing template id, not create a new row.");
+        secondRegistered.SpecHash.Should().Be(firstRegistered.SpecHash);
+        secondRegistered.Created.Should().BeFalse();
+
+        _db.Templates.Count(t => t.Code == "test-template").Should().Be(1,
+            "idempotent registration must not duplicate rows.");
+    }
+
+    [Fact]
+    public async Task CreateFromYaml_SameCodeDifferentSpec_ReturnsConflict()
+    {
+        // IM8 (#262). Re-registering with the same code but a
+        // different spec is a structured 409 with code
+        // template.code.in-use, matching the IM5 contract.
+        var validResult = new YamlValidationResult { IsValid = true };
+        _mockParser.Setup(p => p.Validate(It.IsAny<string>())).Returns(validResult);
+
+        // First register: a template with package list [curl].
+        _mockParser.Setup(p => p.Parse(ValidYaml)).Returns(() => new ContainerTemplate
+        {
+            Code = "test-template",
+            Name = "Test Template",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            Packages = """["curl"]""",
+        });
+        await _controller.CreateFromYaml(new YamlContentRequest(ValidYaml), CancellationToken.None);
+
+        // Second register with the same code but a different spec.
+        const string updatedYaml = "version: bumped";
+        _mockParser.Setup(p => p.Parse(updatedYaml)).Returns(() => new ContainerTemplate
+        {
+            Code = "test-template",
+            Name = "Test Template",
+            Version = "1.0.0",
+            BaseImage = "ubuntu:24.04",
+            Packages = """["curl", "git"]""",
+        });
+
+        var second = await _controller.CreateFromYaml(new YamlContentRequest(updatedYaml), CancellationToken.None);
+
+        var conflict = second.Should().BeOfType<ConflictObjectResult>().Subject;
+        conflict.Value.Should().BeEquivalentTo(new
+        {
+            code = "template.code.in-use",
+            field = "code",
+        }, options => options.ExcludingMissingMembers());
     }
 
     [Fact]
