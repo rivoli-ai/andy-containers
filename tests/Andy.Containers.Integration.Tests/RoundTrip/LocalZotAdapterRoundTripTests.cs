@@ -109,6 +109,107 @@ public class LocalZotAdapterRoundTripTests : IClassFixture<ZotContainerFixture>
     }
 
     /// <summary>
+    /// The actual production push path: build a real image, push it
+    /// via <see cref="DockerCliUploader"/> (shells out to
+    /// <c>docker tag</c> + <c>docker push</c>), let the adapter read
+    /// the post-push digest via HEAD. This is what M1.9 builds will
+    /// do; if any step regresses, builds fail with "manifest invalid"
+    /// — the bug rivoli-ai/conductor#1028 fixed by enabling
+    /// <c>http.compat: ["docker2s2"]</c>. The
+    /// <see cref="ZotContainerFixture"/> mirrors that config so the
+    /// test exercises the same path that production runs.
+    /// </summary>
+    [Fact]
+    public async Task PushPath_DockerCliUploaderToRealZot()
+    {
+        if (!_zot.IsAvailable)
+        {
+            return;
+        }
+
+        var contextDir = Directory.CreateTempSubdirectory("im11-pushpath-").FullName;
+        var localTag = $"andy-containers-im11-push-{Guid.NewGuid():N}";
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(contextDir, "Dockerfile"),
+                "FROM hello-world\n");
+
+            // --provenance / --sbom off — the BuildKit attached
+            // manifests confuse OCI-strict registries even when
+            // compat is enabled. Production uses these flags too.
+            await RunDockerCliAsync([
+                "buildx", "build",
+                "--provenance=false", "--sbom=false",
+                "--output=type=docker",
+                "-t", localTag,
+                contextDir,
+            ]);
+
+            using var http = new HttpClient { BaseAddress = new Uri(_zot.BaseUrl) };
+            var adapter = new LocalZotAdapter(
+                http,
+                new DockerCliUploader(NullLogger<DockerCliUploader>.Instance),
+                NullLogger<LocalZotAdapter>.Instance,
+                registryId: "test-zot");
+
+            var artifact = new BuildArtifact(
+                Digest: string.Empty,
+                MediaType: "application/vnd.docker.distribution.manifest.v2+json",
+                SizeBytes: 0,
+                SpecHash: "sha256:test-spec-pushpath",
+                LocalReference: localTag);
+
+            var reference = await adapter.PushAsync(
+                artifact,
+                repoPath: "im11-push",
+                tag: "v1",
+                CancellationToken.None);
+
+            reference.Digest.Should().StartWith("sha256:",
+                "the post-push HEAD must yield Docker-Content-Digest from zot.");
+
+            (await adapter.ExistsAsync("im11-push", reference.Digest, CancellationToken.None))
+                .Should().BeTrue("the manifest just pushed must be reachable by digest.");
+
+            var refs = await adapter.ListReferencesAsync("im11-push", CancellationToken.None);
+            refs.Should().ContainSingle()
+                .Which.Digest.Should().Be(reference.Digest);
+
+            await RunDockerCliAsync(["rmi", "-f", localTag]);
+        }
+        finally
+        {
+            try { Directory.Delete(contextDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    private static async Task RunDockerCliAsync(string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "docker",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var a in args)
+        {
+            psi.ArgumentList.Add(a);
+        }
+        using var proc = new System.Diagnostics.Process { StartInfo = psi };
+        proc.Start();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        await proc.StandardOutput.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        if (proc.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"docker {string.Join(' ', args)} exited {proc.ExitCode}: {await stderrTask}");
+        }
+    }
+
+    /// <summary>
     /// Push a minimal valid OCI image manifest to zot via the
     /// OCI Distribution v1.1 protocol. Returns the digests so the
     /// caller can assert against them.
