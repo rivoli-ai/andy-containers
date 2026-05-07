@@ -22,6 +22,20 @@ public interface IImageBuildOrchestrator
         ImageBuildRequest request,
         IProgress<BuildProgressEvent> progress,
         CancellationToken ct);
+
+    /// <summary>
+    /// Cache-only fast path. Returns a
+    /// <see cref="BuildResultStatus.Cached"/> result when an
+    /// existing artifact + reference satisfies the request; null
+    /// otherwise. Never invokes the build backend.
+    /// </summary>
+    /// <remarks>
+    /// IM9 (rivoli-ai/andy-containers#263). The async executor uses
+    /// this to decide between the synchronous (cached) and
+    /// background (build) paths without duplicating the cache
+    /// lookup logic.
+    /// </remarks>
+    Task<BuildResult?> TryCacheHitAsync(ImageBuildRequest request, CancellationToken ct);
 }
 
 /// <summary>

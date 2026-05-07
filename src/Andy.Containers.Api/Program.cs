@@ -151,6 +151,15 @@ try
     builder.Services.AddScoped<Andy.Containers.Storage.IImageBuildOrchestrator, Andy.Containers.Infrastructure.Build.ImageBuildOrchestrator>();
     builder.Services.AddScoped<Andy.Containers.Storage.IBuildArtifactStore, Andy.Containers.Infrastructure.Data.BuildArtifactStore>();
 
+    // IM9 (rivoli-ai/andy-containers#263). Build event bus +
+    // execution registry are singletons (process-local in-memory
+    // state); the async executor is a singleton too because it
+    // captures IServiceScopeFactory to spawn its own scope per
+    // background build.
+    builder.Services.AddSingleton<Andy.Containers.Storage.IBuildEventBus, Andy.Containers.Infrastructure.Build.Events.InMemoryBuildEventBus>();
+    builder.Services.AddSingleton<Andy.Containers.Storage.IBuildExecutionRegistry, Andy.Containers.Infrastructure.Build.Events.InMemoryBuildExecutionRegistry>();
+    builder.Services.AddSingleton<Andy.Containers.Storage.IAsyncBuildExecutor, Andy.Containers.Infrastructure.Build.Events.AsyncBuildExecutor>();
+
     // Current user service for RBAC
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
