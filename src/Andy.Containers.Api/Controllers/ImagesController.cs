@@ -247,7 +247,21 @@ public class ImagesController : ControllerBase
             BuildCompletedEvent => "complete",
             _ => "unknown",
         };
-        var json = System.Text.Json.JsonSerializer.Serialize<object>(envelope.Event);
+        // Surfaced by the SSE wire-format integration test (#272 / sse-wire-format-test):
+        //   1. JsonSerializer.Serialize<object>(value) uses the
+        //      declared type `object` and produces "{}" for any
+        //      derived event — dropping the payload entirely.
+        //   2. Default System.Text.Json options use PascalCase
+        //      property names and numeric-valued enums; the IM5
+        //      OpenAPI specifies camelCase + string enums for
+        //      BuildEvent.outcome.
+        // Both fixed by using a static JsonSerializerOptions with
+        // camelCase + JsonStringEnumConverter and the runtime type
+        // for serialisation.
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            envelope.Event,
+            envelope.Event.GetType(),
+            SseJsonOptions);
 
         // Manually compose the SSE frame so we control the trailing
         // \n\n. WriteAsync flushes the underlying response stream
@@ -273,6 +287,17 @@ public class ImagesController : ControllerBase
             result.ErrorCode,
             result.ErrorMessage,
             result.FailureLog);
+
+    /// <summary>
+    /// JSON serializer options for SSE event payloads. camelCase +
+    /// string enums per the IM5 OpenAPI <c>BuildEvent</c> schema.
+    /// Cached as a static so each event publish doesn't re-allocate.
+    /// </summary>
+    private static readonly System.Text.Json.JsonSerializerOptions SseJsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
 
     /// <summary>
     /// IM5 BuildHandle response shape — async-build acknowledgement.
