@@ -564,10 +564,88 @@ paths:
           description: No run with that id
 
   # --- Images ---
+  # --- IM5 (#254) — Template registration via YAML --------------
+  # Multipart variant lands the spec + any uploaded files in one
+  # request and is idempotent on the content-addressable spec hash.
+  # JSON variant accepts a string-bodied YAML for callers that don't
+  # need file uploads (admin UIs, the CLI's `templates import`).
+  /api/templates/from-yaml:
+    post:
+      tags: [Templates]
+      summary: Register a template from a YAML spec
+      description: |
+        Idempotent on `specHash` — submitting the same spec twice
+        returns the existing template id with `created: false`. The
+        multipart variant uploads any files referenced by the spec's
+        `files:` entries; the `source` field of each entry must match
+        the multipart part name.
+
+        On `409 Conflict` the body carries an
+        [`ImageManagementError`](#components/schemas/ImageManagementError)
+        with `code: "template.code.in-use"` when the template `code` is
+        already registered against a different `specHash`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [spec]
+              properties:
+                spec:
+                  type: string
+                  format: binary
+                  description: YAML or JSON spec body.
+                files:
+                  type: array
+                  description: Files referenced by the spec's `files:` entries; the multipart part name must match the spec entry's `source`.
+                  items:
+                    type: string
+                    format: binary
+            encoding:
+              spec: { contentType: 'application/yaml, application/json' }
+              files: { contentType: 'application/octet-stream' }
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: YAML spec text.
+      responses:
+        '200':
+          description: Template registered (or returned an existing match).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisteredTemplate' }
+        '400':
+          description: Spec validation failure.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+        '409':
+          description: Template code already registered with a different specHash.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+        '422':
+          description: Spec is structurally valid but contains a cycle in `extends:`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+
+  # --- IM5 (#254) — Legacy template-build-centric image endpoints
+  # The endpoints under /api/images/{templateId}/* are the original
+  # template-build-centric API. They remain for back-compat; new
+  # callers should use /api/images/by-digest/* and the SSE / list /
+  # untag endpoints below, which expose the digest-anchored
+  # BuildArtifact identity introduced in IM3 (#252).
+
   /api/images/{templateId}:
     get:
       tags: [Images]
-      summary: List built images for a template
+      summary: List built images for a template (legacy)
       parameters:
         - name: templateId
           in: path
@@ -585,7 +663,17 @@ paths:
   /api/images/{templateId}/build:
     post:
       tags: [Images]
-      summary: Trigger image build for a template
+      summary: Trigger an image build for a template
+      description: |
+        Async — returns a `BuildHandle` immediately. Poll the build
+        status via `GET /api/images/build/{buildId}` or stream
+        progress events via
+        `GET /api/images/build/{buildId}/events` (SSE).
+
+        If the template's `specHash` already resolves to a digest in
+        the targeted registry, the response status is `cached` and
+        `digest` / `references` are populated immediately — no actual
+        build runs.
       parameters:
         - name: templateId
           in: path
@@ -597,19 +685,45 @@ paths:
             schema:
               type: object
               properties:
+                registryId:
+                  type: string
+                  description: Override the primary push registry. Defaults to `RegistryConfiguration.PrimaryRegistryId`.
                 offline: { type: boolean, default: false }
-                force: { type: boolean, default: false }
+                force:
+                  type: boolean
+                  default: false
+                  description: Bypass the content-addressable cache hit (`cached` short-circuit) and rebuild from scratch.
       responses:
         '202':
-          description: Build started
+          description: Build queued.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ContainerImage' }
+              schema: { $ref: '#/components/schemas/BuildHandle' }
+        '200':
+          description: Cache hit — existing artifact returned without rebuilding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildHandle' }
+        '422':
+          description: Spec validation failure or build failure with captured logs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+        '503':
+          description: No build engine available on the host (no Docker daemon, no Apple Containers CLI).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+        '507':
+          description: Registry storage quota exceeded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
 
   /api/images/{templateId}/latest:
     get:
       tags: [Images]
-      summary: Get the latest built image for a template
+      summary: Get the latest built image for a template (legacy)
       parameters:
         - name: templateId
           in: path
@@ -625,7 +739,7 @@ paths:
   /api/images/diff:
     get:
       tags: [Images]
-      summary: Diff two images
+      summary: Diff two images (legacy)
       parameters:
         - name: fromImageId
           in: query
@@ -641,6 +755,141 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ImageDiff' }
+
+  # --- IM5 (#254) — Digest-anchored image management ------------
+  # New endpoints introduced by Epic IM. Contract is registry-agnostic
+  # — the `references` array on each artifact records every place the
+  # bytes have been pushed.
+
+  /api/images:
+    get:
+      tags: [Images]
+      summary: List build artifacts (digest-anchored)
+      description: |
+        Lists `BuildArtifact` rows. Each entry carries the references
+        array showing every registry the digest has been pushed to.
+      parameters:
+        - name: templateId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: registryId
+          in: query
+          schema: { type: string }
+        - name: marker
+          in: query
+          description: Filter by markers — `marker=baked-assistants:claude-code` matches artifacts whose `markers["baked-assistants"]` includes `claude-code`.
+          schema: { type: string }
+        - name: skip
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: take
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paged list of build artifacts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildArtifactList' }
+
+  /api/images/by-digest/{digest}:
+    get:
+      tags: [Images]
+      summary: Get a build artifact by digest
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          description: OCI manifest digest, e.g. `sha256:abc123...`.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Build artifact.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildArtifact' }
+        '404':
+          description: No artifact found for this digest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+
+  /api/images/by-digest/{digest}/references/{referenceId}:
+    delete:
+      tags: [Images]
+      summary: Untag a registry reference
+      description: |
+        Removes one `(registryId, repoPath, tag)` reference from the
+        artifact. Does not delete the underlying artifact bytes —
+        registry-side garbage collection reclaims those when no
+        reference points at the digest. Admin-only.
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          schema: { type: string }
+        - name: referenceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Reference removed (idempotent — already-gone is not an error).
+        '403':
+          description: Caller lacks admin permission.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+
+  /api/images/build/{buildId}:
+    get:
+      tags: [Images]
+      summary: Build status snapshot
+      parameters:
+        - name: buildId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current state of the build.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildStatus' }
+        '404':
+          description: Unknown buildId.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+
+  /api/images/build/{buildId}/events:
+    get:
+      tags: [Images]
+      summary: Build progress event stream (SSE)
+      description: |
+        Server-Sent Events stream of build progress. The stream is
+        backed by `BuildEvent` payloads serialised one-per-event in
+        `data:` lines. The stream closes when the build reaches a
+        terminal state — clients may also drop the connection at
+        any time and reconnect via `Last-Event-ID`. For builds that
+        have already completed when the request arrives, the server
+        replays the `complete` event and closes immediately.
+      parameters:
+        - name: buildId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: text/event-stream of `BuildEvent` payloads.
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/BuildEvent' }
+        '404':
+          description: Unknown buildId.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
 
   # --- Providers ---
   /api/providers:
@@ -940,6 +1189,192 @@ components:
               newVersion: { type: string }
               changeType: { type: string, enum: [Added, Removed, VersionChanged, Unchanged] }
         baseImageChanged: { type: string }
+
+    # --- IM5 (#254) — Image Management API schemas -----------------
+    # Digest-anchored image identity introduced in Epic IM. The
+    # canonical key is the OCI manifest digest; references map a
+    # registry coordinate (registryId, repoPath, tag) to a digest.
+
+    RegisteredTemplate:
+      type: object
+      description: |
+        Result of registering a template via `POST /api/templates/from-yaml`.
+        Idempotent on `specHash` — re-registering an identical spec
+        returns the existing template id with `created: false`.
+      required: [templateId, specHash, created, code, name, version]
+      properties:
+        templateId: { type: string, format: uuid }
+        specHash:
+          type: string
+          description: Content-addressable hash of the parsed spec + uploaded files. Format `sha256:...`.
+        created:
+          type: boolean
+          description: True when the registration produced a new row; false when the existing row was returned.
+        code: { type: string }
+        name: { type: string }
+        version: { type: string }
+
+    BuildArtifact:
+      type: object
+      description: |
+        A built container image identified by its OCI manifest digest.
+        Same physical bytes produce the same digest in every registry;
+        push events are tracked via the `references` array.
+      required: [digest, mediaType, sizeBytes, specHash, templateId, builtAt, references]
+      properties:
+        digest:
+          type: string
+          description: OCI manifest digest, e.g. `sha256:abc123...`. Globally unique.
+        mediaType:
+          type: string
+          description: OCI media type, typically `application/vnd.oci.image.manifest.v1+json`.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Total uncompressed image size.
+        specHash:
+          type: string
+          description: Idempotency key for the source spec — `sha256:...`.
+        templateId: { type: string, format: uuid }
+        buildBackendId:
+          type: string
+          description: Identifier of the build backend that produced this artifact (`local-docker`, `apple-containers`, `acr-tasks`, ...).
+        builtBy:
+          type: string
+          description: Principal that triggered the build (user id or service identity).
+        builtAt: { type: string, format: date-time }
+        references:
+          type: array
+          items: { $ref: '#/components/schemas/BuildArtifactReference' }
+        markers:
+          type: object
+          additionalProperties: true
+          description: |
+            Free-form metadata about what's baked into the image — for example
+            `{ "baked-assistants": ["claude-code"] }`.
+
+    BuildArtifactReference:
+      type: object
+      description: Pointer from a registry coordinate back to a `BuildArtifact`. Many references can map to one artifact.
+      required: [id, registryId, repoPath, tag, pushedAt, pushedBy]
+      properties:
+        id: { type: string, format: uuid }
+        registryId:
+          type: string
+          description: Identifier of the registry from `RegistryConfigEntry`.
+        repoPath:
+          type: string
+          description: Repo path within the registry (e.g. `conductor-terminal-claude-code`).
+        tag:
+          type: string
+          description: Tag under the repo path (e.g. `sha256-abc12345`).
+        digest:
+          type: string
+          description: OCI digest the tag resolves to at push time. Tags are mutable; the digest is authoritative.
+        pushedAt: { type: string, format: date-time }
+        pushedBy: { type: string }
+
+    BuildHandle:
+      type: object
+      description: |
+        Async build acknowledgement returned by `POST /api/images/{templateId}/build`.
+        When `status` is `cached`, `digest` and `references` are populated immediately
+        — no actual build runs.
+      required: [buildId, status]
+      properties:
+        buildId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled, cached]
+        digest:
+          type: string
+          description: Populated immediately on `cached`; populated on `succeeded` after the build completes.
+        references:
+          type: array
+          items: { $ref: '#/components/schemas/BuildArtifactReference' }
+
+    BuildStatus:
+      type: object
+      description: Snapshot of a build's current state.
+      required: [buildId, status, templateId, startedAt]
+      properties:
+        buildId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled, cached]
+        templateId: { type: string, format: uuid }
+        digest: { type: string }
+        references:
+          type: array
+          items: { $ref: '#/components/schemas/BuildArtifactReference' }
+        buildLog:
+          type: string
+          description: Captured stdout/stderr on `failed` / `succeeded`. Null while running.
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+
+    BuildEvent:
+      type: object
+      description: |
+        One event in the SSE stream served by
+        `GET /api/images/build/{buildId}/events`. The event's `type`
+        discriminates the payload.
+      required: [type, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [step-start, step-stdout, step-error, complete]
+        timestamp: { type: string, format: date-time }
+        stepName:
+          type: string
+          description: Set on `step-start`, `step-stdout`, `step-error`.
+        stepIndex:
+          type: integer
+          description: Set on `step-start`.
+        totalSteps:
+          type: integer
+          description: Set on `step-start`.
+        line:
+          type: string
+          description: One captured stdout line. Set on `step-stdout`.
+        message:
+          type: string
+          description: Set on `step-error` (per-step error) and `complete` (failure reason when status != succeeded).
+        outcome:
+          type: string
+          enum: [Succeeded, Failed, Cancelled]
+          description: Set on `complete`.
+        digest:
+          type: string
+          description: Set on `complete` when outcome is `Succeeded`.
+
+    BuildArtifactList:
+      type: object
+      required: [items, totalCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BuildArtifact' }
+        totalCount: { type: integer }
+
+    ImageManagementError:
+      type: object
+      description: |
+        Structured error response returned by image management endpoints
+        when the request fails. The `code` is a stable identifier the
+        caller can branch on; `message` is the human-readable text.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable error code (e.g. `template.spec.invalid`, `template.extends.cycle`, `build.engine.unavailable`).
+        message: { type: string }
+        field:
+          type: string
+          description: Field path when the error pertains to a specific spec field (e.g. `files[2].dest`).
+        buildLog:
+          type: string
+          description: Captured logs when the failure is a build (422). Truncated to 64 KiB; full log available via `GET /api/images/build/{buildId}`.
 
     InfrastructureProvider:
       type: object
