@@ -14,7 +14,9 @@ public class YamlTemplateParser : IYamlTemplateParser
         "code", "name", "description", "version", "base_image",
         "scope", "catalog_scope", "ide_type", "gpu_required", "gpu_preferred",
         "tags", "ports", "environment", "scripts", "resources",
-        "dependencies", "git_repositories", "code_assistant"
+        "dependencies", "git_repositories", "code_assistant",
+        // IM4 (rivoli-ai/andy-containers#253). M1.9 imperative-style fields.
+        "extends", "from", "packages", "files", "install", "entrypoint", "markers"
     };
 
     private static readonly HashSet<string> ValidDependencyTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -65,7 +67,48 @@ public class YamlTemplateParser : IYamlTemplateParser
         ValidateRequired(dict, "code", result);
         ValidateRequired(dict, "name", result);
         ValidateRequired(dict, "version", result);
-        ValidateRequired(dict, "base_image", result);
+
+        // IM4 (#253). base_image, from (deprecated alias), and extends
+        // form a tri-choice: a template needs at least one of them, and
+        // base_image / from cannot be supplied together (ambiguous).
+        // extends supplies the base image transitively from the parent
+        // template, so it satisfies the requirement on its own.
+        var hasBaseImage = TryGetString(dict, "base_image", out var baseImage);
+        var hasFrom = TryGetString(dict, "from", out var fromAlias);
+        var hasExtends = TryGetString(dict, "extends", out var extendsCode);
+
+        if (!hasBaseImage && !hasFrom && !hasExtends)
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "base_image",
+                Message = "Templates must declare a base image — set 'base_image:' (preferred), 'from:' (deprecated alias), or 'extends:' (inherit from a parent template)."
+            });
+        }
+
+        if (hasBaseImage && hasFrom)
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "from",
+                Message = "Specify only one of 'base_image:' (preferred) or 'from:' (deprecated alias) — having both is ambiguous."
+            });
+        }
+        else if (hasFrom)
+        {
+            // 'from' is accepted only for backward-compat with the
+            // M1.9 issue body that triggered Epic IM. Surface a single
+            // deprecation warning per parse so callers migrate.
+            result.Warnings.Add(new YamlValidationWarning
+            {
+                Field = "from",
+                Message = "'from:' is a deprecated alias for 'base_image:'. Migrate to 'base_image:' — 'from:' will be removed in a future release."
+            });
+
+            // Treat 'from' as base_image for the rest of validation.
+            baseImage = fromAlias;
+            hasBaseImage = true;
+        }
 
         // Validate code format
         if (TryGetString(dict, "code", out var code))
@@ -93,19 +136,40 @@ public class YamlTemplateParser : IYamlTemplateParser
             }
         }
 
-        // Validate base_image
-        if (TryGetString(dict, "base_image", out var baseImage))
+        // Validate base_image / from format (whichever was supplied)
+        if (hasBaseImage)
         {
             if (string.IsNullOrWhiteSpace(baseImage) || baseImage.Contains(' ') ||
                 (!baseImage.Contains(':') && !baseImage.Contains('@')))
             {
                 result.Errors.Add(new YamlValidationError
                 {
-                    Field = "base_image",
+                    Field = hasFrom ? "from" : "base_image",
                     Message = "Base image must be a valid OCI reference (must contain ':' or '@', no spaces)"
                 });
             }
         }
+
+        // IM4 (#253). 'extends' must be a valid template code; the
+        // actual existence-check + cycle-detection happens at
+        // register-time (TemplateExtendsCycleDetector) since the
+        // parser doesn't have access to the templates table.
+        if (hasExtends && !CodePattern.IsMatch(extendsCode))
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "extends",
+                Message = "'extends:' must reference a valid template code (2-64 chars, lowercase letters / digits / hyphens, starting with a letter)."
+            });
+        }
+
+        // Validate imperative fields. Each is optional; when present,
+        // the shape must match what the build backend will consume.
+        ValidatePackages(dict, result);
+        ValidateFiles(dict, result);
+        ValidateInstall(dict, result);
+        ValidateEntrypoint(dict, result);
+        ValidateMarkers(dict, result);
 
         // Validate dependencies
         if (dict.TryGetValue("dependencies", out var depsObj) && depsObj is List<object> deps)
@@ -200,13 +264,30 @@ public class YamlTemplateParser : IYamlTemplateParser
             .Build();
         var dict = deserializer.Deserialize<Dictionary<object, object>>(yaml);
 
+        // IM4 (#253). 'from:' is a deprecated alias for base_image.
+        // Validate() emits the warning; Parse() just normalises so
+        // downstream code only sees BaseImage. If both are supplied,
+        // Validate() rejects it; here we prefer base_image when both
+        // somehow slipped past validation so the more authoritative
+        // field wins.
+        var baseImage = GetString(dict, "base_image");
+        if (string.IsNullOrEmpty(baseImage))
+        {
+            baseImage = GetString(dict, "from");
+        }
+
         var template = new ContainerTemplate
         {
             Code = GetString(dict, "code"),
             Name = GetString(dict, "name"),
             Description = GetStringOrNull(dict, "description"),
             Version = GetString(dict, "version"),
-            BaseImage = GetString(dict, "base_image")
+            // BaseImage stays required on the model. When the template
+            // only declares 'extends:' and no base, the post-register
+            // pipeline resolves it from the parent template before
+            // hitting the build backend; the in-memory ContainerTemplate
+            // returned here will have an empty string until then.
+            BaseImage = baseImage
         };
 
         // scope / catalog_scope
@@ -238,7 +319,249 @@ public class YamlTemplateParser : IYamlTemplateParser
         template.GitRepositories = SerializeIfPresent(dict, "git_repositories");
         template.CodeAssistant = SerializeIfPresent(dict, "code_assistant");
 
+        // IM4 (#253). M1.9 imperative-style fields. These are persisted
+        // on the template so the build backend (IM7+) can replay them
+        // deterministically at build time.
+        template.Extends = GetStringOrNull(dict, "extends");
+        template.EntryPoint = GetStringOrNull(dict, "entrypoint");
+        template.Packages = SerializeIfPresent(dict, "packages");
+        template.Files = SerializeIfPresent(dict, "files");
+        template.Install = SerializeIfPresent(dict, "install");
+        template.Markers = SerializeIfPresent(dict, "markers");
+
         return template;
+    }
+
+    // IM4 validators for the imperative fields. Kept private and
+    // narrow — each method validates one section against the shape
+    // the build backend will consume, with field paths in errors so
+    // a typo inside files[2].mode is easy to find.
+
+    private static void ValidatePackages(Dictionary<object, object> dict, YamlValidationResult result)
+    {
+        if (!dict.TryGetValue("packages", out var obj) || obj is null)
+        {
+            return;
+        }
+
+        if (obj is not List<object> list)
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "packages",
+                Message = "'packages:' must be a list of OS package names (strings)."
+            });
+            return;
+        }
+
+        for (var i = 0; i < list.Count; i++)
+        {
+            var item = list[i]?.ToString();
+            if (string.IsNullOrWhiteSpace(item))
+            {
+                result.Errors.Add(new YamlValidationError
+                {
+                    Field = $"packages[{i}]",
+                    Message = "Package name must be a non-empty string."
+                });
+            }
+        }
+    }
+
+    private static void ValidateFiles(Dictionary<object, object> dict, YamlValidationResult result)
+    {
+        if (!dict.TryGetValue("files", out var obj) || obj is null)
+        {
+            return;
+        }
+
+        if (obj is not List<object> list)
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "files",
+                Message = "'files:' must be a list of objects, each with 'source', 'dest', and optional 'mode'."
+            });
+            return;
+        }
+
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (list[i] is not Dictionary<object, object> entry)
+            {
+                result.Errors.Add(new YamlValidationError
+                {
+                    Field = $"files[{i}]",
+                    Message = "Each entry in 'files:' must be an object with 'source' and 'dest' fields."
+                });
+                continue;
+            }
+
+            if (!TryGetString(entry, "source", out _))
+            {
+                result.Errors.Add(new YamlValidationError
+                {
+                    Field = $"files[{i}].source",
+                    Message = "'source' is required — the multipart-upload logical name of the file to copy."
+                });
+            }
+
+            if (!TryGetString(entry, "dest", out var dest))
+            {
+                result.Errors.Add(new YamlValidationError
+                {
+                    Field = $"files[{i}].dest",
+                    Message = "'dest' is required — the absolute path inside the container."
+                });
+            }
+            else if (!dest.StartsWith('/'))
+            {
+                result.Errors.Add(new YamlValidationError
+                {
+                    Field = $"files[{i}].dest",
+                    Message = $"'dest' must be an absolute path (got '{dest}')."
+                });
+            }
+
+            // mode is optional. Accept octal literals like 0755 or
+            // bare integers; reject negatives and impossibly large
+            // values. Maximum is 4095 == 07777 octal — covers all
+            // standard Unix permission bits including setuid/setgid/sticky.
+            const int maxOctalMode = 4095; // 07777
+            if (entry.TryGetValue("mode", out var modeObj) && modeObj is not null)
+            {
+                if (!TryParseOctalMode(modeObj, out var mode) || mode < 0 || mode > maxOctalMode)
+                {
+                    result.Errors.Add(new YamlValidationError
+                    {
+                        Field = $"files[{i}].mode",
+                        Message = $"'mode' must be a Unix permission octal in [0, 07777] (got '{modeObj}')."
+                    });
+                }
+            }
+        }
+    }
+
+    private static void ValidateInstall(Dictionary<object, object> dict, YamlValidationResult result)
+    {
+        if (!dict.TryGetValue("install", out var obj) || obj is null)
+        {
+            return;
+        }
+
+        if (obj is not List<object> list)
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "install",
+                Message = "'install:' must be a list of shell command strings."
+            });
+            return;
+        }
+
+        for (var i = 0; i < list.Count; i++)
+        {
+            var item = list[i]?.ToString();
+            if (string.IsNullOrWhiteSpace(item))
+            {
+                result.Errors.Add(new YamlValidationError
+                {
+                    Field = $"install[{i}]",
+                    Message = "Install command must be a non-empty string."
+                });
+            }
+        }
+    }
+
+    private static void ValidateEntrypoint(Dictionary<object, object> dict, YamlValidationResult result)
+    {
+        if (!dict.TryGetValue("entrypoint", out var obj) || obj is null)
+        {
+            return;
+        }
+
+        // Accept a single string for now. The OCI image-spec also
+        // allows a list-of-strings form; if a future spec needs that,
+        // generalise here.
+        if (obj is List<object>)
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "entrypoint",
+                Message = "'entrypoint:' must be a single string in IM4. List-of-strings form is not yet supported."
+            });
+            return;
+        }
+
+        var entrypoint = obj.ToString();
+        if (string.IsNullOrWhiteSpace(entrypoint))
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "entrypoint",
+                Message = "'entrypoint:' must be a non-empty string."
+            });
+        }
+    }
+
+    private static void ValidateMarkers(Dictionary<object, object> dict, YamlValidationResult result)
+    {
+        if (!dict.TryGetValue("markers", out var obj) || obj is null)
+        {
+            return;
+        }
+
+        // markers is intentionally free-form — caller-defined metadata
+        // surfaced through GET /api/images. We require it to be an
+        // object (not a list / scalar) so the field paths are stable.
+        if (obj is not Dictionary<object, object>)
+        {
+            result.Errors.Add(new YamlValidationError
+            {
+                Field = "markers",
+                Message = "'markers:' must be an object of key/value pairs (free-form metadata)."
+            });
+        }
+    }
+
+    private static bool TryParseOctalMode(object value, out int mode)
+    {
+        // YamlDotNet yields ints as int / long, and YAML's 0755 syntax
+        // parses straight to decimal in newer parsers — both are fine
+        // since the caller validates the range. String forms like
+        // "0755" are common in YAML where the user wrote a quoted
+        // permission literal — interpret those as octal explicitly.
+        switch (value)
+        {
+            case int i:
+                mode = i;
+                return true;
+            case long l:
+                mode = (int)l;
+                return true;
+            case string s when s.Length > 1 && s.StartsWith('0'):
+                return TryParseOctalString(s, out mode);
+            case string s:
+                return int.TryParse(s, out mode);
+            default:
+                mode = 0;
+                return false;
+        }
+    }
+
+    private static bool TryParseOctalString(string s, out int mode)
+    {
+        mode = 0;
+        foreach (var ch in s)
+        {
+            if (ch < '0' || ch > '7')
+            {
+                mode = 0;
+                return false;
+            }
+            mode = (mode << 3) | (ch - '0');
+        }
+        return true;
     }
 
     private static void ValidateRequired(Dictionary<object, object> dict, string field, YamlValidationResult result)

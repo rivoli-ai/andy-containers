@@ -104,6 +104,76 @@ tags:
   - full-stack
 ```
 
+## Imperative-style fields (M1.9 / Epic IM)
+
+The fields below are **additive** to the declarative `dependencies:` model documented above. The declarative form covers most cases (typed dependencies the build engine knows how to install with version policies). The imperative fields are the escape hatch when the dependency abstraction doesn't fit — for example installing a code-assistant CLI via `npm install -g @anthropic-ai/claude-code`.
+
+```yaml
+# templates/global/conductor-terminal-claude-code.yaml
+code: conductor-terminal-claude-code
+name: Conductor Terminal — Claude Code
+version: "1.0.0"
+
+# Choose one of: base_image, from (deprecated alias), or extends.
+base_image: ubuntu:22.04          # preferred
+# from: ubuntu:22.04              # deprecated alias of base_image
+extends: conductor-terminal-base  # optional — inherit base from a parent template
+
+# Existing declarative model still works:
+dependencies:
+  - { type: tool, name: bash }
+  - { type: tool, name: git }
+
+# New imperative fields:
+packages:                          # OS packages installed via the base image's package manager
+  - curl
+  - ca-certificates
+
+files:                             # files copied into the image during build
+  - source: install-assistants.sh  # multipart-upload logical name
+    dest: /opt/conductor/install-assistants.sh
+    mode: 0755                     # octal (or "0755" string form)
+
+install:                           # shell commands run in order after files are copied
+  - npm install -g @anthropic-ai/claude-code
+  - chmod +x /opt/conductor/install-assistants.sh
+
+entrypoint: /opt/conductor/entrypoint.sh
+
+markers:                           # free-form metadata about what's baked into the image
+  baked-assistants:
+    - claude-code
+```
+
+### Field reference
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `extends` | string (template code) | conditional | Optional. Resolved at register-time by walking the templates table. Cycles (A→B→A and longer) are rejected before any build is queued. The chain depth is capped at 16. |
+| `from` | string (OCI ref) | conditional | **Deprecated** alias of `base_image:`. Emits a parse-time warning. Specifying both `base_image:` and `from:` is rejected as ambiguous. |
+| `base_image` | string (OCI ref) | conditional | Preferred. Required unless `from:` or `extends:` is supplied. |
+| `packages` | list of strings | optional | OS package names. The build backend picks the package manager (`apt-get`/`yum`/`apk`) based on the base image. |
+| `files` | list of `{source, dest, mode?}` | optional | `source` is the multipart-upload logical name (the `files[<name>]` token). `dest` must be an absolute path. `mode` is octal in `[0, 07777]`. |
+| `install` | list of strings | optional | Shell command lines run after `packages` are installed and `files` are copied. Each entry is one line passed to the build engine. |
+| `entrypoint` | string | optional | Container `ENTRYPOINT`. Single-string form only in IM4; list-of-strings form is reserved for a future story. |
+| `markers` | object (free-form) | optional | Caller-defined key/value metadata. Surfaced via `GET /api/images` so launch UIs can label images without introspecting the filesystem. |
+
+### `extends:` resolution
+
+`extends:` references another template by `code`. At register-time:
+
+1. The parser captures the value verbatim.
+2. The registration pipeline walks the chain via `TemplateExtendsCycleDetector`, looking each parent up in the templates table.
+3. Cycles are rejected — the error message lists the full path so the offending template is easy to find.
+4. Missing parents are rejected — the error names the unresolved code.
+5. The chain depth is capped at 16; deeper chains are rejected with the same path-listing error.
+
+If `extends:` is specified without `base_image:` / `from:`, the base image is inherited from the parent transitively.
+
+### `from:` deprecation
+
+`from:` is accepted **only** for backward compatibility with the issue body that triggered Epic IM (`#1022`). Use `base_image:` instead. The parser emits a single warning per template register; the parser does not strip `from:` from the YAML, so re-exported templates round-trip the deprecated key — operators should migrate explicitly.
+
 ## Provider Definition (YAML)
 
 ```yaml
