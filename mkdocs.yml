@@ -34,7 +34,9 @@ nav:
   - Getting Started:
     - Quick Start: getting-started.md
     - Docker Setup: docker-setup.md
-  - Architecture: ARCHITECTURE.md
+  - Architecture:
+    - Overview: ARCHITECTURE.md
+    - Image management: architecture/image-management.md
   - Security: SECURITY.md
   - Implementation: implementation.md
   - Requirements: requirements.md

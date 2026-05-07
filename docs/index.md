@@ -31,6 +31,7 @@ Andy Containers provisions, manages, and orchestrates isolated development envir
 - [Getting Started](getting-started.md) -- Set up your development environment
 - [Docker Setup](docker-setup.md) -- Ports, volumes, and certificate configuration
 - [Architecture](ARCHITECTURE.md) -- System design, domain model, and background workers
+- [Image management](architecture/image-management.md) -- Registry adapters, build backends, deployment matrix
 - [Security](SECURITY.md) -- Authentication, authorization, and certificates
 - [CLI Reference](cli-reference.md) -- Command-line tool usage
 - [API Reference](api-reference.md) -- REST API endpoints
