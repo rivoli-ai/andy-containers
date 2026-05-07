@@ -21,6 +21,9 @@ public class ImagesController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly IOrganizationMembershipService _orgMembership;
     private readonly IImageBuildOrchestrator _orchestrator;
+    private readonly IAsyncBuildExecutor _executor;
+    private readonly IBuildEventBus _eventBus;
+    private readonly IBuildExecutionRegistry _executionRegistry;
 
     public ImagesController(
         ContainersDbContext db,
@@ -28,7 +31,10 @@ public class ImagesController : ControllerBase
         IImageDiffService diffService,
         ICurrentUserService currentUser,
         IOrganizationMembershipService orgMembership,
-        IImageBuildOrchestrator orchestrator)
+        IImageBuildOrchestrator orchestrator,
+        IAsyncBuildExecutor executor,
+        IBuildEventBus eventBus,
+        IBuildExecutionRegistry executionRegistry)
     {
         _db = db;
         _manifestService = manifestService;
@@ -36,6 +42,9 @@ public class ImagesController : ControllerBase
         _currentUser = currentUser;
         _orgMembership = orgMembership;
         _orchestrator = orchestrator;
+        _executor = executor;
+        _eventBus = eventBus;
+        _executionRegistry = executionRegistry;
     }
 
     [RequirePermission("image:read")]
@@ -109,24 +118,42 @@ public class ImagesController : ControllerBase
             if (!hasPermission) return Forbid();
         }
 
-        var result = await _orchestrator.BuildAsync(
-            new ImageBuildRequest(
-                TemplateId: templateId,
-                RegistryId: request?.RegistryId,
-                Force: request?.Force ?? false,
-                RequestedBy: _currentUser.GetUserId()),
-            new Progress<BuildProgressEvent>(_ => { /* IM9 wires SSE here */ }),
-            ct);
+        // IM9 (#263). Cache hits resolve synchronously through the
+        // orchestrator's TryCacheHitAsync; cache misses queue a
+        // background task and return immediately with status=queued.
+        // Subscribers attach via /api/images/build/{buildId}/events
+        // for the SSE stream of BuildProgressEvents.
+        var ibuildRequest = new ImageBuildRequest(
+            TemplateId: templateId,
+            RegistryId: request?.RegistryId,
+            Force: request?.Force ?? false,
+            RequestedBy: _currentUser.GetUserId());
 
-        var handle = new BuildHandle(
+        var asyncHandle = await _executor.StartAsync(ibuildRequest, ct);
+
+        return asyncHandle.Status switch
+        {
+            AsyncBuildHandleStatus.Cached =>
+                Ok(MapCachedHandle(asyncHandle.Result!)),
+            AsyncBuildHandleStatus.Queued =>
+                AcceptedAtAction(
+                    nameof(GetBuildStatus),
+                    new { buildId = asyncHandle.BuildId },
+                    new BuildHandle(
+                        BuildId: asyncHandle.BuildId,
+                        Status: "queued",
+                        Digest: null,
+                        References: [])),
+            AsyncBuildHandleStatus.Failed =>
+                BuildFailureResponse(asyncHandle.Result!),
+            _ => StatusCode(500, "unexpected build status"),
+        };
+    }
+
+    private BuildHandle MapCachedHandle(BuildResult result)
+        => new(
             BuildId: result.BuildId,
-            Status: result.Status switch
-            {
-                BuildResultStatus.Cached => "cached",
-                BuildResultStatus.Succeeded => "succeeded",
-                BuildResultStatus.Failed => "failed",
-                _ => "unknown",
-            },
+            Status: "cached",
             Digest: result.Digest,
             References: result.References
                 .Select(r => new BuildHandleReference(
@@ -135,13 +162,105 @@ public class ImagesController : ControllerBase
                     PushedAt: r.PushedAt))
                 .ToList());
 
-        return result.Status switch
+    /// <summary>
+    /// IM9 (#263). Build status snapshot. Reads from the in-memory
+    /// execution registry; falls back to the persisted
+    /// <see cref="Andy.Containers.Models.ImageManagement.BuildArtifactEntity"/>
+    /// when a build is no longer in the registry (host restart, or
+    /// the build completed long enough ago to be evicted).
+    /// </summary>
+    [RequirePermission("image:read")]
+    [HttpGet("build/{buildId:guid}")]
+    public Task<IActionResult> GetBuildStatus(Guid buildId, CancellationToken ct)
+    {
+        var state = _executionRegistry.TryGet(buildId);
+        if (state is null)
         {
-            BuildResultStatus.Cached => Ok(handle),
-            BuildResultStatus.Succeeded => Accepted(handle),
-            BuildResultStatus.Failed => BuildFailureResponse(result),
-            _ => StatusCode(500, handle),
+            return Task.FromResult<IActionResult>(NotFound(new
+            {
+                code = "build.not_found",
+                message = $"no build with id {buildId} — either it never started or its registry record was evicted.",
+                buildId,
+            }));
+        }
+
+        return Task.FromResult<IActionResult>(Ok(new
+        {
+            buildId = state.BuildId,
+            status = state.Status.ToString().ToLowerInvariant(),
+            templateId = state.TemplateId,
+            digest = state.Digest,
+            references = state.References.Select(r => new
+            {
+                registryId = r.RegistryId,
+                repoPath = r.RepoPath,
+                tag = r.Tag,
+                pushedAt = r.PushedAt,
+            }).ToList(),
+            startedAt = state.StartedAt,
+            completedAt = state.CompletedAt,
+            errorCode = state.ErrorCode,
+            errorMessage = state.ErrorMessage,
+        }));
+    }
+
+    /// <summary>
+    /// IM9 (#263). Server-Sent Events stream of build progress.
+    /// Reads from <see cref="IBuildEventBus"/>; events are emitted
+    /// in publish order, including a buffered replay of any events
+    /// that fired before the subscriber attached. The stream closes
+    /// on the terminal <see cref="BuildCompletedEvent"/> or on
+    /// client disconnect.
+    /// </summary>
+    [RequirePermission("image:read")]
+    [HttpGet("build/{buildId:guid}/events")]
+    public async Task BuildEvents(Guid buildId, CancellationToken ct)
+    {
+        Response.Headers.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        // Honour Last-Event-ID for reconnection — the bus's buffered
+        // replay will pick up after the supplied id (or restart from
+        // the oldest buffered event if the id has aged out).
+        long? lastEventId = null;
+        if (Request.Headers.TryGetValue("Last-Event-ID", out var headerValue) &&
+            long.TryParse(headerValue.ToString(), out var parsed))
+        {
+            lastEventId = parsed;
+        }
+
+        await foreach (var envelope in _eventBus.SubscribeAsync(buildId, lastEventId, ct))
+        {
+            await WriteSseAsync(envelope, ct);
+        }
+    }
+
+    private async Task WriteSseAsync(BuildEventEnvelope envelope, CancellationToken ct)
+    {
+        // SSE wire format: id:, event:, data: lines, terminated by
+        // a blank line. The event name is lowercase-kebab to match
+        // the IM5 OpenAPI BuildEvent.type discriminator.
+        var name = envelope.Event switch
+        {
+            BuildStepStartedEvent => "step-start",
+            BuildStepStdoutEvent => "step-stdout",
+            BuildStepErrorEvent => "step-error",
+            BuildCompletedEvent => "complete",
+            _ => "unknown",
         };
+        var json = System.Text.Json.JsonSerializer.Serialize<object>(envelope.Event);
+
+        // Manually compose the SSE frame so we control the trailing
+        // \n\n. WriteAsync flushes the underlying response stream
+        // implicitly; we also flush after each event so subscribers
+        // see events in real time.
+        var frame =
+            $"id: {envelope.SequenceNumber}\n" +
+            $"event: {name}\n" +
+            $"data: {json}\n\n";
+        await Response.WriteAsync(frame, ct);
+        await Response.Body.FlushAsync(ct);
     }
 
     private IActionResult BuildFailureResponse(BuildResult result)

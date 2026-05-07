@@ -50,6 +50,47 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
         _logger = logger;
     }
 
+    public async Task<BuildResult?> TryCacheHitAsync(
+        ImageBuildRequest request,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var template = await _db.Templates
+            .FirstOrDefaultAsync(t => t.Id == request.TemplateId, ct);
+        if (template is null || string.IsNullOrEmpty(template.SpecHash))
+        {
+            return null;
+        }
+        var registryId = request.RegistryId ?? _registries.PrimaryRegistryId;
+        var cached = await _store.GetBySpecHashAsync(template.Id, template.SpecHash, ct);
+        if (cached is null)
+        {
+            return null;
+        }
+        var matching = cached.References.FirstOrDefault(r => r.RegistryId == registryId);
+        if (matching is null)
+        {
+            // Same digest exists but isn't pushed to the requested
+            // registry — the full BuildAsync path may rebuild and
+            // push (or repush in a later iteration). Returning null
+            // here keeps the fast path narrowly correct.
+            return null;
+        }
+
+        return new BuildResult
+        {
+            BuildId = Guid.NewGuid(),
+            Status = BuildResultStatus.Cached,
+            Digest = cached.Digest,
+            References = cached.References
+                .Select(r => new BuildResultReference(
+                    r.RegistryId, r.RepoPath, r.Tag,
+                    new DateTimeOffset(r.PushedAt, TimeSpan.Zero)))
+                .ToList(),
+        };
+    }
+
     public async Task<BuildResult> BuildAsync(
         ImageBuildRequest request,
         IProgress<BuildProgressEvent> progress,
