@@ -82,16 +82,44 @@ All endpoints require authentication (JWT Bearer token) and RBAC permissions via
 
 ## Images
 
+### Legacy (template-build-centric)
+
 | Method | Endpoint | Permission | Description |
 |--------|----------|------------|-------------|
 | GET | `/images/{templateId}` | template:read | List built images |
-| POST | `/images/{templateId}/build` | template:write | Trigger build |
+| POST | `/images/{templateId}/build` | template:write | Trigger build (returns `BuildHandle` since IM5) |
 | GET | `/images/{templateId}/latest` | template:read | Get latest image |
 | GET | `/images/diff` | template:read | Compare two images |
 | GET | `/images/{imageId}/manifest` | template:read | Get introspection manifest |
 | GET | `/images/{imageId}/tools` | template:read | List installed tools |
 | GET | `/images/{imageId}/packages` | template:read | List OS packages |
 | POST | `/images/{imageId}/introspect` | template:write | Re-run introspection |
+
+### Image Management (Epic IM — digest-anchored)
+
+The endpoints below ship the digest-anchored image identity model introduced in IM3 (`#252`). Same physical bytes produce the same `digest` in every registry; the `references` array on each `BuildArtifact` records every place the bytes have been pushed.
+
+| Method | Endpoint | Permission | Description |
+|--------|----------|------------|-------------|
+| POST | `/templates/from-yaml` | template:write | Register a YAML template (multipart for spec + files; JSON for spec-only). Idempotent on `specHash`. |
+| GET | `/images` | template:read | List `BuildArtifact`s with their references. Filters: `templateId`, `registryId`, `marker`. |
+| GET | `/images/by-digest/{digest}` | template:read | Get a single artifact by OCI digest. |
+| DELETE | `/images/by-digest/{digest}/references/{referenceId}` | image:admin | Untag one registry coordinate. Idempotent. |
+| GET | `/images/build/{buildId}` | template:read | Build status snapshot (`BuildStatus`). |
+| GET | `/images/build/{buildId}/events` | template:read | SSE stream of `BuildEvent`s (build progress). |
+
+#### Error mapping
+
+| Status | Code prefix | Meaning |
+|---|---|---|
+| 400 | `template.spec.invalid` | YAML schema validation failed. |
+| 401 | (auth) | Missing or expired JWT. |
+| 403 | (rbac) | Caller lacks `template:write` / `image:admin`. |
+| 404 | (resource) | Unknown templateId / digest / buildId / referenceId. |
+| 409 | `template.code.in-use` | Template `code` is already registered with a different `specHash`. |
+| 422 | `template.extends.cycle`, `build.failed` | Cycle in `extends:`, or build engine reported a non-zero exit (logs in `buildLog`). |
+| 503 | `build.engine.unavailable` | No build engine on the host (no Docker daemon, no Apple Containers CLI). |
+| 507 | `registry.quota.exceeded` | Registry storage quota exhausted. |
 
 ## Other Endpoints
 
