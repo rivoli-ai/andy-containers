@@ -35,6 +35,7 @@ public sealed class ZotContainerFixture : IAsyncLifetime
 
     public bool IsAvailable { get; private set; }
     public string BaseUrl { get; private set; } = "http://localhost:5050";
+    private string? _configPath;
 
     public async Task InitializeAsync()
     {
@@ -53,10 +54,36 @@ public sealed class ZotContainerFixture : IAsyncLifetime
         };
         var image = $"ghcr.io/project-zot/zot-minimal-linux-{arch}:{ZotImageVersion}";
 
+        // Materialise a zot config that mirrors what Conductor's
+        // bundled config.template.json ships — most importantly
+        // http.compat: ["docker2s2"], without which zot v2.1+ rejects
+        // Docker manifest v2 with HTTP 415. Without that flag the
+        // production push path (DockerCliUploader → docker push) would
+        // fail in the round-trip tests below; rivoli-ai/conductor#1028
+        // is the matching fix on Conductor's side.
+        _configPath = Path.Combine(
+            Path.GetTempPath(),
+            $"zot-config-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(
+            _configPath,
+            """
+            {
+              "distSpecVersion": "1.1.1",
+              "storage": { "rootDirectory": "/var/lib/registry" },
+              "http": {
+                "address": "0.0.0.0",
+                "port": "5000",
+                "compat": ["docker2s2"]
+              },
+              "log": { "level": "info" }
+            }
+            """);
+
         var run = await RunDockerAsync(
             "run", "-d",
             "-p", $"{_hostPort}:5000",
             "--rm",
+            "-v", $"{_configPath}:/etc/zot/config.json:ro",
             image);
         if (run.ExitCode != 0)
         {
@@ -88,17 +115,25 @@ public sealed class ZotContainerFixture : IAsyncLifetime
 
     private async Task StopAsync()
     {
-        if (_containerId is null) return;
-        try
+        if (_containerId is not null)
         {
-            await RunDockerAsync("kill", _containerId);
+            try
+            {
+                await RunDockerAsync("kill", _containerId);
+            }
+            catch (Exception)
+            {
+                // Best-effort cleanup; if `docker kill` fails the
+                // --rm flag still tears the container down on exit.
+            }
+            _containerId = null;
         }
-        catch (Exception)
+
+        if (_configPath is not null)
         {
-            // Best-effort cleanup; if `docker kill` fails the
-            // --rm flag still tears the container down on exit.
+            try { File.Delete(_configPath); } catch { /* best-effort */ }
+            _configPath = null;
         }
-        _containerId = null;
     }
 
     private async Task<bool> DockerIsHealthyAsync()
