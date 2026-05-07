@@ -1,5 +1,6 @@
 using Andy.Containers.Infrastructure.Registries;
 using Andy.Containers.Infrastructure.Registries.Local;
+using Andy.Containers.Tests.TestSupport;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -75,87 +76,4 @@ public class DockerCliUploaderTests
     private static DockerCliUploader MakeUploader(StubScript stub)
         => new(NullLogger<DockerCliUploader>.Instance,
             new DockerCliUploaderOptions { DockerExecutablePath = stub.Path });
-}
-
-/// <summary>
-/// Bash script that pretends to be the docker CLI. Records each
-/// invocation's arguments to a file and exits with the configured
-/// status. Tests read the recorded arguments to assert what the
-/// uploader called.
-/// </summary>
-internal sealed class StubScript : IDisposable
-{
-    public string Path { get; }
-    public string ArgsFile { get; }
-
-    public StubScript(int exitCode, string stderr)
-    {
-        ArgsFile = System.IO.Path.GetTempFileName();
-        Path = System.IO.Path.GetTempFileName();
-        // Move to a .sh extension and write the body.
-        var shPath = Path + ".sh";
-        File.Move(Path, shPath);
-        Path = shPath;
-
-        var body = $"""
-            #!/usr/bin/env bash
-            # Record arguments one-per-line, separated by groups for
-            # multi-invocation tests. Each invocation is one ARGS
-            # block terminated by an empty line.
-            for a in "$@"; do
-              echo "$a" >> "{ArgsFile}"
-            done
-            echo "" >> "{ArgsFile}"
-            {(string.IsNullOrEmpty(stderr) ? "" : $"echo '{stderr}' 1>&2")}
-            exit {exitCode}
-            """;
-        File.WriteAllText(Path, body);
-        if (!OperatingSystem.IsWindows())
-        {
-            // Mark the script executable; needed only on Unix —
-            // tests early-return on Windows before constructing
-            // a StubScript at all.
-            File.SetUnixFileMode(Path,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-        }
-    }
-
-    public List<List<string>> Invocations
-    {
-        get
-        {
-            if (!File.Exists(ArgsFile))
-            {
-                return [];
-            }
-            var lines = File.ReadAllLines(ArgsFile);
-            var blocks = new List<List<string>>();
-            var current = new List<string>();
-            foreach (var line in lines)
-            {
-                if (string.IsNullOrEmpty(line))
-                {
-                    if (current.Count > 0)
-                    {
-                        blocks.Add(current);
-                        current = [];
-                    }
-                }
-                else
-                {
-                    current.Add(line);
-                }
-            }
-            if (current.Count > 0) { blocks.Add(current); }
-            return blocks;
-        }
-    }
-
-    public void Dispose()
-    {
-        try { File.Delete(Path); } catch { /* best-effort cleanup */ }
-        try { File.Delete(ArgsFile); } catch { /* best-effort cleanup */ }
-    }
 }
