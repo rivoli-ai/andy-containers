@@ -88,6 +88,18 @@ public class ContainerImage
     /// Controls who can see the image.
     /// </summary>
     public ImageVisibility Visibility { get; set; } = ImageVisibility.Global;
+
+    /// <summary>
+    /// IM3 (rivoli-ai/andy-containers#252). Optional link from this
+    /// template-build-centric row to the digest-anchored
+    /// <c>BuildArtifactEntity</c> created for the same physical image.
+    /// Populated for builds produced by IM7's <c>LocalBuildBackend</c>
+    /// onwards. Null for legacy rows that pre-date the new schema and
+    /// for rows produced by code paths that haven't been migrated to
+    /// the new abstractions yet.
+    /// </summary>
+    public Guid? BuildArtifactId { get; set; }
+    public ImageManagement.BuildArtifactEntity? BuildArtifact { get; set; }
 }
 
 public enum ImageBuildStatus

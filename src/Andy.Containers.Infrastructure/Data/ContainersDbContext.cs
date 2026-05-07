@@ -1,5 +1,6 @@
 using Andy.Containers.Messaging;
 using Andy.Containers.Models;
+using Andy.Containers.Models.ImageManagement;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
@@ -37,6 +38,12 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<Run> Runs => Set<Run>();
     public DbSet<EnvironmentProfile> EnvironmentProfiles => Set<EnvironmentProfile>();
     public DbSet<Theme> Themes => Set<Theme>();
+
+    // IM3 (#252). Digest-anchored image identity layered on top of the
+    // existing template-build-centric Images table.
+    public DbSet<BuildArtifactEntity> BuildArtifacts => Set<BuildArtifactEntity>();
+    public DbSet<RegistryReferenceEntity> RegistryReferences => Set<RegistryReferenceEntity>();
+    public DbSet<ImageSignature> ImageSignatures => Set<ImageSignature>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -108,6 +115,57 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
             e.HasOne(i => i.PreviousImage).WithMany().HasForeignKey(i => i.PreviousImageId);
             e.HasIndex(i => new { i.TemplateId, i.OrganizationId });
             e.HasIndex(i => i.OrganizationId);
+            // IM3 (#252). Optional link to the digest-anchored
+            // BuildArtifactEntity row. SetNull on artifact-delete keeps
+            // the legacy ContainerImage row addressable even if the
+            // artifact row is purged for storage reclaim.
+            e.HasOne(i => i.BuildArtifact)
+                .WithMany()
+                .HasForeignKey(i => i.BuildArtifactId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(i => i.BuildArtifactId);
+        });
+
+        // IM3 (#252). BuildArtifactEntity — digest-anchored image row.
+        // Digest is globally unique across registries (same bytes →
+        // same digest), so the unique constraint is what enforces that
+        // we never store two artifact rows for the same physical image.
+        // SpecHash is indexed for content-addressable cache hits.
+        modelBuilder.Entity<BuildArtifactEntity>(e =>
+        {
+            e.HasKey(b => b.Id);
+            e.HasIndex(b => b.Digest).IsUnique();
+            e.HasIndex(b => b.SpecHash);
+            e.HasIndex(b => new { b.TemplateId, b.SpecHash });
+            e.HasOne(b => b.Template).WithMany().HasForeignKey(b => b.TemplateId);
+        });
+
+        // IM3 (#252). RegistryReferenceEntity — many references per
+        // artifact. Composite unique on (RegistryId, RepoPath, Tag)
+        // prevents conflicting rows for the same registry coordinate.
+        // Cascade delete on artifact-delete because a reference without
+        // an artifact is meaningless.
+        modelBuilder.Entity<RegistryReferenceEntity>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.HasIndex(r => new { r.RegistryId, r.RepoPath, r.Tag }).IsUnique();
+            e.HasIndex(r => r.BuildArtifactId);
+            e.HasOne(r => r.BuildArtifact)
+                .WithMany(b => b.References)
+                .HasForeignKey(r => r.BuildArtifactId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // IM3 (#252). ImageSignature — Cosign / Notation v2 signatures
+        // attached to artifacts.
+        modelBuilder.Entity<ImageSignature>(e =>
+        {
+            e.HasKey(s => s.Id);
+            e.HasIndex(s => s.BuildArtifactId);
+            e.HasOne(s => s.BuildArtifact)
+                .WithMany(b => b.Signatures)
+                .HasForeignKey(s => s.BuildArtifactId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ContainerSession
