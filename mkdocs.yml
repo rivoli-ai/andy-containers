@@ -37,6 +37,7 @@ nav:
   - Architecture:
     - Overview: ARCHITECTURE.md
     - Image management: architecture/image-management.md
+    - zot ownership contract: architecture/zot-ownership.md
   - Security: SECURITY.md
   - Implementation: implementation.md
   - Requirements: requirements.md
