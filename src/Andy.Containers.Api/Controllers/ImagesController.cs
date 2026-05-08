@@ -24,6 +24,7 @@ public class ImagesController : ControllerBase
     private readonly IAsyncBuildExecutor _executor;
     private readonly IBuildEventBus _eventBus;
     private readonly IBuildExecutionRegistry _executionRegistry;
+    private readonly IBuildArtifactStore _artifactStore;
 
     public ImagesController(
         ContainersDbContext db,
@@ -34,7 +35,8 @@ public class ImagesController : ControllerBase
         IImageBuildOrchestrator orchestrator,
         IAsyncBuildExecutor executor,
         IBuildEventBus eventBus,
-        IBuildExecutionRegistry executionRegistry)
+        IBuildExecutionRegistry executionRegistry,
+        IBuildArtifactStore artifactStore)
     {
         _db = db;
         _manifestService = manifestService;
@@ -45,6 +47,7 @@ public class ImagesController : ControllerBase
         _executor = executor;
         _eventBus = eventBus;
         _executionRegistry = executionRegistry;
+        _artifactStore = artifactStore;
     }
 
     [RequirePermission("image:read")]
@@ -397,6 +400,141 @@ public class ImagesController : ControllerBase
             return StatusCode(500, new { Error = ex.Message });
         }
     }
+
+    // ----- #278 IM5 endpoints (digest-anchored artifact list/get/untag) -----
+
+    /// <summary>
+    /// #278. <c>GET /api/images</c>. Lists `BuildArtifact` rows.
+    ///
+    /// Distinct from the existing <see cref="List(Guid, Guid?, CancellationToken)"/>
+    /// which is the legacy template-keyed `ContainerImage` listing — this
+    /// endpoint walks `BuildArtifactEntity` (the digest-anchored row that
+    /// IM3 introduced) and returns the IM5 OpenAPI `BuildArtifactList`
+    /// shape `{ items, totalCount }`.
+    ///
+    /// The `marker` query parameter is declared by the OpenAPI spec but
+    /// not yet honoured: there is no `Markers` column on
+    /// <c>BuildArtifactEntity</c> today. When marker support lands the
+    /// filter wires here without a contract change.
+    /// </summary>
+    [RequirePermission("image:read")]
+    [HttpGet]
+    public async Task<IActionResult> ListArtifacts(
+        [FromQuery] Guid? templateId,
+        [FromQuery] string? registryId,
+        [FromQuery] string? marker,
+        [FromQuery] int skip = 0,
+        [FromQuery] int take = 20,
+        CancellationToken ct = default)
+    {
+        // Cap the page size to keep one user from accidentally pulling
+        // a 100k-row payload.
+        take = Math.Clamp(take, 1, 100);
+        skip = Math.Max(0, skip);
+
+        if (!string.IsNullOrWhiteSpace(marker))
+        {
+            // No `Markers` column on BuildArtifactEntity yet; refuse the
+            // filter rather than silently returning unfiltered results.
+            return BadRequest(new ImageManagementErrorBody
+            {
+                Code = "image.list.marker.unsupported",
+                Message = "marker filter is declared in the OpenAPI but not yet implemented; tracked as a follow-up to #278.",
+            });
+        }
+
+        var (items, total) = await _artifactStore.ListAsync(
+            templateId: templateId,
+            registryId: registryId,
+            skip: skip,
+            take: take,
+            ct: ct);
+        return Ok(new BuildArtifactListResponse(
+            Items: items.Select(BuildArtifactResponse.From).ToArray(),
+            TotalCount: total));
+    }
+
+    /// <summary>
+    /// #278. <c>GET /api/images/by-digest/{digest}</c>. Returns the
+    /// single artifact for an OCI manifest digest, or 404 if no
+    /// artifact has been registered for it.
+    ///
+    /// The digest is taken verbatim from the path. ASP.NET routing
+    /// accepts the colon inside the path segment per RFC 3986 §3.3 —
+    /// callers do not need to percent-encode the `sha256:` prefix.
+    /// </summary>
+    [RequirePermission("image:read")]
+    [HttpGet("by-digest/{digest}")]
+    public async Task<IActionResult> GetByDigest(string digest, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(digest))
+        {
+            return BadRequest(new ImageManagementErrorBody
+            {
+                Code = "image.digest.required",
+                Message = "digest path segment is required.",
+            });
+        }
+
+        var entity = await _artifactStore.GetByDigestAsync(digest, ct);
+        if (entity is null)
+        {
+            return ImageManagementProblemDetailsFactory.NotFound(
+                code: "image.not-found",
+                message: $"No artifact for digest '{digest}'.");
+        }
+        return Ok(BuildArtifactResponse.From(entity));
+    }
+
+    /// <summary>
+    /// #278. <c>DELETE /api/images/by-digest/{digest}/references/{referenceId}</c>.
+    /// Removes one `(registryId, repoPath, tag)` reference.
+    ///
+    /// Idempotent — already-gone references return 204 too.
+    /// `image:delete` (the existing RBAC permission for image deletion)
+    /// gates the action; the IM5 OpenAPI calls this an admin-only
+    /// operation so non-admins are rejected by the RBAC layer.
+    ///
+    /// Does NOT delete the underlying artifact bytes; registry-side
+    /// garbage collection reclaims those when no reference points at
+    /// the digest. The artifact row stays in the DB so the digest
+    /// remains a stable audit anchor.
+    /// </summary>
+    [RequirePermission("image:delete")]
+    [HttpDelete("by-digest/{digest}/references/{referenceId:guid}")]
+    public async Task<IActionResult> Untag(string digest, Guid referenceId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(digest))
+        {
+            return BadRequest(new ImageManagementErrorBody
+            {
+                Code = "image.digest.required",
+                Message = "digest path segment is required.",
+            });
+        }
+
+        // Resolve the artifact first so we can verify the reference
+        // actually belongs to this digest. A request for
+        // /by-digest/sha256:A/references/<id-of-ref-to-sha256:B> should
+        // 404, not silently delete the wrong row.
+        var artifact = await _artifactStore.GetByDigestAsync(digest, ct);
+        if (artifact is null)
+        {
+            return ImageManagementProblemDetailsFactory.NotFound(
+                code: "image.not-found",
+                message: $"No artifact for digest '{digest}'.");
+        }
+
+        var reference = artifact.References.FirstOrDefault(r => r.Id == referenceId);
+        if (reference is null)
+        {
+            // Idempotent: already-gone is not an error.
+            return NoContent();
+        }
+
+        await _artifactStore.RemoveReferenceAsync(referenceId, ct);
+        return NoContent();
+    }
 }
 
 public record BuildRequest(
@@ -404,3 +542,82 @@ public record BuildRequest(
     bool Force = false,
     Guid? OrganizationId = null,
     string? RegistryId = null);
+
+// ----- #278 IM5 response DTOs -----
+
+/// <summary>
+/// IM5 OpenAPI <c>BuildArtifact</c> shape. Distinct from the abstraction
+/// <see cref="Andy.Containers.Abstractions.Images.BuildArtifact"/> record
+/// which carries fewer fields (no templateId, no references list).
+/// </summary>
+public sealed record BuildArtifactResponse(
+    string Digest,
+    string MediaType,
+    long SizeBytes,
+    string SpecHash,
+    Guid TemplateId,
+    string? BuildBackendId,
+    string? BuiltBy,
+    DateTime BuiltAt,
+    IReadOnlyList<BuildArtifactReferenceResponse> References,
+    IReadOnlyDictionary<string, object>? Markers)
+{
+    public static BuildArtifactResponse From(Andy.Containers.Models.ImageManagement.BuildArtifactEntity entity)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        return new BuildArtifactResponse(
+            Digest: entity.Digest,
+            MediaType: entity.MediaType,
+            SizeBytes: entity.SizeBytes,
+            SpecHash: entity.SpecHash,
+            TemplateId: entity.TemplateId,
+            BuildBackendId: entity.BuildBackendId,
+            BuiltBy: entity.BuiltBy,
+            BuiltAt: entity.BuiltAt,
+            References: entity.References.Select(BuildArtifactReferenceResponse.From).ToArray(),
+            // No `Markers` column today — null until a future migration
+            // adds one. Conductor's Swift client treats this field as
+            // optional.
+            Markers: null);
+    }
+}
+
+/// <summary>
+/// IM5 OpenAPI <c>BuildArtifactReference</c> shape. The on-disk
+/// <see cref="Andy.Containers.Models.ImageManagement.RegistryReferenceEntity"/>
+/// does not carry the artifact's digest itself (it foreign-keys the
+/// owning artifact); the response shape needs the digest for the
+/// reference-side surface, so the mapper from the parent
+/// <see cref="BuildArtifactResponse.From(Andy.Containers.Models.ImageManagement.BuildArtifactEntity)"/>
+/// supplies it indirectly via the parent envelope.
+/// </summary>
+public sealed record BuildArtifactReferenceResponse(
+    Guid Id,
+    string RegistryId,
+    string RepoPath,
+    string Tag,
+    string? Digest,
+    DateTime PushedAt,
+    string PushedBy)
+{
+    public static BuildArtifactReferenceResponse From(Andy.Containers.Models.ImageManagement.RegistryReferenceEntity entity)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        return new BuildArtifactReferenceResponse(
+            Id: entity.Id,
+            RegistryId: entity.RegistryId,
+            RepoPath: entity.RepoPath,
+            Tag: entity.Tag,
+            // RegistryReferenceEntity doesn't store the digest directly
+            // — it's reachable via the BuildArtifact navigation property
+            // when populated. Leave as null when not loaded; consumers
+            // (per the IM5 OpenAPI) treat it as nullable.
+            Digest: entity.BuildArtifact?.Digest,
+            PushedAt: entity.PushedAt,
+            PushedBy: entity.PushedBy);
+    }
+}
+
+public sealed record BuildArtifactListResponse(
+    IReadOnlyList<BuildArtifactResponse> Items,
+    int TotalCount);

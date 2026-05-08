@@ -51,6 +51,7 @@ public class ImagesControllerSseTests : IDisposable
         var mockOrg = new Mock<IOrganizationMembershipService>();
         var mockOrchestrator = new Mock<IImageBuildOrchestrator>();
         var mockExecutor = new Mock<IAsyncBuildExecutor>();
+        var mockArtifactStore = new Mock<IBuildArtifactStore>();
 
         _controller = new ImagesController(
             _db,
@@ -61,7 +62,8 @@ public class ImagesControllerSseTests : IDisposable
             mockOrchestrator.Object,
             mockExecutor.Object,
             _bus,
-            _registry);
+            _registry,
+            mockArtifactStore.Object);
     }
 
     public void Dispose()

@@ -95,4 +95,38 @@ public sealed class BuildArtifactStore : IBuildArtifactStore
             .ToListAsync(ct)
             .ConfigureAwait(false);
     }
+
+    public async Task<(IReadOnlyList<BuildArtifactEntity> Items, int TotalCount)> ListAsync(
+        Guid? templateId,
+        string? registryId,
+        int skip,
+        int take,
+        CancellationToken ct)
+    {
+        // Build the filtered query once; reuse for the count + page so
+        // a paged response with totalCount mirrors what an unfiltered
+        // SELECT COUNT(*) WHERE … would produce.
+        var query = _db.BuildArtifacts.AsQueryable();
+        if (templateId.HasValue)
+        {
+            query = query.Where(b => b.TemplateId == templateId.Value);
+        }
+        if (!string.IsNullOrWhiteSpace(registryId))
+        {
+            // Match artifacts whose reference set includes the registry.
+            // The translation lands as an EXISTS subquery in the
+            // generated SQL.
+            query = query.Where(b => b.References.Any(r => r.RegistryId == registryId));
+        }
+
+        var total = await query.CountAsync(ct).ConfigureAwait(false);
+        var items = await query
+            .OrderByDescending(b => b.BuiltAt)
+            .Skip(Math.Max(0, skip))
+            .Take(Math.Max(0, take))
+            .Include(b => b.References)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        return (items, total);
+    }
 }

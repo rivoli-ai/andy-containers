@@ -64,4 +64,22 @@ public interface IBuildArtifactStore
     Task<IReadOnlyList<RegistryReferenceEntity>> ListReferencesAsync(
         Guid artifactId,
         CancellationToken ct);
+
+    /// <summary>
+    /// #278. Paged list of artifacts with optional filters. Used by
+    /// <c>GET /api/images</c>. References are eagerly loaded so the
+    /// IM5 <c>BuildArtifact.references</c> field can be populated in
+    /// the response without a per-row N+1.
+    /// </summary>
+    /// <param name="templateId">Restrict to artifacts owned by this template; null = no filter.</param>
+    /// <param name="registryId">Restrict to artifacts that have at least one reference in this registry; null = no filter.</param>
+    /// <param name="skip">Pagination offset.</param>
+    /// <param name="take">Page size.</param>
+    /// <returns>Page of artifacts and the total matching count (for the same filter, ignoring skip/take).</returns>
+    Task<(IReadOnlyList<BuildArtifactEntity> Items, int TotalCount)> ListAsync(
+        Guid? templateId,
+        string? registryId,
+        int skip,
+        int take,
+        CancellationToken ct);
 }
