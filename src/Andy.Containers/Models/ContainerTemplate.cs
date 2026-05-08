@@ -106,6 +106,18 @@ public class ContainerTemplate
     /// IM8; populated on every register-from-yaml call thereafter.
     /// </summary>
     public string? SpecHash { get; set; }
+
+    /// <summary>
+    /// #277 (PR A). Absolute path on disk to the staging directory
+    /// holding the files uploaded with the template registration.
+    /// Files are stored under <c>&lt;UploadedFilesPath&gt;/&lt;LogicalName&gt;</c>
+    /// where <c>LogicalName</c> matches the spec's <c>files[].source</c>
+    /// entry (and the multipart part name on the registration request).
+    /// Null for the JSON-only register path and for legacy rows that
+    /// pre-date #277. Populated on every multipart register-from-yaml
+    /// call. The directory survives until cleanup runs (#277 PR C).
+    /// </summary>
+    public string? UploadedFilesPath { get; set; }
 }
 
 public enum CatalogScope

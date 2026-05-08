@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Crypto;
@@ -5,6 +7,8 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -261,31 +265,180 @@ public class TemplatesController : ControllerBase
 
     [RequirePermission("template:write")]
     [HttpPost("from-yaml")]
-    public async Task<IActionResult> CreateFromYaml([FromBody] YamlContentRequest request, CancellationToken ct)
+    [Consumes("application/json")]
+    public Task<IActionResult> CreateFromYaml([FromBody] YamlContentRequest request, CancellationToken ct)
+        // JSON path: no uploaded files, so the file-digests dict is
+        // empty and `UploadedFilesPath` stays null. Templates registered
+        // through this path can't reference `files:` entries — that
+        // requires the multipart variant below.
+        => RegisterFromYamlAsync(
+            yaml: request.Content,
+            fileDigests: new Dictionary<string, string>(),
+            uploadedFilesPath: null,
+            ct: ct);
+
+    /// <summary>
+    /// #277 (PR A). Multipart variant of <c>POST /api/templates/from-yaml</c>.
+    ///
+    /// Accepts a <c>spec</c> form field (YAML body) plus zero-or-more
+    /// <c>files[<em>name</em>]</c> file parts. Each file is staged to
+    /// <c>&lt;temp&gt;/andy-containers/template-uploads/&lt;templateId&gt;/&lt;name&gt;</c>
+    /// and its SHA-256 digest is mixed into the IM3 spec hash, so two
+    /// otherwise-identical specs differing only in file content produce
+    /// different spec hashes and cache distinctly.
+    ///
+    /// Files staged here survive between the register call and the
+    /// later <c>POST /api/images/{templateId}/build</c>, so the build
+    /// backend can pick them up via <c>IBuildContext.Files</c>. The
+    /// orchestrator-side wire-up (replacing <c>EmptyBuildContext</c>
+    /// with a <c>StagedBuildContext</c> that reads from
+    /// <c>UploadedFilesPath</c>) lands in PR B; cleanup (TTL or
+    /// post-build delete) lands in PR C.
+    /// </summary>
+    [RequirePermission("template:write")]
+    [HttpPost("from-yaml")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaxMultipartRequestBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxMultipartRequestBytes)]
+    public async Task<IActionResult> CreateFromYamlMultipart(CancellationToken ct)
     {
-        var validation = _parser.Validate(request.Content);
+        if (!Request.HasFormContentType)
+        {
+            return BadRequest(new { error = "Request body must be multipart/form-data." });
+        }
+
+        var form = await Request.ReadFormAsync(ct);
+
+        // The YAML spec lives in a `spec` field; tolerate `content` as
+        // a fallback so callers that mirror the JSON body's field name
+        // also work.
+        var yaml = form["spec"].ToString();
+        if (string.IsNullOrWhiteSpace(yaml))
+        {
+            yaml = form["content"].ToString();
+        }
+        if (string.IsNullOrWhiteSpace(yaml))
+        {
+            return BadRequest(new { error = "Multipart request is missing the `spec` field (YAML body)." });
+        }
+
+        // Stage each uploaded file under a deterministic path keyed
+        // by a fresh staging id. The id is independent of the
+        // templateId because the templateId isn't known until after
+        // the YAML is parsed AND the idempotency check has run; once
+        // we commit to a new template row, the staging dir is
+        // renamed to its templateId. Idempotent re-registers reuse
+        // the existing template's UploadedFilesPath instead.
+        var stagingId = Guid.NewGuid();
+        var stagingDir = Path.Combine(
+            Path.GetTempPath(),
+            "andy-containers",
+            "template-uploads",
+            "staging",
+            stagingId.ToString("N"));
+
+        var fileDigests = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (form.Files.Count > 0)
+        {
+            Directory.CreateDirectory(stagingDir);
+            try
+            {
+                foreach (var file in form.Files)
+                {
+                    if (file.Length > MaxFileSizeBytes)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Uploaded file `{file.Name}` exceeds the per-file limit of {MaxFileSizeBytes:N0} bytes.",
+                        });
+                    }
+
+                    // Logical name == multipart part name. The Conductor
+                    // client uses the spec's `files[].source` value as
+                    // the part name, so this matches the spec entry
+                    // verbatim.
+                    var logicalName = file.Name;
+                    var safeRelativePath = SanitiseLogicalName(logicalName);
+                    if (safeRelativePath is null)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Uploaded file part name `{logicalName}` is not a safe relative path.",
+                        });
+                    }
+
+                    var dest = Path.Combine(stagingDir, safeRelativePath);
+                    var destDir = Path.GetDirectoryName(dest);
+                    if (!string.IsNullOrEmpty(destDir))
+                    {
+                        Directory.CreateDirectory(destDir);
+                    }
+
+                    await using (var sink = System.IO.File.Create(dest))
+                    {
+                        await file.CopyToAsync(sink, ct);
+                    }
+
+                    fileDigests[logicalName] = await ComputeFileDigestAsync(dest, ct);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup on any partial-write failure so
+                // the staging area doesn't grow unbounded.
+                try { Directory.Delete(stagingDir, recursive: true); } catch { }
+                throw;
+            }
+        }
+
+        var result = await RegisterFromYamlAsync(
+            yaml: yaml,
+            fileDigests: fileDigests,
+            uploadedFilesPath: form.Files.Count > 0 ? stagingDir : null,
+            ct: ct);
+
+        // If the call short-circuited (idempotent re-register or 409),
+        // the freshly-staged files are unused — drop them so the temp
+        // root doesn't accumulate one staging dir per duplicate POST.
+        // The existing template's pre-existing UploadedFilesPath (if
+        // any) is untouched.
+        if (form.Files.Count > 0 && Directory.Exists(stagingDir))
+        {
+            var keep = result is CreatedAtActionResult { Value: RegisteredTemplate created } && created.Created;
+            if (!keep)
+            {
+                try { Directory.Delete(stagingDir, recursive: true); } catch { }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Shared implementation of <c>POST /api/templates/from-yaml</c>
+    /// for both content-type variants. Validates + parses the spec,
+    /// computes the IM3 spec hash with optional file digests mixed in,
+    /// and either:
+    /// - returns the existing row when (code, specHash) match (200,
+    ///   created=false), per IM8 idempotency,
+    /// - returns 409 when code matches but specHash differs (per IM10),
+    /// - or creates a new row and returns 201.
+    /// </summary>
+    private async Task<IActionResult> RegisterFromYamlAsync(
+        string yaml,
+        IReadOnlyDictionary<string, string> fileDigests,
+        string? uploadedFilesPath,
+        CancellationToken ct)
+    {
+        var validation = _parser.Validate(yaml);
         if (!validation.IsValid)
             return BadRequest(validation);
 
-        var template = _parser.Parse(request.Content);
+        var template = _parser.Parse(yaml);
         template.OwnerId = _currentUser.GetUserId();
+        template.UploadedFilesPath = uploadedFilesPath;
+        template.SpecHash = ComputeSpecHash(template, fileDigests);
 
-        // IM8 (#262). Compute the content-addressable spec hash so a
-        // future build against this template can short-circuit when
-        // the same spec has already been built. Files are not yet
-        // wired through this JSON-only endpoint, so the hash is
-        // computed against the canonical-JSON form alone (no file
-        // digests). The multipart variant (per IM5's contract) will
-        // mix file digests in once it lands as part of the
-        // orchestration in Phase 1.
-        template.SpecHash = ComputeSpecHash(template);
-
-        // IM8 (#262). Idempotent re-register: if a template with the
-        // same code AND the same spec hash already exists, return
-        // that existing row instead of creating a duplicate. This is
-        // what makes 'register the same spec twice' a no-op — the
-        // contract documented in the IM5 OpenAPI for
-        // RegisteredTemplate.created.
         var existing = await _db.Templates
             .FirstOrDefaultAsync(t => t.Code == template.Code, ct);
         if (existing is not null)
@@ -322,14 +475,61 @@ public class TemplatesController : ControllerBase
                 Version: template.Version));
     }
 
+    // #277 (PR A). Hard caps on the multipart upload, tunable when the
+    // option-bag in PR C lands. Per the issue:
+    // - 32 MiB per individual file
+    // - 256 MiB total request size
+    private const long MaxFileSizeBytes = 32L * 1024 * 1024;
+    private const long MaxMultipartRequestBytes = 256L * 1024 * 1024;
+
+    /// <summary>
+    /// Returns a relative path safe to combine with a staging root, or
+    /// <c>null</c> if the input attempts directory traversal or
+    /// references an absolute path. Logical names come from the
+    /// multipart `files[<name>]` part name and are usually shaped
+    /// like `install-assistants.sh` or `bin/foo.sh` — both are fine.
+    /// </summary>
+    private static string? SanitiseLogicalName(string logicalName)
+    {
+        if (string.IsNullOrEmpty(logicalName)) return null;
+        if (Path.IsPathRooted(logicalName)) return null;
+        if (logicalName.Contains("..", StringComparison.Ordinal)) return null;
+        // Normalise separators so the same name on macOS/Linux/Windows
+        // produces the same on-disk shape.
+        var normalised = logicalName.Replace('\\', '/');
+        if (normalised.StartsWith('/')) return null;
+        return normalised;
+    }
+
+    /// <summary>
+    /// Computes the IM3 file digest for a staged upload. The digest is
+    /// mixed into the spec hash so two specs that differ only in their
+    /// referenced file content cache distinctly. Format matches
+    /// <c>BuildArtifactReference.Digest</c>: <c>sha256:&lt;64 hex&gt;</c>.
+    /// </summary>
+    private static async Task<string> ComputeFileDigestAsync(string path, CancellationToken ct)
+    {
+        await using var stream = System.IO.File.OpenRead(path);
+        var hash = await SHA256.HashDataAsync(stream, ct);
+        return "sha256:" + Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
     /// <summary>
     /// Compute the IM3 content-addressable spec hash for a parsed
     /// template. Aligns with the formula in the architecture memo:
     /// <c>sha256(canonicalJson(parsedSpec) || sortedFileDigests)</c>.
-    /// In the JSON-only register endpoint there are no uploaded
-    /// files, so the file-digest map is empty.
     /// </summary>
-    private static string ComputeSpecHash(ContainerTemplate template)
+    /// <param name="template">Parsed template with all fields populated.</param>
+    /// <param name="fileDigests">
+    /// Digests of files uploaded alongside the template, keyed by
+    /// logical name (the multipart <c>files[name]</c> part name).
+    /// Pass an empty dictionary when no files were uploaded — the
+    /// hash then degrades to <c>sha256(canonicalJson(parsedSpec))</c>,
+    /// matching the JSON-only register path.
+    /// </param>
+    private static string ComputeSpecHash(
+        ContainerTemplate template,
+        IReadOnlyDictionary<string, string> fileDigests)
     {
         // Build a stable JSON projection of the template fields that
         // matter for the build outcome. Canonical-JSON normalisation
@@ -354,9 +554,7 @@ public class TemplatesController : ControllerBase
         };
         var json = JsonSerializer.Serialize(projection);
         var canonical = CanonicalJson.Serialize(json);
-        return CanonicalJson.ComputeSpecHash(
-            canonical,
-            new Dictionary<string, string>());
+        return CanonicalJson.ComputeSpecHash(canonical, fileDigests);
     }
 
     private static object? SafeDeserialize(string? json)
