@@ -23,6 +23,7 @@ public class ImagesControllerTests : IDisposable
     private readonly Mock<IAsyncBuildExecutor> _mockExecutor;
     private readonly Mock<IBuildEventBus> _mockEventBus;
     private readonly Mock<IBuildExecutionRegistry> _mockExecutionRegistry;
+    private readonly Mock<IBuildArtifactStore> _mockArtifactStore;
     private readonly ImagesController _controller;
 
     public ImagesControllerTests()
@@ -62,6 +63,7 @@ public class ImagesControllerTests : IDisposable
                 new AsyncBuildHandle(Guid.NewGuid(), AsyncBuildHandleStatus.Queued, null));
         _mockEventBus = new Mock<IBuildEventBus>();
         _mockExecutionRegistry = new Mock<IBuildExecutionRegistry>();
+        _mockArtifactStore = new Mock<IBuildArtifactStore>();
 
         _controller = new ImagesController(
             _db,
@@ -72,7 +74,8 @@ public class ImagesControllerTests : IDisposable
             _mockOrchestrator.Object,
             _mockExecutor.Object,
             _mockEventBus.Object,
-            _mockExecutionRegistry.Object);
+            _mockExecutionRegistry.Object,
+            _mockArtifactStore.Object);
     }
 
     public void Dispose() => _db.Dispose();
