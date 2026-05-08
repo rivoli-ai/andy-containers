@@ -57,6 +57,43 @@ public class GitCredentialService : IGitCredentialService
         return true;
     }
 
+    public async Task<IReadOnlyList<DecryptedGitCredential>> ListWithDecryptedTokensAsync(
+        string ownerId,
+        CancellationToken ct)
+    {
+        using var activity = ActivitySources.Git.StartActivity("GitCredential.ListDecrypted");
+        var rows = await _db.GitCredentials
+            .Where(c => c.OwnerId == ownerId)
+            .OrderBy(c => c.CreatedAt)
+            .ToListAsync(ct);
+
+        // Decrypt in-memory; failures on individual rows shouldn't drop
+        // the whole bag — log + skip so a corrupted single credential
+        // doesn't block the whole container provisioning step.
+        var decrypted = new List<DecryptedGitCredential>(rows.Count);
+        foreach (var row in rows)
+        {
+            string plaintext;
+            try
+            {
+                plaintext = _protector.Unprotect(row.EncryptedToken);
+            }
+            catch (Exception)
+            {
+                // Skip and keep going. Container provisioning works
+                // best-effort; one bad row mustn't fail the whole step.
+                continue;
+            }
+            decrypted.Add(new DecryptedGitCredential(
+                Id: row.Id,
+                Label: row.Label,
+                GitHost: row.GitHost,
+                CredentialType: row.CredentialType,
+                PlaintextToken: plaintext));
+        }
+        return decrypted;
+    }
+
     public async Task<string?> ResolveTokenAsync(string ownerId, string? credentialRef, string? gitHost, CancellationToken ct)
     {
         using var activity = ActivitySources.Git.StartActivity("GitCredential.Resolve");

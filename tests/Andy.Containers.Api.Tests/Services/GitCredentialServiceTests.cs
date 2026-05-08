@@ -132,4 +132,55 @@ public class GitCredentialServiceTests : IDisposable
 
         deleted.Should().BeFalse();
     }
+
+    // ---- #1046 ListWithDecryptedTokensAsync ----
+
+    [Fact]
+    public async Task ListWithDecryptedTokens_ReturnsAllOwnerCredentialsDecrypted()
+    {
+        await _service.CreateAsync("user1", "github-pat", "ghp_a", "github.com", GitCredentialType.PersonalAccessToken);
+        await _service.CreateAsync("user1", "deploy-key", "-----BEGIN RSA PRIVATE KEY-----\nABC\n-----END RSA PRIVATE KEY-----", "git.internal", GitCredentialType.DeployKey);
+        // Different owner — must not appear in user1's result.
+        await _service.CreateAsync("user2", "other", "tok", "github.com");
+
+        var decrypted = await _service.ListWithDecryptedTokensAsync("user1");
+
+        decrypted.Should().HaveCount(2);
+        decrypted.Should().Contain(c => c.Label == "github-pat" && c.PlaintextToken == "ghp_a"
+                                      && c.CredentialType == GitCredentialType.PersonalAccessToken);
+        decrypted.Should().Contain(c => c.Label == "deploy-key" && c.PlaintextToken.Contains("BEGIN RSA")
+                                      && c.CredentialType == GitCredentialType.DeployKey);
+    }
+
+    [Fact]
+    public async Task ListWithDecryptedTokens_NoCredentials_ReturnsEmpty()
+    {
+        var decrypted = await _service.ListWithDecryptedTokensAsync("user1");
+        decrypted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ListWithDecryptedTokens_DecryptionFailure_SkipsTheRow()
+    {
+        // Create a row with a deliberately corrupted EncryptedToken so
+        // decryption throws. The contract: skip the bad row, keep
+        // returning the rest. Container provisioning shouldn't fail
+        // because one credential got into a weird state.
+        await _service.CreateAsync("user1", "good", "ok", "github.com");
+        var corruptRow = new GitCredential
+        {
+            OwnerId = "user1",
+            Label = "corrupt",
+            GitHost = "gitlab.com",
+            CredentialType = GitCredentialType.PersonalAccessToken,
+            EncryptedToken = "this-is-not-protected-bytes",
+        };
+        _db.GitCredentials.Add(corruptRow);
+        await _db.SaveChangesAsync();
+
+        var decrypted = await _service.ListWithDecryptedTokensAsync("user1");
+
+        decrypted.Should().HaveCount(1);
+        decrypted[0].Label.Should().Be("good");
+    }
 }
