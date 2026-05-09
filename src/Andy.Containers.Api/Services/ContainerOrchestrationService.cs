@@ -23,6 +23,7 @@ public class ContainerOrchestrationService : IContainerService
     private readonly IApiKeyService _apiKeyService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ContainerOrchestrationService> _logger;
+    private readonly IServiceTokenService? _serviceTokenService;
 
     /// <summary>
     /// Conductor #878. Default per-user simultaneous-container
@@ -41,7 +42,8 @@ public class ContainerOrchestrationService : IContainerService
         IGitRepositoryProbeService probeService,
         IApiKeyService apiKeyService,
         IConfiguration configuration,
-        ILogger<ContainerOrchestrationService> logger)
+        ILogger<ContainerOrchestrationService> logger,
+        IServiceTokenService? serviceTokenService = null)
     {
         _db = db;
         _routing = routing;
@@ -51,6 +53,10 @@ public class ContainerOrchestrationService : IContainerService
         _apiKeyService = apiKeyService;
         _configuration = configuration;
         _logger = logger;
+        // #944. Optional so existing tests (which don't construct one)
+        // keep working; live DI always supplies the registered impl.
+        // When null, the per-container token-injection step is a no-op.
+        _serviceTokenService = serviceTokenService;
     }
 
     /// <summary>
@@ -424,6 +430,48 @@ public class ContainerOrchestrationService : IContainerService
             envVars ??= new Dictionary<string, string>();
             foreach (var kv in request.EnvironmentVariables.Where(kv => !envVars.ContainsKey(kv.Key)))
                 envVars[kv.Key] = kv.Value;
+        }
+
+        // #944. Inject the proxy URL + service token so a code
+        // assistant installed inside the container can authenticate
+        // against andy-models without the user supplying a token.
+        // Both are best-effort: a missing config or a token-mint
+        // failure logs a warning and the container still starts.
+        // User-supplied env vars (above) win — if a caller already
+        // set ANDY_PROXY_BASE_URL or ANDY_SERVICE_TOKEN explicitly,
+        // we don't overwrite.
+        var containerFacingProxyUrl = _configuration.GetValue<string?>("Proxy:ContainerFacingBaseUrl");
+        if (!string.IsNullOrWhiteSpace(containerFacingProxyUrl))
+        {
+            envVars ??= new Dictionary<string, string>();
+            if (!envVars.ContainsKey("ANDY_PROXY_BASE_URL"))
+            {
+                envVars["ANDY_PROXY_BASE_URL"] = containerFacingProxyUrl;
+                _logger.LogInformation("Injecting ANDY_PROXY_BASE_URL={Url} into container env",
+                    UrlRedactor.Redact(containerFacingProxyUrl));
+            }
+        }
+        if (_serviceTokenService is not null && (envVars is null || !envVars.ContainsKey("ANDY_SERVICE_TOKEN")))
+        {
+            try
+            {
+                var serviceToken = await _serviceTokenService.GetAccessTokenAsync(ct);
+                envVars ??= new Dictionary<string, string>();
+                envVars["ANDY_SERVICE_TOKEN"] = serviceToken;
+                _logger.LogInformation("Injected ANDY_SERVICE_TOKEN (length={Length}) into container env",
+                    serviceToken.Length);
+            }
+            catch (Exception tokenEx)
+            {
+                // Don't fail container creation. The container will
+                // start without a service token; an assistant inside
+                // it that tries to call andy-models will hit a 401
+                // and the user can still configure a personal API
+                // key via the existing apiKey resolution path.
+                _logger.LogWarning(tokenEx,
+                    "Failed to mint service token for container {ContainerName}; container will start without ANDY_SERVICE_TOKEN.",
+                    container.Name);
+            }
         }
 
         // X4: profile-driven overrides. When a profile is bound, its
