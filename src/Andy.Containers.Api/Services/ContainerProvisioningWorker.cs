@@ -208,6 +208,48 @@ public class ContainerProvisioningWorker : BackgroundService
                 }
             }
 
+            // #1046. Materialise the user's git credentials inside the
+            // container so user-initiated `git clone` (terminal,
+            // code-server, agent runs) authenticate without needing the
+            // user to re-enter their PAT. Best-effort: a failure here
+            // does NOT fail the container — the initial template clone
+            // (which uses the credentials directly via embedded URL)
+            // already succeeded by this point, so the worst case is
+            // that subsequent manual clones fall back to the pre-#1046
+            // behaviour and prompt for auth.
+            if (!string.IsNullOrEmpty(job.OwnerId))
+            {
+                try
+                {
+                    var credentialService = scope.ServiceProvider.GetRequiredService<IGitCredentialService>();
+                    var credentials = await credentialService.ListWithDecryptedTokensAsync(job.OwnerId, stoppingToken);
+                    var injectionScript = GitCredentialInjector.BuildInjectionScript(job.ContainerUser, credentials);
+                    if (injectionScript is not null)
+                    {
+                        var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
+                        var credResult = await containerService.ExecAsync(job.ContainerId, injectionScript, TimeSpan.FromMinutes(1), stoppingToken);
+                        if (credResult.ExitCode != 0)
+                        {
+                            _logger.LogWarning(
+                                "Git credential injection exited with {ExitCode} for container {ContainerId}: {StdErr}",
+                                credResult.ExitCode, job.ContainerId, credResult.StdErr);
+                        }
+                        else
+                        {
+                            _logger.LogInformation(
+                                "Materialised {Count} git credential(s) into container {ContainerId} as user {User}",
+                                credentials.Count, job.ContainerId, job.ContainerUser);
+                        }
+                    }
+                }
+                catch (Exception credEx)
+                {
+                    _logger.LogWarning(credEx,
+                        "Failed to materialise git credentials into container {ContainerId} — manual `git clone` from inside the container will fall back to interactive auth.",
+                        job.ContainerId);
+                }
+            }
+
             // Install code assistant after post-create scripts
             if (job.CodeAssistant is not null)
             {
