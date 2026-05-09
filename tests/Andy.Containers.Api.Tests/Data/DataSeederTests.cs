@@ -18,13 +18,45 @@ public class DataSeederTests
         await DataSeeder.SeedAsync(db);
 
         var templates = await db.Templates.ToListAsync();
-        templates.Should().HaveCount(13);
+        templates.Should().HaveCount(14);
         templates.Select(t => t.Code).Should().BeEquivalentTo(
             "full-stack", "agent-sandbox-ui", "dotnet-8-vscode",
             "python-3.12-vscode", "angular-18-vscode", "andy-cli-dev", "dotnet-10-cli",
             "dotnet-8-alpine", "dotnet-8-desktop", "python-3.12-desktop",
             "dotnet-8-alpine-desktop", "dotnet-10-alpine-desktop",
-            "devpilot-desktop");
+            "devpilot-desktop",
+            "conductor-terminal-claude-code");
+    }
+
+    /// <summary>
+    /// rivoli-ai/conductor#1047. The canonical Claude Code reference
+    /// template — what #277's issue body referenced as "the smoke-test
+    /// artifact for the multipart upload pipeline." Pin its key fields
+    /// so a future refactor doesn't accidentally drop the
+    /// `CodeAssistant` JSON or change the wire shape consumers
+    /// (Conductor's launch UI, the assistant install service) depend on.
+    /// </summary>
+    [Fact]
+    public async Task SeedAsync_ConductorTerminalClaudeCodeTemplate_HasExpectedShape()
+    {
+        using var db = InMemoryDbHelper.CreateContext(_dbName);
+        await DataSeeder.SeedAsync(db);
+
+        var template = await db.Templates.FirstAsync(t => t.Code == "conductor-terminal-claude-code");
+        template.Name.Should().Be("Conductor Terminal — Claude Code");
+        template.BaseImage.Should().Be("ubuntu:24.04");
+        template.IdeType.Should().Be(IdeType.CodeServer);
+        template.IsPublished.Should().BeTrue("the canonical reference template must be visible in the picker.");
+        template.Tags.Should().Contain("claude-code");
+
+        // The CodeAssistant JSON must use PascalCase property names —
+        // that's what `JsonSerializer.Deserialize<CodeAssistantConfig>`
+        // matches with default options. Snake_case would silently fall
+        // back to enum defaults; this assertion locks the shape.
+        template.CodeAssistant.Should().NotBeNullOrEmpty();
+        template.CodeAssistant.Should().Contain("\"Tool\":\"ClaudeCode\"");
+        template.CodeAssistant.Should().Contain("\"AutoStart\":false");
+        template.CodeAssistant.Should().Contain("\"ApiKeyEnvVar\":\"ANTHROPIC_API_KEY\"");
     }
 
     [Fact]
@@ -64,6 +96,7 @@ public class DataSeederTests
     [InlineData("dotnet-10-cli", new[] { "dotnet-sdk", "git", "code-server" })]
     [InlineData("dotnet-8-alpine", new[] { "dotnet-sdk", "git", "code-server", "build-base", "bash" })]
     [InlineData("devpilot-desktop", new[] { "git", "zed", "xfce4", "tigervnc-standalone-server" })]
+    [InlineData("conductor-terminal-claude-code", new[] { "node", "git", "code-server" })]
     public async Task SeedAsync_TemplateHasExpectedDependencies(string templateCode, string[] expectedDeps)
     {
         using var db = InMemoryDbHelper.CreateContext(_dbName);

@@ -1,0 +1,90 @@
+code: conductor-terminal-claude-code
+name: Conductor Terminal — Claude Code
+description: |
+  Minimal terminal-only development environment with Claude Code
+  pre-installed. Pairs with Conductor's #944 service-token injection
+  so the assistant authenticates against `andy-models` automatically
+  using `ANDY_PROXY_BASE_URL` + `ANDY_SERVICE_TOKEN` baked into the
+  container env at provisioning time. The reference template that
+  rivoli-ai/andy-containers#277 + rivoli-ai/conductor#1047 were
+  designed for.
+version: "1.0.0"
+base_image: ubuntu:24.04
+catalog_scope: global
+ide_type: code-server
+
+gpu:
+  required: false
+  preferred: false
+
+resources:
+  cpu_cores: 2
+  memory_mb: 2048
+  disk_gb: 10
+
+dependencies:
+  - type: tool
+    name: node
+    version: "20.x"
+    auto_update: true
+    update_policy: minor
+
+  - type: tool
+    name: git
+    version: "latest"
+    auto_update: true
+    update_policy: patch
+
+  - type: tool
+    name: code-server
+    version: "latest"
+    auto_update: true
+    update_policy: minor
+
+environment:
+  # Disable Anthropic / OpenAI telemetry by default; users can override
+  # in the launch config.
+  ANTHROPIC_TELEMETRY_DISABLED: "1"
+
+ports:
+  8080: code-server
+
+scripts:
+  init: |
+    git config --global init.defaultBranch main
+  setup: |
+    # Print the standard banner so a freshly-launched terminal makes
+    # it obvious where the assistant + the proxy are reachable. Reads
+    # the env vars Conductor #944 / andy-containers#285 inject.
+    cat > /etc/profile.d/00-conductor-banner.sh <<'BANNER'
+    if [ -z "$CONDUCTOR_BANNER_PRINTED" ]; then
+      export CONDUCTOR_BANNER_PRINTED=1
+      echo "Conductor Terminal — Claude Code"
+      if [ -n "$ANDY_PROXY_BASE_URL" ]; then
+        echo "  Proxy:    $ANDY_PROXY_BASE_URL"
+      fi
+      if [ -n "$ANDY_SERVICE_TOKEN" ]; then
+        echo "  Auth:     ANDY_SERVICE_TOKEN is set (length: ${#ANDY_SERVICE_TOKEN})"
+      fi
+      echo "  Run:      claude   # to start the assistant"
+      echo
+    fi
+    BANNER
+
+# rivoli-ai/conductor#1047. Default code assistant. The keys here are
+# the JSON property names of `CodeAssistantConfig` (PascalCase) — see
+# rivoli-ai/andy-containers#286 for the YAML-key normalisation gap;
+# until that lands, snake_case YAML keys (`tool`, `auto_start`, …)
+# silently fall back to the enum default. PascalCase here makes the
+# intent survive any future fix.
+code_assistant:
+  Tool: ClaudeCode
+  AutoStart: false
+  ApiKeyEnvVar: ANTHROPIC_API_KEY
+
+tags:
+  - claude-code
+  - claude
+  - terminal
+  - ai
+  - conductor
