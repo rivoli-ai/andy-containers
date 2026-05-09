@@ -6,7 +6,7 @@ namespace Andy.Containers.Api.Services;
 /// <c>/connect/token</c> endpoint via the OAuth 2.0
 /// <c>client_credentials</c> grant.
 ///
-/// Used by future container-side wiring (#944 follow-up) to inject an
+/// Used by container-side wiring (#285) to inject an
 /// <c>ANDY_SERVICE_TOKEN</c> env var into provisioned containers so a
 /// code assistant running inside the container can authenticate
 /// against <c>andy-models</c> (and any other Conductor-backed service)
@@ -15,6 +15,17 @@ namespace Andy.Containers.Api.Services;
 /// The implementation caches the most recently minted token until it
 /// is within <see cref="ServiceTokenService.RefreshSkew"/> of expiry,
 /// at which point the next call mints a fresh one.
+///
+/// <para>
+/// <strong>Known limitation — long-lived containers (rivoli-ai/conductor#1052):</strong>
+/// the token here refreshes inside the andy-containers process, but
+/// the value baked into a container's env at provisioning time
+/// (<c>ANDY_SERVICE_TOKEN</c>) does NOT auto-refresh. Containers
+/// running longer than the OAuth client's <c>AccessTokenLifetime</c>
+/// (OpenIddict default: 1 hour) hold a stale JWT until restart.
+/// rivoli-ai/conductor#1052 tracks the full design for in-container
+/// refresh (sidecar / token-file mount / credential helper).
+/// </para>
 /// </summary>
 public interface IServiceTokenService
 {
