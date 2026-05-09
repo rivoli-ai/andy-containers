@@ -108,7 +108,15 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
         };
         if (!string.IsNullOrWhiteSpace(opts.Audience))
         {
-            form["scope"] = $"scp:{opts.Audience}";
+            // The `scope` request parameter takes the unprefixed scope
+            // name (== the audience, the way andy-auth's seeder
+            // registers it via `OpenIddictScopeDescriptor.Name = audience`).
+            // The `scp:` prefix is reserved for the client-side
+            // *permission* on the OpenIddict application descriptor
+            // (`Permissions.Add("scp:urn:andy-containers-api")`), not
+            // the request body. Sending `scp:urn:…` here gets
+            // rejected as `invalid_scope` (OpenIddict ID2052).
+            form["scope"] = opts.Audience;
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, opts.TokenEndpoint)

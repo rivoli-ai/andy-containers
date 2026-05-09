@@ -59,8 +59,9 @@ public class ServiceTokenServiceTests
         body.Should().Contain("grant_type=client_credentials");
         body.Should().Contain("client_id=andy-containers-api");
         body.Should().Contain("client_secret=s3cret");
-        body.Should().Contain("scope=scp%3Aurn%3Aandy-containers-api",
-            "audience-as-scope is the OpenIddict shape this codebase uses for service tokens.");
+        body.Should().Contain("scope=urn%3Aandy-containers-api",
+            "request scope is the unprefixed audience; the `scp:` prefix is for client-side permissions only. " +
+            "Sending `scp:` in the request body returns `invalid_scope` (OpenIddict ID2052).");
     }
 
     // -----------------------------------------------------------------
