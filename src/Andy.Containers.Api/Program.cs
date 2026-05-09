@@ -93,6 +93,17 @@ try
     builder.Services.AddSingleton<ICostEstimationService, CostEstimationService>();
     builder.Services.AddSingleton<IYamlTemplateParser, YamlTemplateParser>();
 
+    // #944 / M1.5.1 foundation. M2M token consumer that mints
+    // service-to-service tokens from andy-auth via the
+    // `client_credentials` grant. Used by future container-side
+    // env-var injection (the next slice of #944) so a code assistant
+    // installed inside a container can authenticate against
+    // andy-models without the user supplying a token.
+    builder.Services.Configure<ServiceAuthOptions>(
+        builder.Configuration.GetSection(ServiceAuthOptions.SectionName));
+    builder.Services.AddHttpClient(ServiceTokenService.HttpClientName);
+    builder.Services.AddSingleton<IServiceTokenService, ServiceTokenService>();
+
     // Container provisioning queue + background worker
     builder.Services.AddSingleton<ContainerProvisioningQueue>();
     builder.Services.AddHostedService<ContainerProvisioningWorker>();
