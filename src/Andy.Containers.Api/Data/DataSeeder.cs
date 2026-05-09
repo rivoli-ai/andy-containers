@@ -191,6 +191,11 @@ public static class DataSeeder
         var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
         var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
         var devpilotDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000013");
+        // rivoli-ai/conductor#1047 (#502 + #944). Canonical reference
+        // template for Conductor's M1.5 / assistant-runtime story —
+        // the slot rivoli-ai/andy-containers#277's issue body
+        // referenced as the smoke-test artifact.
+        var conductorTerminalClaudeCodeId = Guid.Parse("00000002-0001-0001-0001-000000000014");
 
         db.Templates.AddRange(
             new ContainerTemplate
@@ -395,18 +400,41 @@ public static class DataSeeder
                 Tags = ["desktop", "zed", "vnc", "devpilot-parity"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = DesktopScriptsJson
+            },
+            new ContainerTemplate
+            {
+                Id = conductorTerminalClaudeCodeId,
+                Code = "conductor-terminal-claude-code",
+                Name = "Conductor Terminal — Claude Code",
+                Description = "Minimal terminal-only environment with Claude Code preinstalled. Pairs with Conductor's #944 service-token injection so the assistant authenticates against andy-models automatically.",
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["claude-code", "claude", "terminal", "ai", "conductor"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
+                Scripts = NodeScriptsJson,
+                // rivoli-ai/conductor#1047. Default code assistant
+                // declared via PascalCase JSON property names — that's
+                // the shape `JsonSerializer.Deserialize<CodeAssistantConfig>`
+                // expects with default options. (The YAML mirror in
+                // `config/templates/global/conductor-terminal-claude-code.yaml`
+                // uses the same casing for the same reason.)
+                CodeAssistant = """{"Tool":"ClaudeCode","AutoStart":false,"ApiKeyEnvVar":"ANTHROPIC_API_KEY"}"""
             }
         );
 
         // Seed dependencies for all templates
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId, conductorTerminalClaudeCodeId);
 
         await db.SaveChangesAsync();
     }
 
     private static void SeedDependencySpecs(ContainersDbContext db,
         Guid fullStackId, Guid agentSandboxId, Guid dotnetId, Guid pythonId, Guid angularId, Guid andyCliId, Guid dotnet10Id, Guid dotnetAlpineId,
-        Guid dotnetDesktopId, Guid pythonDesktopId, Guid alpineDotnet8DesktopId, Guid alpineDotnet10DesktopId, Guid devpilotDesktopId)
+        Guid dotnetDesktopId, Guid pythonDesktopId, Guid alpineDotnet8DesktopId, Guid alpineDotnet10DesktopId, Guid devpilotDesktopId,
+        Guid conductorTerminalClaudeCodeId)
     {
         db.DependencySpecs.AddRange(
             // Full Stack: dotnet + python + node + angular + git + code-server
@@ -492,7 +520,15 @@ public static class DataSeeder
             new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 1 },
             new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.Tool, Name = "zed", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 2 },
             new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.OsPackage, Name = "xfce4", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 3 },
-            new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 }
+            new DependencySpec { TemplateId = devpilotDesktopId, Type = DependencyType.OsPackage, Name = "tigervnc-standalone-server", VersionConstraint = "latest", AutoUpdate = false, UpdatePolicy = UpdatePolicy.SecurityOnly, SortOrder = 4 },
+
+            // rivoli-ai/conductor#1047 (#502 + #944) — terminal + Node + Claude Code.
+            // Claude Code itself is installed at provisioning time by `CodeAssistantInstallService`
+            // (which shells out to `npm install -g @anthropic-ai/claude-code`); the deps here
+            // cover the runtime prerequisites only.
+            new DependencySpec { TemplateId = conductorTerminalClaudeCodeId, Type = DependencyType.Tool, Name = "node", VersionConstraint = "20.x", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 1 },
+            new DependencySpec { TemplateId = conductorTerminalClaudeCodeId, Type = DependencyType.Tool, Name = "git", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Patch, SortOrder = 2 },
+            new DependencySpec { TemplateId = conductorTerminalClaudeCodeId, Type = DependencyType.Tool, Name = "code-server", VersionConstraint = "latest", AutoUpdate = true, UpdatePolicy = UpdatePolicy.Minor, SortOrder = 3 }
         );
     }
 
@@ -509,6 +545,7 @@ public static class DataSeeder
         var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
         var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
         var devpilotDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000013");
+        var conductorTerminalClaudeCodeId = Guid.Parse("00000002-0001-0001-0001-000000000014");
 
         // Check which new templates are missing
         var newTemplates = new Dictionary<Guid, ContainerTemplate>
@@ -622,6 +659,22 @@ public static class DataSeeder
                 Tags = ["desktop", "zed", "vnc", "devpilot-parity"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
                 Scripts = DesktopScriptsJson
+            },
+            [conductorTerminalClaudeCodeId] = new ContainerTemplate
+            {
+                Id = conductorTerminalClaudeCodeId,
+                Code = "conductor-terminal-claude-code",
+                Name = "Conductor Terminal — Claude Code",
+                Description = "Minimal terminal-only environment with Claude Code preinstalled. Pairs with Conductor's #944 service-token injection so the assistant authenticates against andy-models automatically.",
+                Version = "1.0.0",
+                BaseImage = "ubuntu:24.04",
+                CatalogScope = CatalogScope.Global,
+                IdeType = IdeType.CodeServer,
+                IsPublished = true,
+                Tags = ["claude-code", "claude", "terminal", "ai", "conductor"],
+                DefaultResources = """{"cpuCores":2,"memoryMb":2048,"diskGb":10}""",
+                Scripts = NodeScriptsJson,
+                CodeAssistant = """{"Tool":"ClaudeCode","AutoStart":false,"ApiKeyEnvVar":"ANTHROPIC_API_KEY"}"""
             }
         };
 
@@ -659,6 +712,7 @@ public static class DataSeeder
             Guid.Parse("00000002-0001-0001-0001-000000000011"),
             Guid.Parse("00000002-0001-0001-0001-000000000012"),
             Guid.Parse("00000002-0001-0001-0001-000000000013"),
+            Guid.Parse("00000002-0001-0001-0001-000000000014"),
         };
 
         var templates = await db.Templates
@@ -680,6 +734,7 @@ public static class DataSeeder
             ["dotnet-8-alpine-desktop"] = DesktopScriptsJson,
             ["dotnet-10-alpine-desktop"] = DesktopScriptsJson,
             ["devpilot-desktop"] = DesktopScriptsJson,
+            ["conductor-terminal-claude-code"] = NodeScriptsJson,
         };
 
         // Also fix base images for desktop templates (they may have been seeded with ubuntu:24.04)
@@ -731,8 +786,9 @@ public static class DataSeeder
         var alpineDotnet8DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000011");
         var alpineDotnet10DesktopId = Guid.Parse("00000002-0001-0001-0001-000000000012");
         var devpilotDesktopId = Guid.Parse("00000002-0001-0001-0001-000000000013");
+        var conductorTerminalClaudeCodeId = Guid.Parse("00000002-0001-0001-0001-000000000014");
 
-        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId };
+        var seedIds = new[] { fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId, conductorTerminalClaudeCodeId };
 
         // Find which seed templates have no dependency specs at all
         var templatesWithDeps = await db.DependencySpecs
@@ -747,7 +803,7 @@ public static class DataSeeder
 
         // Only seed deps for templates that have none — use a temporary context
         // to avoid duplicating the full-stack deps that may already exist
-        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId);
+        SeedDependencySpecs(db, fullStackId, agentSandboxId, dotnetId, pythonId, angularId, andyCliId, dotnet10Id, dotnetAlpineId, dotnetDesktopId, pythonDesktopId, alpineDotnet8DesktopId, alpineDotnet10DesktopId, devpilotDesktopId, conductorTerminalClaudeCodeId);
 
         // Remove specs for templates that already had them (we just re-added everything)
         var duplicates = db.ChangeTracker.Entries<DependencySpec>()
