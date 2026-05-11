@@ -234,6 +234,88 @@ public class ContainersController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// rivoli-ai/conductor#945 (M1.5.3). Re-run the code-assistant
+    /// install for a container that surfaced a Failed or Skipped
+    /// status. The container must be Running (the install script
+    /// execs inside it) and have a code assistant configured (we read
+    /// the config back from <c>Container.CodeAssistant</c>'s JSON
+    /// blob — same source the worker uses).
+    /// </summary>
+    [HttpPost("{id:guid}/retry-code-assistant-install")]
+    [RequirePermission("container:execute")]
+    public async Task<IActionResult> RetryCodeAssistantInstall(
+        Guid id,
+        [FromServices] ICodeAssistantInstallExecutor executor,
+        CancellationToken ct)
+    {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        if (container.Status != ContainerStatus.Running)
+        {
+            return UnprocessableEntity(new
+            {
+                error = new
+                {
+                    type = "container_not_running",
+                    message = $"Container is {container.Status}; retry requires Running."
+                }
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(container.CodeAssistant))
+        {
+            return UnprocessableEntity(new
+            {
+                error = new
+                {
+                    type = "no_code_assistant_configured",
+                    message = "Container has no code assistant configured; nothing to retry."
+                }
+            });
+        }
+
+        CodeAssistantConfig? codeAssistant;
+        try
+        {
+            codeAssistant = System.Text.Json.JsonSerializer.Deserialize<CodeAssistantConfig>(container.CodeAssistant);
+        }
+        catch (Exception ex)
+        {
+            return UnprocessableEntity(new
+            {
+                error = new
+                {
+                    type = "code_assistant_config_unreadable",
+                    message = $"Could not parse Container.CodeAssistant: {ex.GetType().Name}: {ex.Message}"
+                }
+            });
+        }
+        if (codeAssistant is null)
+        {
+            return UnprocessableEntity(new
+            {
+                error = new
+                {
+                    type = "code_assistant_config_unreadable",
+                    message = "Container.CodeAssistant deserialised to null."
+                }
+            });
+        }
+
+        await executor.RunAsync(container, codeAssistant, ct);
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            container.Id,
+            container.CodeAssistantStatus,
+            container.CodeAssistantStatusReason,
+            container.CodeAssistantStatusAt,
+        });
+    }
+
     [HttpGet("{id:guid}/connection")]
     [RequirePermission("container:read")]
     public async Task<IActionResult> GetConnectionInfo(Guid id, CancellationToken ct)
