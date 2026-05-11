@@ -75,6 +75,70 @@ public class AndyModelsProxyTokenServiceTests
     }
 
     // -----------------------------------------------------------------
+    // Lifetime hint (#943 AC: 7-day default)
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void AndyModelsOptions_DefaultLifetimeIsSevenDays()
+    {
+        // rivoli-ai/conductor#943 spec: "Token lifetime defaults to 7 days."
+        new AndyModelsOptions().TokenLifetimeSeconds
+            .Should().Be(7 * 24 * 60 * 60,
+                "the default token lifetime is contractual — bumping it has billing + revocation-window implications.");
+    }
+
+    [Fact]
+    public async Task Mint_SendsDefaultSevenDayLifetimeHintWhenConfigUntouched()
+    {
+        var (service, handler, _) = MakeService(opts =>
+        {
+            opts.BaseUrl = "http://andy-models.test";
+            // Do NOT override TokenLifetimeSeconds — exercise the default.
+        });
+        handler.SetSuccessJsonResponse(
+            "{\"tokenId\":\"99999999-9999-9999-9999-999999999999\",\"jwt\":\"j.w.t\",\"expiresAt\":\"2026-12-01T00:00:00Z\"}");
+
+        _ = await service.MintForContainerAsync("ctr", "user", new[] { "anthropic/claude-sonnet-4-6" });
+
+        handler.LastBody.Should().Contain("\"lifetimeSeconds\":604800");
+    }
+
+    [Fact]
+    public async Task Mint_ExplicitLifetimeHintIsRespected()
+    {
+        var (service, handler, _) = MakeService(opts =>
+        {
+            opts.BaseUrl = "http://andy-models.test";
+            opts.TokenLifetimeSeconds = 3600;
+        });
+        handler.SetSuccessJsonResponse(
+            "{\"tokenId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"jwt\":\"j.w.t\",\"expiresAt\":\"2026-12-01T00:00:00Z\"}");
+
+        _ = await service.MintForContainerAsync("ctr", "user", new[] { "anthropic/claude-sonnet-4-6" });
+
+        handler.LastBody.Should().Contain("\"lifetimeSeconds\":3600");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task Mint_ZeroOrNegativeLifetime_OmitsHint(int configured)
+    {
+        var (service, handler, _) = MakeService(opts =>
+        {
+            opts.BaseUrl = "http://andy-models.test";
+            opts.TokenLifetimeSeconds = configured;
+        });
+        handler.SetSuccessJsonResponse(
+            "{\"tokenId\":\"11111111-2222-3333-4444-555555555555\",\"jwt\":\"j.w.t\",\"expiresAt\":\"2026-12-01T00:00:00Z\"}");
+
+        _ = await service.MintForContainerAsync("ctr", "user", new[] { "anthropic/claude-sonnet-4-6" });
+
+        handler.LastBody.Should().Contain("\"lifetimeSeconds\":null",
+            "0 / negative configured values are 'omit the hint' — let andy-models apply its own default.");
+    }
+
+    // -----------------------------------------------------------------
     // Mint — short-circuits
     // -----------------------------------------------------------------
 

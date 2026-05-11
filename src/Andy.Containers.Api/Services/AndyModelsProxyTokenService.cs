@@ -66,13 +66,21 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
         // Resolve against the configured base. Path matches the
         // controller's [Route("api/proxy/tokens")] in andy-models.
         var url = CombinePathStrict(opts.BaseUrl!, "api/proxy/tokens");
+        // Normalise the lifetime hint: 0 / negative means "omit"
+        // (let andy-models apply its own default). The controller
+        // already coerces null + non-positive to null, but being
+        // explicit here keeps the wire shape clean for ops who tail
+        // the request bodies.
+        var lifetimeHint = opts.TokenLifetimeSeconds is { } seconds && seconds > 0
+            ? (int?)seconds
+            : null;
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = JsonContent.Create(new MintProxyTokenRequest(
                 ContainerId: containerId,
                 SubjectId: subjectId,
                 AllowedSlugs: allowedSlugs,
-                LifetimeSeconds: opts.TokenLifetimeSeconds)),
+                LifetimeSeconds: lifetimeHint)),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
 
@@ -247,6 +255,14 @@ public sealed class AndyModelsOptions
     public const string SectionName = "AndyModels";
 
     /// <summary>
+    /// rivoli-ai/conductor#943. 7 days. Long-lived containers normally
+    /// outlive the OAuth default of 1 hour, so the token mint requests
+    /// a week up front; andy-models clamps to its configured maximum
+    /// if the deployment policy is shorter.
+    /// </summary>
+    public const int DefaultTokenLifetimeSeconds = 7 * 24 * 60 * 60;
+
+    /// <summary>
     /// Base URL of the andy-models API — e.g.
     /// <c>http://localhost:9100/models</c> in embedded mode or
     /// <c>https://andy-models.example.com</c> in server deployments.
@@ -256,10 +272,12 @@ public sealed class AndyModelsOptions
     public string? BaseUrl { get; set; }
 
     /// <summary>
-    /// Default token lifetime hint. <c>null</c> lets andy-models
-    /// apply its own default (currently 24h per M1.3.3). Set this to
-    /// a smaller number for short-lived workloads — andy-models clamps
-    /// to its configured maximum either way.
+    /// Token lifetime hint sent on the mint request. Defaults to
+    /// <see cref="DefaultTokenLifetimeSeconds"/> (7 days per
+    /// rivoli-ai/conductor#943 AC). Set to a smaller number for
+    /// short-lived workloads — andy-models clamps to its configured
+    /// maximum either way. Set to <c>0</c> or a negative number to
+    /// omit the hint and accept andy-models' own default.
     /// </summary>
-    public int? TokenLifetimeSeconds { get; set; }
+    public int? TokenLifetimeSeconds { get; set; } = DefaultTokenLifetimeSeconds;
 }
