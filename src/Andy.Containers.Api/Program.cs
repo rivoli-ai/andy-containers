@@ -154,6 +154,10 @@ try
     builder.Services.AddScoped<IGitCloneService, GitCloneService>();
     builder.Services.AddScoped<IGitRepositoryProbeService, GitRepositoryProbeService>();
     builder.Services.AddSingleton<ICodeAssistantInstallService, CodeAssistantInstallService>();
+    // rivoli-ai/conductor#945 (M1.5.3). Scoped so it pulls a fresh
+    // IContainerService per call (which is itself scoped because it
+    // takes ContainersDbContext).
+    builder.Services.AddScoped<ICodeAssistantInstallExecutor, CodeAssistantInstallExecutor>();
     builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
     builder.Services.AddScoped<IApiKeyValidationService, ApiKeyValidationService>();
     builder.Services.AddHttpClient("ApiKeyValidation");

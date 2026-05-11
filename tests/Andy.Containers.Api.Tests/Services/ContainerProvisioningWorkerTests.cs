@@ -47,6 +47,11 @@ public class ContainerProvisioningWorkerTests : IDisposable
         services.AddScoped<IGitCloneService>(_ => _mockGitCloneService.Object);
         services.AddScoped<IContainerService>(_ => _mockContainerService.Object);
         services.AddScoped<ICodeAssistantInstallService>(_ => _mockCodeAssistantInstallService.Object);
+        // rivoli-ai/conductor#945 (M1.5.3). Worker resolves the
+        // executor from the scope; register the real implementation
+        // so the install-status writes flow through during tests.
+        services.AddScoped<ICodeAssistantInstallExecutor, CodeAssistantInstallExecutor>();
+        services.AddSingleton<ILogger<CodeAssistantInstallExecutor>>(NullLogger<CodeAssistantInstallExecutor>.Instance);
         _serviceProvider = services.BuildServiceProvider();
     }
 

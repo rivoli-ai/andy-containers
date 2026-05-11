@@ -93,6 +93,31 @@ public class Container
     /// </summary>
     public DateTime? ProxyTokenIssuedAt { get; set; }
 
+    /// <summary>
+    /// rivoli-ai/conductor#945 (M1.5.3). Outcome of the code-assistant
+    /// install step inside the provisioning worker. Surfaces to the
+    /// Conductor UI as a banner when not <see cref="CodeAssistantInstallStatus.Installed"/>
+    /// (or null). Null on rows that pre-date #945 or on containers
+    /// created without a code assistant.
+    /// </summary>
+    public CodeAssistantInstallStatus? CodeAssistantStatus { get; set; }
+
+    /// <summary>
+    /// rivoli-ai/conductor#945 (M1.5.3). Free-text reason paired with
+    /// <see cref="CodeAssistantStatus"/>. For failures: stderr summary
+    /// or the underlying exception type + message. For skips: which
+    /// precondition was missing (e.g. "unknown-tool: QwenCoder",
+    /// "no-template-mapping"). For successes the field is null.
+    /// </summary>
+    public string? CodeAssistantStatusReason { get; set; }
+
+    /// <summary>
+    /// rivoli-ai/conductor#945 (M1.5.3). Wall-clock UTC at which the
+    /// install step completed (success, failure, or skip). Used by the
+    /// UI to disambiguate stale failures from fresh ones after a retry.
+    /// </summary>
+    public DateTime? CodeAssistantStatusAt { get; set; }
+
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();
     public ICollection<ContainerGitRepository> GitRepositories { get; set; } = new List<ContainerGitRepository>();
@@ -108,6 +133,27 @@ public enum ContainerStatus
     Failed,
     Destroying,
     Destroyed
+}
+
+/// <summary>
+/// rivoli-ai/conductor#945 (M1.5.3). Captures the outcome of the
+/// code-assistant install step the provisioning worker runs after
+/// the container is up. Surfaces to the Conductor UI so users see a
+/// banner explaining why their picked assistant isn't usable instead
+/// of attaching a terminal and finding the binary missing.
+///
+/// Lifecycle: <c>Installing</c> while the script is running →
+/// <c>Installed</c> on exit code 0 → <c>Failed</c> on non-zero exit
+/// or timeout → <c>Skipped</c> when the install script could not be
+/// generated (unknown tool, missing template mapping). Containers
+/// without a configured assistant leave the field <c>null</c>.
+/// </summary>
+public enum CodeAssistantInstallStatus
+{
+    Installing = 0,
+    Installed = 1,
+    Failed = 2,
+    Skipped = 3,
 }
 
 public enum CreationSource

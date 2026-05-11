@@ -250,31 +250,17 @@ public class ContainerProvisioningWorker : BackgroundService
                 }
             }
 
-            // Install code assistant after post-create scripts
+            // Install code assistant after post-create scripts.
+            // rivoli-ai/conductor#945 (M1.5.3). The container remains
+            // Running on failure (degraded but reachable so the user
+            // can debug), but the outcome is captured on the row so
+            // the UI surfaces a "Code assistant install failed"
+            // banner instead of attaching the user to a workspace
+            // that silently lacks the assistant they picked.
             if (job.CodeAssistant is not null)
             {
-                try
-                {
-                    var installService = scope.ServiceProvider.GetRequiredService<ICodeAssistantInstallService>();
-                    var installScript = installService.GenerateInstallScript(job.CodeAssistant);
-                    var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
-
-                    _logger.LogInformation("Installing code assistant {Tool} for container {ContainerId}",
-                        job.CodeAssistant.Tool, job.ContainerId);
-                    var installResult = await containerService.ExecAsync(job.ContainerId, installScript, TimeSpan.FromMinutes(10), stoppingToken);
-                    if (installResult.ExitCode != 0)
-                        _logger.LogWarning("Code assistant install exited with {ExitCode} for container {ContainerId}: {StdErr}",
-                            installResult.ExitCode, job.ContainerId, installResult.StdErr);
-                    else
-                        _logger.LogInformation("Code assistant {Tool} installed for container {ContainerId}",
-                            job.CodeAssistant.Tool, job.ContainerId);
-                }
-                catch (Exception assistantEx)
-                {
-                    // Failed install does NOT fail the container
-                    _logger.LogWarning(assistantEx, "Code assistant install failed for container {ContainerId}, container remains Running",
-                        job.ContainerId);
-                }
+                var executor = scope.ServiceProvider.GetRequiredService<ICodeAssistantInstallExecutor>();
+                await executor.RunAsync(container, job.CodeAssistant, stoppingToken);
             }
 
             // Clone git repositories after container is running
