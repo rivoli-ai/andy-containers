@@ -40,7 +40,7 @@ public class AppleContainerProviderTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [AppleContainerCliFact]
     public async Task HealthCheck_WhenServiceRunning_ShouldReturnHealthy()
     {
         var health = await _provider.HealthCheckAsync(CancellationToken.None);
@@ -48,7 +48,7 @@ public class AppleContainerProviderTests : IAsyncLifetime
         health.Should().Be(ProviderHealth.Healthy);
     }
 
-    [Fact]
+    [AppleContainerCliFact]
     public async Task FullLifecycle_CreateStartExecStopDestroy()
     {
         // 1. Create container
@@ -96,7 +96,7 @@ public class AppleContainerProviderTests : IAsyncLifetime
         _externalId = null; // already cleaned up
     }
 
-    [Fact]
+    [AppleContainerCliFact]
     public async Task TmuxSession_SurvivesDisconnectAndReattach()
     {
         // Setup: create a container with tmux installed
@@ -161,7 +161,7 @@ public class AppleContainerProviderTests : IAsyncLifetime
         reconnectMarker.StdOut.Should().Contain("RECONNECT_TEST", "state written in tmux session should persist across reconnects");
     }
 
-    [Fact]
+    [AppleContainerCliFact]
     public async Task GetCapabilities_ShouldReturnAppleContainerCapabilities()
     {
         var caps = await _provider.GetCapabilitiesAsync(CancellationToken.None);
