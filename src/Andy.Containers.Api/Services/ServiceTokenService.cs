@@ -30,9 +30,13 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ServiceTokenService> _logger;
 
+    // rivoli-ai/conductor#1055. Per-audience cache. Each audience the
+    // process talks to (urn:andy-containers-api, urn:andy-models-api,
+    // future others) gets its own slot. A single shared gate is fine
+    // for the dev/embedded volume — the critical section is just a
+    // dictionary lookup + an HTTP mint behind the cache miss.
     private readonly SemaphoreSlim _gate = new(initialCount: 1, maxCount: 1);
-    private string? _cachedToken;
-    private DateTimeOffset _cachedExpiry = DateTimeOffset.MinValue;
+    private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
 
     /// <summary>HttpClient name registered in DI; tests can override.</summary>
     public const string HttpClientName = "ServiceTokenClient";
@@ -49,12 +53,34 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public async Task<string> GetAccessTokenAsync(CancellationToken ct = default)
+    public Task<string> GetAccessTokenAsync(CancellationToken ct = default)
     {
-        // Fast path: token cached + comfortably ahead of expiry.
-        if (_cachedToken is not null && _timeProvider.GetUtcNow() + RefreshSkew < _cachedExpiry)
+        // Default-audience path — preserves the existing contract for
+        // callers that don't care about cross-service audiences.
+        var defaultAudience = _options.Value.Audience;
+        if (string.IsNullOrWhiteSpace(defaultAudience))
         {
-            return _cachedToken;
+            throw new ServiceTokenException(
+                "ServiceAuth:Audience is not configured. Cannot mint service-to-service tokens without an audience.");
+        }
+        return GetAccessTokenAsync(defaultAudience, ct);
+    }
+
+    public async Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(audience))
+        {
+            throw new ServiceTokenException(
+                "Audience is required for inter-service token requests.");
+        }
+
+        // Fast path: token cached for this audience + comfortably ahead
+        // of expiry. Dictionary reads of a single slot are safe under
+        // .NET's memory model when concurrent writers serialise behind
+        // the gate, which they do (only the lock'd block below writes).
+        if (TryGetFreshCached(audience, out var fast))
+        {
+            return fast;
         }
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -62,18 +88,18 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
         {
             // Double-check inside the lock — another caller may have
             // refreshed while we were waiting.
-            if (_cachedToken is not null && _timeProvider.GetUtcNow() + RefreshSkew < _cachedExpiry)
+            if (TryGetFreshCached(audience, out var current))
             {
-                return _cachedToken;
+                return current;
             }
 
-            var fresh = await MintAsync(ct).ConfigureAwait(false);
+            var fresh = await MintAsync(audience, ct).ConfigureAwait(false);
             // MintAsync throws on a null/empty access_token, so the
             // null-forgiving operator is sound here — the only way
             // we're past the throw above is if AccessToken is set.
-            _cachedToken = fresh.AccessToken!;
-            _cachedExpiry = _timeProvider.GetUtcNow() + TimeSpan.FromSeconds(fresh.ExpiresInSeconds);
-            return _cachedToken;
+            var expiry = _timeProvider.GetUtcNow() + TimeSpan.FromSeconds(fresh.ExpiresInSeconds);
+            _cache[audience] = new CacheEntry(fresh.AccessToken!, expiry);
+            return fresh.AccessToken!;
         }
         finally
         {
@@ -81,7 +107,19 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
         }
     }
 
-    private async Task<TokenResponse> MintAsync(CancellationToken ct)
+    private bool TryGetFreshCached(string audience, out string token)
+    {
+        if (_cache.TryGetValue(audience, out var entry)
+            && _timeProvider.GetUtcNow() + RefreshSkew < entry.Expiry)
+        {
+            token = entry.Token;
+            return true;
+        }
+        token = string.Empty;
+        return false;
+    }
+
+    private async Task<TokenResponse> MintAsync(string audience, CancellationToken ct)
     {
         var opts = _options.Value;
         if (string.IsNullOrWhiteSpace(opts.TokenEndpoint))
@@ -105,9 +143,6 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
             ["grant_type"] = "client_credentials",
             ["client_id"] = opts.ClientId,
             ["client_secret"] = opts.ClientSecret ?? string.Empty,
-        };
-        if (!string.IsNullOrWhiteSpace(opts.Audience))
-        {
             // The `scope` request parameter takes the unprefixed scope
             // name (== the audience, the way andy-auth's seeder
             // registers it via `OpenIddictScopeDescriptor.Name = audience`).
@@ -116,8 +151,8 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
             // (`Permissions.Add("scp:urn:andy-containers-api")`), not
             // the request body. Sending `scp:urn:…` here gets
             // rejected as `invalid_scope` (OpenIddict ID2052).
-            form["scope"] = opts.Audience;
-        }
+            ["scope"] = audience,
+        };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, opts.TokenEndpoint)
         {
@@ -163,10 +198,13 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
         }
 
         _logger.LogInformation(
-            "Minted service token (clientId={ClientId} expiresInSeconds={ExpiresInSeconds})",
-            opts.ClientId, parsed.ExpiresInSeconds);
+            "Minted service token (clientId={ClientId} audience={Audience} expiresInSeconds={ExpiresInSeconds})",
+            opts.ClientId, audience, parsed.ExpiresInSeconds);
         return parsed;
     }
+
+    /// <summary>Per-audience cache slot.</summary>
+    private readonly record struct CacheEntry(string Token, DateTimeOffset Expiry);
 
     private static async Task<string> SafeReadPreviewAsync(HttpResponseMessage response, CancellationToken ct)
     {

@@ -26,7 +26,13 @@
       "displayName": "Andy Containers API",
       "description": "Service-to-service client for Andy Containers (M2M token consumer for #944).",
       "grantTypes": ["authorization_code", "refresh_token", "client_credentials"],
-      "scopes": ["email", "profile", "roles", "scp:urn:andy-containers-api"]
+      "scopes": [
+        "email",
+        "profile",
+        "roles",
+        "scp:urn:andy-containers-api",
+        "scp:urn:andy-models-api"
+      ]
     },
     "webClient": {
       "clientId": "andy-containers-web",

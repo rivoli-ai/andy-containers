@@ -193,15 +193,34 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
     {
         try
         {
-            return await _serviceTokens.GetAccessTokenAsync(ct).ConfigureAwait(false);
+            // rivoli-ai/conductor#1055. andy-models's [Authorize]
+            // attribute requires audience `urn:andy-models-api` —
+            // distinct from the default `urn:andy-containers-api` the
+            // M2M client identifies as. Request a cross-audience token
+            // explicitly so andy-models accepts the bearer. The client
+            // must have `scp:urn:andy-models-api` in its manifest
+            // scopes (see andy-containers/config/registration.json).
+            return await _serviceTokens
+                .GetAccessTokenAsync(AndyModelsApiAudience, ct)
+                .ConfigureAwait(false);
         }
         catch (ServiceTokenException ex)
         {
             throw new ProxyTokenException(
                 "Could not obtain andy-containers service bearer to call andy-models. " +
-                "Check ServiceAuth:* configuration.", ex);
+                "Check ServiceAuth:* configuration and that the andy-containers-api " +
+                $"OAuth client is permitted to request scope '{AndyModelsApiAudience}' " +
+                "(see andy-containers/config/registration.json apiClient.scopes).", ex);
         }
     }
+
+    /// <summary>
+    /// rivoli-ai/conductor#1055. Audience that andy-models'
+    /// <c>[Authorize]</c>-protected endpoints (including
+    /// <c>POST /api/proxy/tokens</c>) require — see
+    /// <c>andy-models/src/Andy.Models.Api/Program.cs:31</c>.
+    /// </summary>
+    private const string AndyModelsApiAudience = "urn:andy-models-api";
 
     /// <summary>
     /// Combine <paramref name="baseUrl"/> + <paramref name="path"/>

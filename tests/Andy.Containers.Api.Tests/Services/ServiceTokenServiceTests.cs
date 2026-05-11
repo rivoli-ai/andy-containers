@@ -171,6 +171,88 @@ public class ServiceTokenServiceTests
     }
 
     // -----------------------------------------------------------------
+    // Per-audience tokens (rivoli-ai/conductor#1055)
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task GetAccessToken_WithExplicitAudience_SendsThatAudienceInScope()
+    {
+        var (service, handler) = MakeService(opts =>
+        {
+            opts.TokenEndpoint = "http://auth.test/connect/token";
+            opts.ClientId = "andy-containers-api";
+            opts.ClientSecret = "s3cret";
+            opts.Audience = "urn:andy-containers-api";
+        });
+        handler.SetSuccessJsonResponse(@"{""access_token"":""cross-aud-tok"",""token_type"":""Bearer"",""expires_in"":3600}");
+
+        var token = await service.GetAccessTokenAsync("urn:andy-models-api");
+
+        token.Should().Be("cross-aud-tok");
+        handler.LastBody.Should().Contain("scope=urn%3Aandy-models-api",
+            "explicit audience must take precedence over ServiceAuth:Audience for inter-service calls.");
+    }
+
+    [Fact]
+    public async Task GetAccessToken_PerAudienceCache_DoesNotCrossPollinate()
+    {
+        var (service, handler) = MakeService(opts => opts.TokenEndpoint = "http://auth.test/connect/token");
+        // The stub returns the same body for every call — we're
+        // asserting the call COUNT and request shape, not distinct
+        // bodies, because we want to know whether the service mints
+        // twice (correct: once per audience) vs. once (wrong: would
+        // mean it returned the cached default-audience token when
+        // asked for a different audience).
+        handler.SetSuccessJsonResponse(@"{""access_token"":""tok"",""token_type"":""Bearer"",""expires_in"":3600}");
+
+        _ = await service.GetAccessTokenAsync("urn:andy-containers-api");
+        _ = await service.GetAccessTokenAsync("urn:andy-models-api");
+        _ = await service.GetAccessTokenAsync("urn:andy-containers-api");
+        _ = await service.GetAccessTokenAsync("urn:andy-models-api");
+
+        handler.RequestCount.Should().Be(2,
+            "each distinct audience mints exactly once; repeat calls per audience hit the per-slot cache.");
+    }
+
+    [Fact]
+    public async Task GetAccessToken_ParameterlessOverload_UsesConfiguredDefaultAudience()
+    {
+        var (service, handler) = MakeService(opts =>
+        {
+            opts.TokenEndpoint = "http://auth.test/connect/token";
+            opts.Audience = "urn:andy-containers-api";
+        });
+        handler.SetSuccessJsonResponse(@"{""access_token"":""tok"",""token_type"":""Bearer"",""expires_in"":3600}");
+
+        _ = await service.GetAccessTokenAsync();
+
+        handler.LastBody.Should().Contain("scope=urn%3Aandy-containers-api",
+            "the parameterless overload preserves pre-#1055 behaviour for callers that don't care about audience.");
+    }
+
+    [Fact]
+    public async Task GetAccessToken_EmptyAudienceArg_ThrowsServiceTokenException()
+    {
+        var (service, _) = MakeService();
+
+        Func<Task> call = () => service.GetAccessTokenAsync("", CancellationToken.None);
+
+        await call.Should().ThrowAsync<ServiceTokenException>()
+            .WithMessage("*Audience is required*");
+    }
+
+    [Fact]
+    public async Task GetAccessToken_DefaultOverload_WithUnconfiguredAudience_ThrowsServiceTokenException()
+    {
+        var (service, _) = MakeService(opts => opts.Audience = string.Empty);
+
+        Func<Task> call = () => service.GetAccessTokenAsync();
+
+        await call.Should().ThrowAsync<ServiceTokenException>()
+            .WithMessage("*ServiceAuth:Audience is not configured*");
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 
@@ -199,8 +281,15 @@ public class ServiceTokenServiceTests
 
     private sealed class StubHttpHandler : HttpMessageHandler
     {
-        private HttpResponseMessage _response =
-            new(HttpStatusCode.OK) { Content = new StringContent("{}") };
+        // Store the JSON template separately from any built
+        // HttpResponseMessage so multi-call tests (e.g. per-audience
+        // cache) get fresh content per call. HttpClient disposes the
+        // response content after each request, so reusing a single
+        // StringContent across calls throws ObjectDisposedException
+        // on the second call.
+        private string? _jsonBody;
+        private HttpStatusCode _statusCode = HttpStatusCode.OK;
+        private HttpResponseMessage? _fixedResponse;
         private Exception? _sendException;
 
         public int RequestCount { get; private set; }
@@ -212,16 +301,16 @@ public class ServiceTokenServiceTests
         public void SetSuccessJsonResponse(string json)
         {
             _sendException = null;
-            _response = new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(json, Encoding.UTF8, "application/json"),
-            };
+            _fixedResponse = null;
+            _jsonBody = json;
+            _statusCode = HttpStatusCode.OK;
         }
 
         public void SetResponse(HttpResponseMessage response)
         {
             _sendException = null;
-            _response = response;
+            _jsonBody = null;
+            _fixedResponse = response;
         }
 
         public void SetSendException(Exception ex)
@@ -243,7 +332,14 @@ public class ServiceTokenServiceTests
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
             if (_sendException is not null) throw _sendException;
-            return _response;
+            if (_fixedResponse is not null) return _fixedResponse;
+            // Fresh content per call so consecutive SendAsyncs work.
+            return new HttpResponseMessage(_statusCode)
+            {
+                Content = _jsonBody is null
+                    ? new StringContent("{}")
+                    : new StringContent(_jsonBody, Encoding.UTF8, "application/json"),
+            };
         }
     }
 

@@ -30,9 +30,10 @@ namespace Andy.Containers.Api.Services;
 public interface IServiceTokenService
 {
     /// <summary>
-    /// Returns a valid bearer token. Mints a new one if no cached
-    /// token is available or if the cached token is within the
-    /// refresh skew of expiring.
+    /// Returns a valid bearer token for the default audience
+    /// (<see cref="ServiceAuthOptions.Audience"/>). Mints a new one if
+    /// no cached token is available or if the cached token is within
+    /// the refresh skew of expiring.
     /// </summary>
     /// <exception cref="ServiceTokenException">
     /// Thrown when the token endpoint is unreachable, returns a
@@ -41,6 +42,40 @@ public interface IServiceTokenService
     /// at the next opportunity (per-call mint, with cache).
     /// </exception>
     Task<string> GetAccessTokenAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns a valid bearer token scoped to an explicit audience.
+    /// Use this for inter-service calls where the target service's
+    /// <c>aud</c> claim differs from <see cref="ServiceAuthOptions.Audience"/>
+    /// — e.g. andy-containers calling andy-models (audience
+    /// <c>urn:andy-models-api</c>) for rivoli-ai/conductor#943.
+    ///
+    /// <para>
+    /// The client must be permitted to request the requested scope —
+    /// add <c>scp:&lt;audience&gt;</c> to the client's
+    /// <c>apiClient.scopes</c> in the registration manifest. Without
+    /// that, andy-auth rejects with <c>invalid_scope</c> (OpenIddict
+    /// ID2052).
+    /// </para>
+    ///
+    /// <para>
+    /// Per-audience cache: each audience has its own cached token +
+    /// expiry, so concurrent calls for different audiences do not
+    /// thrash a single slot.
+    /// </para>
+    /// </summary>
+    /// <param name="audience">
+    /// Unprefixed audience name (e.g. <c>urn:andy-models-api</c>). The
+    /// implementation sends this as the OAuth <c>scope</c> request
+    /// parameter unprefixed — the <c>scp:</c> prefix is reserved for
+    /// the client-side permission, never the request body.
+    /// </param>
+    /// <exception cref="ServiceTokenException">
+    /// Same surface as <see cref="GetAccessTokenAsync(CancellationToken)"/>;
+    /// additionally fires when <paramref name="audience"/> is
+    /// empty or whitespace.
+    /// </exception>
+    Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default);
 }
 
 /// <summary>

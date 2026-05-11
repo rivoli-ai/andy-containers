@@ -74,6 +74,27 @@ public class AndyModelsProxyTokenServiceTests
         handler.LastRequestUri.Should().Be(new Uri("http://andy-models.test/api/proxy/tokens"));
     }
 
+    [Fact]
+    public async Task Mint_RequestsCrossAudienceBearerForAndyModels()
+    {
+        // rivoli-ai/conductor#1055. andy-models's [Authorize] requires
+        // audience `urn:andy-models-api` — distinct from the M2M
+        // client's own `urn:andy-containers-api`. Without the
+        // cross-audience request, the bearer is rejected with 401
+        // before any controller logic runs.
+        var bearer = new StubTokenService("cross-aud-jwt");
+        var (service, handler, _) = MakeService(
+            opts => opts.BaseUrl = "http://andy-models.test",
+            bearerProvider: bearer);
+        handler.SetSuccessJsonResponse(
+            "{\"tokenId\":\"44444444-4444-4444-4444-444444444444\",\"jwt\":\"j.w.t\",\"expiresAt\":\"2026-12-01T00:00:00Z\"}");
+
+        _ = await service.MintForContainerAsync("ctr", "user", new[] { "anthropic/claude-sonnet-4-6" });
+
+        bearer.LastRequestedAudience.Should().Be("urn:andy-models-api",
+            "the consumer must ask IServiceTokenService for a token whose `aud` claim andy-models will accept.");
+    }
+
     // -----------------------------------------------------------------
     // Lifetime hint (#943 AC: 7-day default)
     // -----------------------------------------------------------------
@@ -310,8 +331,18 @@ public class AndyModelsProxyTokenServiceTests
     private sealed class StubTokenService : IServiceTokenService
     {
         private readonly string _token;
+        public string? LastRequestedAudience { get; private set; }
         public StubTokenService(string token) { _token = token; }
-        public Task<string> GetAccessTokenAsync(CancellationToken ct = default) => Task.FromResult(_token);
+        public Task<string> GetAccessTokenAsync(CancellationToken ct = default)
+        {
+            LastRequestedAudience = null;
+            return Task.FromResult(_token);
+        }
+        public Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default)
+        {
+            LastRequestedAudience = audience;
+            return Task.FromResult(_token);
+        }
     }
 
     private sealed class ThrowingTokenService : IServiceTokenService
@@ -319,6 +350,8 @@ public class AndyModelsProxyTokenServiceTests
         private readonly Exception _ex;
         public ThrowingTokenService(Exception ex) { _ex = ex; }
         public Task<string> GetAccessTokenAsync(CancellationToken ct = default)
+            => Task.FromException<string>(_ex);
+        public Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default)
             => Task.FromException<string>(_ex);
     }
 
