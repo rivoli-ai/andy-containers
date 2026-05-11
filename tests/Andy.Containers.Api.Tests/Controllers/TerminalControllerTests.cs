@@ -603,13 +603,15 @@ public class TerminalControllerTests : IDisposable
     public void ShellCommand_TmuxInvocationCreatesTheProbedSession()
     {
         // Specifically check the tmux invocation form, not just
-        // session-name-presence. `new-session -A` is the form that
-        // "attaches if exists OR creates if not" — the right semantic
-        // for first-attach + reattach. Other forms would create a
-        // NEW session every time and break persistence.
+        // session-name-presence. `new-session -A -D` is the form that
+        // "attaches if exists OR creates if not, and detaches any
+        // stale clients first" — the right semantic for first-attach
+        // + reattach. Without -A, a second attach would create a NEW
+        // session and break persistence; without -D, stale clients
+        // from a previous tab linger and steal input (see #220).
         var cmd = TerminalController.BuildContainerShellCommand(rows: 40, cols: 120);
-        cmd.Should().Contain($"new-session -A -s {TerminalController.TmuxSessionName} bash -i",
-            "must use `new-session -A` for attach-or-create");
+        cmd.Should().Contain($"new-session -A -D -s {TerminalController.TmuxSessionName} bash -i",
+            "must use `new-session -A -D` — `-A` for attach-or-create, `-D` to detach stale clients (#220).");
     }
 
     // MARK: - Reattach-without-banner end-to-end contract
