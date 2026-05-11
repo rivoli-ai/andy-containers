@@ -248,5 +248,8 @@ public class ContainerOrchestrationServiceTokenInjectionTests : IDisposable
             => _exception is not null
                 ? Task.FromException<string>(_exception)
                 : Task.FromResult(_token!);
+
+        public Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default)
+            => GetAccessTokenAsync(ct);
     }
 }

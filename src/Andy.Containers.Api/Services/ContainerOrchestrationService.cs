@@ -6,6 +6,7 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -24,6 +25,16 @@ public class ContainerOrchestrationService : IContainerService
     private readonly IConfiguration _configuration;
     private readonly ILogger<ContainerOrchestrationService> _logger;
     private readonly IServiceTokenService? _serviceTokenService;
+    private readonly IProxyTokenService? _proxyTokenService;
+    private readonly IDataProtector? _proxyTokenProtector;
+
+    /// <summary>
+    /// rivoli-ai/conductor#943. Data-protection purpose for encrypting
+    /// the JWT persisted in <c>Container.ProxyServiceToken</c>. Scoped
+    /// to this column so a future purpose-string change (e.g. for a
+    /// key rotation) only re-encrypts proxy tokens, not every secret.
+    /// </summary>
+    private const string ProxyTokenProtectorPurpose = "Container.ProxyServiceToken";
 
     /// <summary>
     /// Conductor #878. Default per-user simultaneous-container
@@ -43,7 +54,9 @@ public class ContainerOrchestrationService : IContainerService
         IApiKeyService apiKeyService,
         IConfiguration configuration,
         ILogger<ContainerOrchestrationService> logger,
-        IServiceTokenService? serviceTokenService = null)
+        IServiceTokenService? serviceTokenService = null,
+        IProxyTokenService? proxyTokenService = null,
+        IDataProtectionProvider? dataProtection = null)
     {
         _db = db;
         _routing = routing;
@@ -57,6 +70,11 @@ public class ContainerOrchestrationService : IContainerService
         // keep working; live DI always supplies the registered impl.
         // When null, the per-container token-injection step is a no-op.
         _serviceTokenService = serviceTokenService;
+        // rivoli-ai/conductor#943. Optional for the same reason. When
+        // both are null we fall back to the pre-#943 behaviour (no
+        // per-container token, env-var injection runs unmodified).
+        _proxyTokenService = proxyTokenService;
+        _proxyTokenProtector = dataProtection?.CreateProtector(ProxyTokenProtectorPurpose);
     }
 
     /// <summary>
@@ -451,14 +469,77 @@ public class ContainerOrchestrationService : IContainerService
                     UrlRedactor.Redact(containerFacingProxyUrl));
             }
         }
-        if (_serviceTokenService is not null && (envVars is null || !envVars.ContainsKey("ANDY_SERVICE_TOKEN")))
+        // rivoli-ai/conductor#943 (M1.5.1). Per-container proxy token.
+        // When the chosen code assistant requires proxy access (non-
+        // empty slug list — see ToolSlugDefaults), call andy-models to
+        // mint a JWT scoped to {containerId, allowedSlugs[]} and inject
+        // THAT as ANDY_SERVICE_TOKEN — narrower than the M2M bearer
+        // we'd otherwise hand the container.
+        //
+        // No code assistant or empty slug list → fall back to the
+        // shared M2M token below (pre-#943 behaviour). That covers
+        // Ollama, OpenAI-compatible self-hosted, and "no assistant
+        // pre-installed" templates.
+        var requiredSlugs = codeAssistant is null
+            ? Array.Empty<string>()
+            : ToolSlugDefaults.Resolve(codeAssistant);
+        var injectedProxyToken = false;
+        if (_proxyTokenService is not null
+            && requiredSlugs.Count > 0
+            && (envVars is null || !envVars.ContainsKey("ANDY_SERVICE_TOKEN")))
+        {
+            MintedProxyToken? minted;
+            try
+            {
+                minted = await _proxyTokenService.MintForContainerAsync(
+                    container.Id.ToString(),
+                    container.OwnerId,
+                    requiredSlugs,
+                    ct);
+            }
+            catch (ProxyTokenException ex)
+            {
+                // Hard fail. The assistant inside the container would
+                // otherwise start with no working credential and the
+                // user would see opaque 401s from the model surface
+                // long after the create call returned success. Better
+                // to surface the andy-models health problem now.
+                throw new InvalidOperationException(
+                    $"Container creation failed: could not mint per-container proxy token from andy-models for assistant " +
+                    $"'{codeAssistant?.Tool}'. Check andy-models health and AndyModels:BaseUrl configuration. " +
+                    $"Underlying error: {ex.Message}",
+                    ex);
+            }
+            if (minted is not null)
+            {
+                container.ProxyServiceTokenId = minted.TokenId;
+                container.ProxyTokenIssuedAt = DateTime.UtcNow;
+                container.ProxyServiceToken = _proxyTokenProtector is not null
+                    ? _proxyTokenProtector.Protect(minted.Jwt)
+                    : minted.Jwt;
+                envVars ??= new Dictionary<string, string>();
+                envVars["ANDY_SERVICE_TOKEN"] = minted.Jwt;
+                injectedProxyToken = true;
+                _logger.LogInformation(
+                    "Injected per-container ANDY_SERVICE_TOKEN (tokenId={TokenId}, slugs={Slugs}, length={Length}) into container env",
+                    minted.TokenId, string.Join(",", requiredSlugs), minted.Jwt.Length);
+            }
+        }
+
+        // Fall back to the shared M2M bearer when no per-container
+        // token was minted. Tests + assistant-less containers + Ollama
+        // / OpenAI-compatible self-hosted setups all hit this path.
+        if (!injectedProxyToken
+            && _serviceTokenService is not null
+            && (envVars is null || !envVars.ContainsKey("ANDY_SERVICE_TOKEN")))
         {
             try
             {
                 var serviceToken = await _serviceTokenService.GetAccessTokenAsync(ct);
                 envVars ??= new Dictionary<string, string>();
                 envVars["ANDY_SERVICE_TOKEN"] = serviceToken;
-                _logger.LogInformation("Injected ANDY_SERVICE_TOKEN (length={Length}) into container env",
+                _logger.LogInformation(
+                    "Injected shared ANDY_SERVICE_TOKEN (length={Length}) into container env (no per-container slugs required)",
                     serviceToken.Length);
             }
             catch (Exception tokenEx)
@@ -469,7 +550,7 @@ public class ContainerOrchestrationService : IContainerService
                 // and the user can still configure a personal API
                 // key via the existing apiKey resolution path.
                 _logger.LogWarning(tokenEx,
-                    "Failed to mint service token for container {ContainerName}; container will start without ANDY_SERVICE_TOKEN.",
+                    "Failed to mint shared service token for container {ContainerName}; container will start without ANDY_SERVICE_TOKEN.",
                     container.Name);
             }
         }
@@ -632,6 +713,19 @@ public class ContainerOrchestrationService : IContainerService
         {
             var infra = _providerFactory.GetProvider(container.Provider!);
             await infra.DestroyContainerAsync(container.ExternalId, ct);
+        }
+
+        // rivoli-ai/conductor#943 (M1.5.1). Revoke the per-container
+        // proxy token if we minted one. AndyModelsProxyTokenService
+        // swallows transport errors itself so a slow / down andy-models
+        // can't wedge container destroy — the token's `exp` claim is
+        // the backstop.
+        if (_proxyTokenService is not null && container.ProxyServiceTokenId is { } tokenId)
+        {
+            await _proxyTokenService.RevokeAsync(tokenId, ct);
+            container.ProxyServiceToken = null;
+            container.ProxyServiceTokenId = null;
+            container.ProxyTokenIssuedAt = null;
         }
 
         container.Status = ContainerStatus.Destroyed;

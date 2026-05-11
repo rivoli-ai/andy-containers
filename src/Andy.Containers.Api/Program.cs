@@ -104,6 +104,18 @@ try
     builder.Services.AddHttpClient(ServiceTokenService.HttpClientName);
     builder.Services.AddSingleton<IServiceTokenService, ServiceTokenService>();
 
+    // rivoli-ai/conductor#943 (M1.5.1). Per-container proxy-token
+    // consumer. Talks to andy-models'
+    // `POST /api/proxy/tokens` (M1.3.3) using the M2M bearer from
+    // IServiceTokenService and returns a JWT scoped to the container's
+    // requested model slugs. ContainerOrchestrationService injects that
+    // JWT into the container as ANDY_SERVICE_TOKEN — narrower than the
+    // M2M bearer the orchestrator carries itself.
+    builder.Services.Configure<AndyModelsOptions>(
+        builder.Configuration.GetSection(AndyModelsOptions.SectionName));
+    builder.Services.AddHttpClient(AndyModelsProxyTokenService.HttpClientName);
+    builder.Services.AddSingleton<IProxyTokenService, AndyModelsProxyTokenService>();
+
     // Container provisioning queue + background worker
     builder.Services.AddSingleton<ContainerProvisioningQueue>();
     builder.Services.AddHostedService<ContainerProvisioningWorker>();
