@@ -199,6 +199,12 @@ public sealed class LocalBuildBackend : IBuildBackend
                 psi.ArgumentList.Add("buildx");
                 psi.ArgumentList.Add("build");
                 psi.ArgumentList.Add("--load"); // load result into local cache so the registry uploader can find it
+                // Strip provenance + SBOM attestations. Modern buildx attaches them by default,
+                // producing auxiliary manifests that zot v2.1+ (even with docker2s2 compat) rejects
+                // as `manifest invalid`. The IM11 round-trip fixture already passes these flags;
+                // production must match. See rivoli-ai/andy-containers#275.
+                psi.ArgumentList.Add("--provenance=false");
+                psi.ArgumentList.Add("--sbom=false");
                 psi.ArgumentList.Add("-t");
                 psi.ArgumentList.Add(localTag);
                 psi.ArgumentList.Add("-f");

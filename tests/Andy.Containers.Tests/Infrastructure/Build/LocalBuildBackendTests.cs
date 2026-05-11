@@ -73,7 +73,10 @@ public class LocalBuildBackendTests
 
         // Verify the engine was invoked with the docker buildx flavour.
         stub.Invocations.Should().ContainSingle();
-        stub.Invocations[0].Should().Equal(["buildx", "build", "--load", "-t", artifact.LocalReference, "-f", "Dockerfile", "."]);
+        stub.Invocations[0].Should().Equal(
+            ["buildx", "build", "--load", "--provenance=false", "--sbom=false",
+             "-t", artifact.LocalReference, "-f", "Dockerfile", "."],
+            "BuildKit must strip provenance + SBOM attestations so zot accepts the manifest (see #275).");
     }
 
     [Fact]
