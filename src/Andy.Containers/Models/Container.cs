@@ -66,6 +66,33 @@ public class Container
     /// </summary>
     public string? ThemeId { get; set; }
 
+    /// <summary>
+    /// rivoli-ai/conductor#943 (M1.5.1). Andy-models row id of the
+    /// per-container proxy token; carried so destroy can call
+    /// <c>DELETE /api/proxy/tokens/{id}</c> for revocation. Null when
+    /// the container's code assistant doesn't require proxy access
+    /// (Ollama, OpenAI-compatible self-hosted) or when no code
+    /// assistant is configured.
+    /// </summary>
+    public Guid? ProxyServiceTokenId { get; set; }
+
+    /// <summary>
+    /// rivoli-ai/conductor#943 (M1.5.1). The signed JWT issued by
+    /// andy-models, encrypted at rest via <see cref="Microsoft.AspNetCore.DataProtection.IDataProtector"/>.
+    /// Read back at container start (or by future M1.5.2 in-container
+    /// refresh) to repopulate <c>ANDY_SERVICE_TOKEN</c>. Never logged
+    /// or surfaced over the API.
+    /// </summary>
+    public string? ProxyServiceToken { get; set; }
+
+    /// <summary>
+    /// rivoli-ai/conductor#943 (M1.5.1). Wall-clock UTC at which the
+    /// proxy token in <see cref="ProxyServiceToken"/> was minted by
+    /// andy-models. Diagnostic / audit field — the canonical expiry is
+    /// in the JWT's <c>exp</c> claim.
+    /// </summary>
+    public DateTime? ProxyTokenIssuedAt { get; set; }
+
     public ICollection<ContainerSession> Sessions { get; set; } = new List<ContainerSession>();
     public ICollection<ContainerEvent> Events { get; set; } = new List<ContainerEvent>();
     public ICollection<ContainerGitRepository> GitRepositories { get; set; } = new List<ContainerGitRepository>();
