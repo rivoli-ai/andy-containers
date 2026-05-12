@@ -50,7 +50,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
         // Quota tests build their own with a tighter cap.
         _configuration = new ConfigurationBuilder().Build();
 
-        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, new Mock<IApiKeyService>().Object, _configuration, logger.Object);
+        _service = new ContainerOrchestrationService(_db, _mockRouting.Object, _mockFactory.Object, _queue, _mockProbeService.Object, _configuration, logger.Object);
     }
 
     public void Dispose()
@@ -187,7 +187,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
 
         var service = new ContainerOrchestrationService(
             _db, _mockRouting.Object, _mockFactory.Object, _queue,
-            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            _mockProbeService.Object,
             _configuration, new Mock<ILogger<ContainerOrchestrationService>>().Object,
             buildArtifactStore: store.Object,
             registryConfiguration: registries.Object);
@@ -225,7 +225,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
 
         var service = new ContainerOrchestrationService(
             _db, _mockRouting.Object, _mockFactory.Object, _queue,
-            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            _mockProbeService.Object,
             _configuration, new Mock<ILogger<ContainerOrchestrationService>>().Object,
             buildArtifactStore: store.Object,
             registryConfiguration: registries.Object);
@@ -916,7 +916,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
             .Build();
         return new ContainerOrchestrationService(
             _db, _mockRouting.Object, _mockFactory.Object, _queue,
-            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            _mockProbeService.Object,
             config, new Mock<ILogger<ContainerOrchestrationService>>().Object);
     }
 
@@ -935,7 +935,7 @@ public class ContainerOrchestrationServiceTests : IDisposable
             .Build();
         return new ContainerOrchestrationService(
             _db, _mockRouting.Object, _mockFactory.Object, _queue,
-            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            _mockProbeService.Object,
             config, new Mock<ILogger<ContainerOrchestrationService>>().Object);
     }
 

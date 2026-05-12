@@ -283,7 +283,6 @@ public class ContainerOrchestrationServiceProxyTokenTests : IDisposable
             _mockFactory.Object,
             _queue,
             _mockProbe.Object,
-            new Mock<IApiKeyService>().Object,
             config,
             NullLogger<ContainerOrchestrationService>.Instance,
             serviceTokenService: sharedTokens,

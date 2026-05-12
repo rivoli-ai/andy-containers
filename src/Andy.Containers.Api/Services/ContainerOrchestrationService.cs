@@ -23,7 +23,6 @@ public class ContainerOrchestrationService : IContainerService
     private readonly IInfrastructureProviderFactory _providerFactory;
     private readonly ContainerProvisioningQueue _queue;
     private readonly IGitRepositoryProbeService _probeService;
-    private readonly IApiKeyService _apiKeyService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ContainerOrchestrationService> _logger;
     private readonly IServiceTokenService? _serviceTokenService;
@@ -55,7 +54,6 @@ public class ContainerOrchestrationService : IContainerService
         IInfrastructureProviderFactory providerFactory,
         ContainerProvisioningQueue queue,
         IGitRepositoryProbeService probeService,
-        IApiKeyService apiKeyService,
         IConfiguration configuration,
         ILogger<ContainerOrchestrationService> logger,
         IServiceTokenService? serviceTokenService = null,
@@ -69,7 +67,6 @@ public class ContainerOrchestrationService : IContainerService
         _providerFactory = providerFactory;
         _queue = queue;
         _probeService = probeService;
-        _apiKeyService = apiKeyService;
         _configuration = configuration;
         _logger = logger;
         // #944. Optional so existing tests (which don't construct one)
@@ -386,81 +383,42 @@ public class ContainerOrchestrationService : IContainerService
             }
         }
 
-        // Resolve API key for code assistant if configured
+        // rivoli-ai/conductor#946 (M1.5.4). The legacy
+        // `ApiKeyCredentials` table that used to hold per-user provider
+        // keys has been retired — keys now live in andy-settings and
+        // reach the container via the per-tool proxy routing below
+        // (#944). The only fields we still honour here are the explicit
+        // overrides on the request's `CodeAssistantConfig`:
+        //
+        //   - `ApiBaseUrl` — set when the user picked Ollama or an
+        //     OpenAI-compatible self-hosted backend in the launch UI
+        //     (conductor#948). The proxy routing block below skips
+        //     these cases, so the user-supplied URL is the only
+        //     base URL the container sees.
+        //   - `ModelName` — optional default model the install script
+        //     should pick when starting the assistant.
+        //
+        // Everything else (the per-tool key + the proxy URL for the
+        // default backends) is set by the proxy routing block lower
+        // down, after the per-container service token is minted.
         Dictionary<string, string>? envVars = null;
         if (codeAssistant is not null)
         {
-            var assistantProvider = MapCodeAssistantToApiKeyProvider(codeAssistant.Tool);
-            // Try primary provider first, then fallback to compatible providers
-            var resolvedCred = await _apiKeyService.ResolveCredentialAsync(container.OwnerId, assistantProvider, ct);
-            if (resolvedCred is null)
+            if (!string.IsNullOrEmpty(codeAssistant.ApiBaseUrl))
             {
-                // For OpenAI-compatible tools, try OpenRouter, then OpenAI, then Custom
-                var fallbackProviders = new[] { ApiKeyProvider.OpenRouter, ApiKeyProvider.OpenAI, ApiKeyProvider.OpenAiCompatible, ApiKeyProvider.Custom };
-                foreach (var fallback in fallbackProviders)
-                {
-                    if (fallback == assistantProvider) continue;
-                    resolvedCred = await _apiKeyService.ResolveCredentialAsync(container.OwnerId, fallback, ct);
-                    if (resolvedCred is not null)
-                    {
-                        _logger.LogInformation("Primary provider {Primary} not found, using fallback {Fallback}",
-                            assistantProvider, fallback);
-                        assistantProvider = fallback;
-                        break;
-                    }
-                }
+                var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
+                envVars ??= new Dictionary<string, string>();
+                envVars[baseUrlEnv] = codeAssistant.ApiBaseUrl;
+                _logger.LogInformation("Injecting user-supplied base URL {Url} as {EnvVar}",
+                    UrlRedactor.Redact(codeAssistant.ApiBaseUrl), baseUrlEnv);
             }
-            if (resolvedCred is not null)
+
+            if (!string.IsNullOrEmpty(codeAssistant.ModelName))
             {
-                // Always use the tool's expected env var, not the fallback provider's
-                var originalProvider = MapCodeAssistantToApiKeyProvider(codeAssistant.Tool);
-                var envVarName = codeAssistant.ApiKeyEnvVar ?? GetDefaultEnvVar(originalProvider);
-                envVars = new Dictionary<string, string> { [envVarName] = resolvedCred.ApiKey };
-                _logger.LogInformation("Resolved API key for {Provider}, will inject as {EnvVar}",
-                    assistantProvider, envVarName);
-
-                // Inject base URL from credential (overrides code assistant config)
-                var baseUrl = resolvedCred.BaseUrl ?? codeAssistant.ApiBaseUrl;
-                if (!string.IsNullOrEmpty(baseUrl))
-                {
-                    var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
-                    envVars[baseUrlEnv] = baseUrl;
-                    // rivoli-ai/andy-containers#131: redact userinfo before
-                    // emitting. Logs ship to OTLP / shared sinks; embedded
-                    // user:token in a proxy URL is exfiltration-by-default.
-                    _logger.LogInformation("Injecting base URL {Url} as {EnvVar}",
-                        UrlRedactor.Redact(baseUrl), baseUrlEnv);
-                }
-
-                // Inject model name from credential (code assistant config overrides credential)
-                var modelName = codeAssistant.ModelName ?? resolvedCred.ModelName;
-                if (!string.IsNullOrEmpty(modelName))
-                {
-                    var modelEnv = codeAssistant.ModelEnvVar ?? GetDefaultModelEnvVar(codeAssistant.Tool);
-                    envVars[modelEnv] = modelName;
-                    _logger.LogInformation("Injecting model {Model} as {EnvVar}", modelName, modelEnv);
-                }
-            }
-            else
-            {
-                _logger.LogWarning("No API key found for {Provider} for user {OwnerId}, container will start without it",
-                    assistantProvider, container.OwnerId);
-
-                // Still inject base URL from code assistant config if set
-                if (!string.IsNullOrEmpty(codeAssistant.ApiBaseUrl))
-                {
-                    var baseUrlEnv = codeAssistant.ApiBaseUrlEnvVar ?? "OPENAI_API_BASE";
-                    envVars ??= new Dictionary<string, string>();
-                    envVars[baseUrlEnv] = codeAssistant.ApiBaseUrl;
-                }
-
-                // Inject LLM model name if configured
-                if (!string.IsNullOrEmpty(codeAssistant.ModelName))
-                {
-                    var modelEnv = codeAssistant.ModelEnvVar ?? GetDefaultModelEnvVar(codeAssistant.Tool);
-                    envVars ??= new Dictionary<string, string>();
-                    envVars[modelEnv] = codeAssistant.ModelName;
-                }
+                var modelEnv = codeAssistant.ModelEnvVar ?? GetDefaultModelEnvVar(codeAssistant.Tool);
+                envVars ??= new Dictionary<string, string>();
+                envVars[modelEnv] = codeAssistant.ModelName;
+                _logger.LogInformation("Injecting model {Model} as {EnvVar}", codeAssistant.ModelName, modelEnv);
             }
         }
 
@@ -934,38 +892,11 @@ public class ContainerOrchestrationService : IContainerService
             containerId, resources.CpuCores, resources.MemoryMb);
     }
 
-    private static ApiKeyProvider MapCodeAssistantToApiKeyProvider(CodeAssistantType tool) => tool switch
-    {
-        CodeAssistantType.ClaudeCode => ApiKeyProvider.Anthropic,
-        CodeAssistantType.CodexCli => ApiKeyProvider.OpenAI,
-        CodeAssistantType.Aider => ApiKeyProvider.OpenAI,
-        CodeAssistantType.Continue => ApiKeyProvider.Custom,
-        CodeAssistantType.OpenCode => ApiKeyProvider.OpenAI,
-        CodeAssistantType.QwenCoder => ApiKeyProvider.Dashscope,
-        CodeAssistantType.GeminiCode => ApiKeyProvider.Google,
-        CodeAssistantType.GitHubCopilot => ApiKeyProvider.Custom,
-        CodeAssistantType.AmazonQ => ApiKeyProvider.Custom,
-        CodeAssistantType.Cline => ApiKeyProvider.Anthropic,
-        _ => ApiKeyProvider.OpenAiCompatible
-    };
-
     private static string GetDefaultModelEnvVar(CodeAssistantType tool) => tool switch
     {
         CodeAssistantType.Aider => "AIDER_MODEL",
         CodeAssistantType.OpenCode => "LLM_MODEL",
         CodeAssistantType.CodexCli => "OPENAI_MODEL",
         _ => "LLM_MODEL"
-    };
-
-    private static string GetDefaultEnvVar(ApiKeyProvider provider) => provider switch
-    {
-        ApiKeyProvider.Anthropic => "ANTHROPIC_API_KEY",
-        ApiKeyProvider.OpenAI => "OPENAI_API_KEY",
-        ApiKeyProvider.Google => "GOOGLE_API_KEY",
-        ApiKeyProvider.Dashscope => "DASHSCOPE_API_KEY",
-        ApiKeyProvider.OpenRouter => "OPENROUTER_API_KEY",
-        ApiKeyProvider.Ollama => "OLLAMA_API_KEY",
-        ApiKeyProvider.OpenAiCompatible => "OPENAI_API_KEY",
-        _ => "API_KEY"
     };
 }

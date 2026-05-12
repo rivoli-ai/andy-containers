@@ -219,7 +219,6 @@ public class ContainerOrchestrationServiceTokenInjectionTests : IDisposable
             _mockFactory.Object,
             _queue,
             _mockProbe.Object,
-            new Mock<IApiKeyService>().Object,
             configuration,
             NullLogger<ContainerOrchestrationService>.Instance,
             tokenService);

@@ -265,7 +265,6 @@ public class ContainerOrchestrationServicePerToolEnvTests : IDisposable
             _mockFactory.Object,
             _queue,
             _mockProbe.Object,
-            new Mock<IApiKeyService>().Object,
             config,
             NullLogger<ContainerOrchestrationService>.Instance,
             serviceTokenService: new StubServiceTokenService("shared-m2m"),

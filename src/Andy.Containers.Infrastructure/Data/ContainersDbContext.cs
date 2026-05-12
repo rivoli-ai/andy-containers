@@ -30,7 +30,11 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<ResolvedDependency> ResolvedDependencies => Set<ResolvedDependency>();
     public DbSet<ContainerGitRepository> ContainerGitRepositories => Set<ContainerGitRepository>();
     public DbSet<GitCredential> GitCredentials => Set<GitCredential>();
-    public DbSet<ApiKeyCredential> ApiKeyCredentials => Set<ApiKeyCredential>();
+    // ApiKeyCredentials retired in rivoli-ai/conductor#946 (M1.5.4).
+    // Provider keys now live in andy-settings under
+    // `andy.models.providers.<slug>.apiKey`; per-tool routing in
+    // ContainerOrchestrationService + CodeAssistantProxyRouting (#944)
+    // brings them into the container via the andy-models proxy.
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<ImageBuildRecord> ImageBuildRecords => Set<ImageBuildRecord>();
@@ -277,17 +281,7 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(c => new { c.OwnerId, c.Label }).IsUnique();
         });
 
-        // ApiKeyCredential
-        modelBuilder.Entity<ApiKeyCredential>(e =>
-        {
-            e.HasKey(k => k.Id);
-            e.HasIndex(k => k.OwnerId);
-            e.HasIndex(k => new { k.OwnerId, k.Provider, k.Label }).IsUnique();
-            if (jsonColumnType != null)
-            {
-                e.Property(k => k.ChangeHistory).HasColumnType(jsonColumnType);
-            }
-        });
+        // ApiKeyCredential mapping retired with the table — see #946.
 
         // Organization
         modelBuilder.Entity<Organization>(e =>
