@@ -331,10 +331,7 @@ public class TemplatesController : ControllerBase
         // the existing template's UploadedFilesPath instead.
         var stagingId = Guid.NewGuid();
         var stagingDir = Path.Combine(
-            Path.GetTempPath(),
-            "andy-containers",
-            "template-uploads",
-            "staging",
+            TemplateUploadStagingPaths.GetStagingRoot(),
             stagingId.ToString("N"));
 
         var fileDigests = new Dictionary<string, string>(StringComparer.Ordinal);

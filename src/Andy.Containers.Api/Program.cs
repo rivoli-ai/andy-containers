@@ -138,6 +138,15 @@ try
     builder.Services.AddScoped<ITemplateBuildService, TemplateBuildService>();
     builder.Services.AddHostedService<ImageBuildWorker>();
 
+    // #277 PR C. Reclaim abandoned template-upload staging dirs.
+    // Periodic sweep over <temp>/andy-containers/template-uploads/staging/
+    // that deletes <stagingId> subdirs no longer referenced by any
+    // Template.UploadedFilesPath row and older than the configured
+    // retention (default 7 days).
+    builder.Services.Configure<TemplateUploadStagingCleanupOptions>(
+        builder.Configuration.GetSection(TemplateUploadStagingCleanupOptions.SectionName));
+    builder.Services.AddHostedService<TemplateUploadStagingCleanupWorker>();
+
     // Git credential + clone services
     //
     // RC2 (#200). Persist the Data Protection key ring in the DB

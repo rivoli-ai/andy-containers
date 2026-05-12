@@ -115,8 +115,18 @@ public class ContainerTemplate
     /// entry (and the multipart part name on the registration request).
     /// Null for the JSON-only register path and for legacy rows that
     /// pre-date #277. Populated on every multipart register-from-yaml
-    /// call. The directory survives until cleanup runs (#277 PR C).
+    /// call.
     /// </summary>
+    /// <remarks>
+    /// The directory persists as long as this template row exists.
+    /// The PR C TTL sweeper
+    /// (<c>TemplateUploadStagingCleanupWorker</c>) never deletes
+    /// referenced dirs — it only reclaims orphans (paths no longer
+    /// referenced by any template row, older than the configured
+    /// retention). Deleting the template row makes the dir an orphan;
+    /// the sweeper reclaims it on the next tick that crosses the
+    /// retention cutoff.
+    /// </remarks>
     public string? UploadedFilesPath { get; set; }
 }
 
