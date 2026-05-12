@@ -485,8 +485,16 @@ public class ContainerProvisioningWorkerTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessJob_CodeAssistantInstallFails_ShouldNotFailContainer()
+    public async Task ProcessJob_CodeAssistantInstallFails_PersistsFailedStatusAndKeepsContainerRunning()
     {
+        // rivoli-ai/conductor#945 (M1.5.3). The container stays
+        // Running (degraded but reachable for debugging), AND the
+        // executor's outcome must land on the row — that's the load-
+        // bearing signal the Conductor banner reads. Without the
+        // status-field assertions below, a regression in the worker's
+        // SaveChangesAsync ordering would silently drop the
+        // "install failed" indication and the user would see a
+        // healthy-looking workspace that's missing its assistant.
         using var db = CreateDb();
         var (container, provider) = SeedContainerAndProvider(db);
 
@@ -500,7 +508,7 @@ public class ContainerProvisioningWorkerTests : IDisposable
         _mockContainerService.Setup(s => s.ExecAsync(
                 It.IsAny<Guid>(), It.Is<string>(cmd => cmd.Contains("claude-code")),
                 It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ExecResult { ExitCode = 1, StdErr = "npm ERR!" });
+            .ReturnsAsync(new ExecResult { ExitCode = 1, StdErr = "npm ERR! ENOSPC: out of disk\nnode: write failed" });
 
         var job = new ContainerProvisionJob(
             container.Id, provider.Id, provider.Code,
@@ -517,10 +525,103 @@ public class ContainerProvisioningWorkerTests : IDisposable
         cts.Cancel();
         try { await workerTask; } catch (OperationCanceledException) { }
 
-        // Container should still be Running
         using var verifyDb = CreateDb();
         var updated = await verifyDb.Containers.FindAsync(container.Id);
-        updated!.Status.Should().Be(ContainerStatus.Running);
+        updated.Should().NotBeNull();
+        updated!.Status.Should().Be(ContainerStatus.Running,
+            "the user must still be able to attach + debug — install failure is not container-fatal.");
+        updated.CodeAssistantStatus.Should().Be(CodeAssistantInstallStatus.Failed,
+            "the executor wrote Failed; if the worker's SaveChangesAsync swallowed it, the Conductor banner would never appear.");
+        updated.CodeAssistantStatusReason.Should().NotBeNullOrEmpty();
+        updated.CodeAssistantStatusReason.Should().Contain("exit-code-1",
+            "the captured reason must include the exit code prefix the executor emits — the Conductor UI keys off this format.");
+        updated.CodeAssistantStatusReason.Should().Contain("npm ERR!",
+            "stderr's first line should reach the row so the user has actionable signal in the banner.");
+        updated.CodeAssistantStatusAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ProcessJob_CodeAssistantInstallSucceeds_PersistsInstalledStatus()
+    {
+        // Happy path: the executor writes `Installed`. We pin it here
+        // so a future refactor that accidentally leaves the status at
+        // `Installing` (a stale in-progress marker) fails this test.
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+        _mockCodeAssistantInstallService.Setup(s => s.GenerateInstallScript(It.IsAny<CodeAssistantConfig>()))
+            .Returns("npm install -g @anthropic-ai/claude-code");
+        _mockContainerService.Setup(s => s.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(),
+                It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0, StdOut = "added 142 packages" });
+
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null, CodeAssistant: new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode });
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        using var verifyDb = CreateDb();
+        var updated = await verifyDb.Containers.FindAsync(container.Id);
+        updated.Should().NotBeNull();
+        updated!.CodeAssistantStatus.Should().Be(CodeAssistantInstallStatus.Installed);
+        updated.CodeAssistantStatusReason.Should().BeNull(
+            "Installed status carries no failure reason — a stale reason from an earlier attempt would mislead the UI.");
+        updated.CodeAssistantStatusAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ProcessJob_CodeAssistantScriptGenerationFails_PersistsSkippedStatus()
+    {
+        // Script generation throwing (unknown tool, missing template
+        // bits) is structurally different from the install command
+        // exiting non-zero. The executor classifies it as `Skipped`
+        // with a `script-generation:` prefix on the reason; the
+        // Conductor UI renders a milder banner ("install was
+        // skipped — see logs") instead of "install failed".
+        using var db = CreateDb();
+        var (container, provider) = SeedContainerAndProvider(db);
+
+        _mockProvider.Setup(p => p.CreateContainerAsync(It.IsAny<ContainerSpec>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ContainerProvisionResult { ExternalId = "ext-1", Status = ContainerStatus.Running });
+        _mockCodeAssistantInstallService.Setup(s => s.GenerateInstallScript(It.IsAny<CodeAssistantConfig>()))
+            .Throws(new NotSupportedException("Unknown code assistant: QwenCoder"));
+
+        var job = new ContainerProvisionJob(
+            container.Id, provider.Id, provider.Code,
+            "ubuntu:24.04", "test-container", "user1",
+            null, null, CodeAssistant: new CodeAssistantConfig { Tool = CodeAssistantType.QwenCoder });
+        await _queue.EnqueueAsync(job);
+
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var workerTask = worker.StartAsync(cts.Token);
+        await Task.Delay(500);
+        cts.Cancel();
+        try { await workerTask; } catch (OperationCanceledException) { }
+
+        using var verifyDb = CreateDb();
+        var updated = await verifyDb.Containers.FindAsync(container.Id);
+        updated.Should().NotBeNull();
+        updated!.Status.Should().Be(ContainerStatus.Running,
+            "an unsupported tool must NOT take down the container — the user can still attach and pick a different assistant.");
+        updated.CodeAssistantStatus.Should().Be(CodeAssistantInstallStatus.Skipped,
+            "script-generation failure is classed as Skipped, not Failed — they're rendered differently in the UI.");
+        updated.CodeAssistantStatusReason.Should().NotBeNullOrEmpty();
+        updated.CodeAssistantStatusReason.Should().StartWith("script-generation:",
+            "the reason prefix tells the Conductor banner which sub-classifier produced this outcome.");
+        updated.CodeAssistantStatusReason.Should().Contain("QwenCoder",
+            "the exception message reaches the user so they can self-diagnose unsupported tools.");
     }
 
     [Fact]
