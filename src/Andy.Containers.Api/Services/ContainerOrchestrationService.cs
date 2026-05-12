@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Abstractions.Images;
 using Andy.Containers.Api.Telemetry;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
+using Andy.Containers.Storage;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -27,6 +29,8 @@ public class ContainerOrchestrationService : IContainerService
     private readonly IServiceTokenService? _serviceTokenService;
     private readonly IProxyTokenService? _proxyTokenService;
     private readonly IDataProtector? _proxyTokenProtector;
+    private readonly IBuildArtifactStore? _buildArtifactStore;
+    private readonly IRegistryConfiguration? _registryConfiguration;
 
     /// <summary>
     /// rivoli-ai/conductor#943. Data-protection purpose for encrypting
@@ -56,7 +60,9 @@ public class ContainerOrchestrationService : IContainerService
         ILogger<ContainerOrchestrationService> logger,
         IServiceTokenService? serviceTokenService = null,
         IProxyTokenService? proxyTokenService = null,
-        IDataProtectionProvider? dataProtection = null)
+        IDataProtectionProvider? dataProtection = null,
+        IBuildArtifactStore? buildArtifactStore = null,
+        IRegistryConfiguration? registryConfiguration = null)
     {
         _db = db;
         _routing = routing;
@@ -75,6 +81,12 @@ public class ContainerOrchestrationService : IContainerService
         // per-container token, env-var injection runs unmodified).
         _proxyTokenService = proxyTokenService;
         _proxyTokenProtector = dataProtection?.CreateProtector(ProxyTokenProtectorPurpose);
+        // #274 (P1F1). Optional so unit tests that don't exercise the
+        // image-management pipeline don't need to construct stubs.
+        // When either is null we fall back to template.BaseImage —
+        // pre-IM behaviour. Live DI always supplies both.
+        _buildArtifactStore = buildArtifactStore;
+        _registryConfiguration = registryConfiguration;
     }
 
     /// <summary>
@@ -127,6 +139,16 @@ public class ContainerOrchestrationService : IContainerService
         if (template is null)
             throw new ArgumentException("Template not found");
 
+        // #274 (P1F1). If the IM pipeline has produced a BuildArtifact
+        // for this template in the primary registry, prefer its
+        // digest-pinned ref over the legacy template.BaseImage string.
+        // Falls back to BaseImage when no artifact exists (templates
+        // that haven't been built via IM yet, e.g. andy-desktop-* which
+        // are local-built fixtures, not registry images).
+        var resolvedTemplateImage =
+            await ResolveTemplateImageRefAsync(template.Id, ct)
+            ?? template.BaseImage;
+
         // X4 (rivoli-ai/andy-containers#93). Resolve the bound profile
         // (if any). When set, the profile's BaseImageRef and Kind
         // override the template's image and GUI behaviour: Headless /
@@ -177,7 +199,7 @@ public class ContainerOrchestrationService : IContainerService
         {
             var spec = new ContainerSpec
             {
-                ImageReference = template.BaseImage,
+                ImageReference = resolvedTemplateImage,
                 Name = request.Name,
                 Resources = request.Resources,
                 Gpu = request.Gpu
@@ -560,7 +582,7 @@ public class ContainerOrchestrationService : IContainerService
         // sidecar GuiType is derived from profile.Kind (Desktop → "vnc",
         // Headless / Terminal → "none"). Without a profile, fall back
         // to the template's existing values for full back-compat.
-        var effectiveImage = profile?.BaseImageRef ?? template.BaseImage;
+        var effectiveImage = profile?.BaseImageRef ?? resolvedTemplateImage;
         var effectiveGuiType = profile is null
             ? template.GuiType
             : (profile.Kind == EnvironmentKind.Desktop ? "vnc" : "none");
@@ -614,6 +636,75 @@ public class ContainerOrchestrationService : IContainerService
         Meters.ContainersCreated.Add(1, new KeyValuePair<string, object?>("provider", container.Provider));
 
         return container;
+    }
+
+    /// <summary>
+    /// #274 (P1F1). Resolves the most-recent IM-produced
+    /// <see cref="Andy.Containers.Models.ImageManagement.BuildArtifactEntity"/>
+    /// for <paramref name="templateId"/> in the primary registry into a
+    /// fully-qualified digest-pinned image reference of the form
+    /// <c>{authority}/{repoPath}@{digest}</c>. Returns <c>null</c> when:
+    /// (a) the store/config aren't wired (unit-test back-compat path);
+    /// (b) no artifact exists for this template;
+    /// (c) the artifact has no reference in the primary registry
+    ///     (rare — would mean an artifact row was persisted without
+    ///     a successful push, which the orchestrator doesn't currently
+    ///     do, but we guard anyway);
+    /// (d) the primary registry's URL can't be parsed (config error).
+    /// The caller falls back to <c>template.BaseImage</c> on null.
+    /// </summary>
+    private async Task<string?> ResolveTemplateImageRefAsync(Guid templateId, CancellationToken ct)
+    {
+        if (_buildArtifactStore is null || _registryConfiguration is null)
+        {
+            return null;
+        }
+
+        string primaryRegistryId;
+        try
+        {
+            primaryRegistryId = _registryConfiguration.PrimaryRegistryId;
+        }
+        catch (InvalidOperationException)
+        {
+            // No registries configured — pre-IM deployment. Legitimate
+            // fall-back to BaseImage.
+            return null;
+        }
+
+        var (items, _) = await _buildArtifactStore.ListAsync(
+            templateId: templateId,
+            registryId: primaryRegistryId,
+            skip: 0,
+            take: 1,
+            ct: ct).ConfigureAwait(false);
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        var artifact = items[0];
+        var reference = artifact.References
+            .FirstOrDefault(r => r.RegistryId == primaryRegistryId);
+        if (reference is null)
+        {
+            _logger.LogWarning(
+                "BuildArtifact {ArtifactId} for template {TemplateId} has no RegistryReference in primary registry {RegistryId}; falling back to template.BaseImage.",
+                artifact.Id, templateId, primaryRegistryId);
+            return null;
+        }
+
+        var registryEntry = _registryConfiguration.GetByIdOrThrow(primaryRegistryId);
+        if (!Uri.TryCreate(registryEntry.Url, UriKind.Absolute, out var url))
+        {
+            _logger.LogWarning(
+                "Primary registry {RegistryId} has unparseable URL '{Url}'; falling back to template.BaseImage.",
+                primaryRegistryId, registryEntry.Url);
+            return null;
+        }
+
+        var authority = url.IsDefaultPort ? url.Host : $"{url.Host}:{url.Port}";
+        return $"{authority}/{reference.RepoPath}@{artifact.Digest}";
     }
 
     public async Task<Container> GetContainerAsync(Guid containerId, CancellationToken ct)
