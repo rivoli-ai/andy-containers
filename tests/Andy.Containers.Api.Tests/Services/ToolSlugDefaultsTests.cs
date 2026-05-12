@@ -57,23 +57,64 @@ public class ToolSlugDefaultsTests
     }
 
     [Fact]
-    public void Resolve_WhenRequiredModelSlugsIsNull_OpenCode_FallsBackToEmpty()
+    public void Resolve_WhenRequiredModelSlugsIsNull_OpenCode_WithoutBaseUrl_DefaultsToOpenAI()
     {
+        // rivoli-ai/conductor#944 (M1.5.2). The launch UI signals
+        // "user accepted the proxy default backend" by leaving
+        // ApiBaseUrl null. We mint a token scoped to the OpenAI default
+        // so the container's OpenCode install can hit the proxy out
+        // of the box.
         var config = new CodeAssistantConfig
         {
             Tool = CodeAssistantType.OpenCode,
             RequiredModelSlugs = null,
+            ApiBaseUrl = null,
+        };
+
+        var slugs = ToolSlugDefaults.Resolve(config);
+
+        slugs.Should().Equal("openai/gpt-5");
+    }
+
+    [Fact]
+    public void Resolve_WhenRequiredModelSlugsIsNull_OpenCode_WithBaseUrl_ReturnsEmpty()
+    {
+        // User picked OpenAI-compatible (own URL) or Ollama in the
+        // sub-picker — ApiBaseUrl carries their URL, and they're
+        // handling auth themselves. Don't mint a proxy token.
+        var config = new CodeAssistantConfig
+        {
+            Tool = CodeAssistantType.OpenCode,
+            RequiredModelSlugs = null,
+            ApiBaseUrl = "http://host.docker.internal:11434",
         };
 
         var slugs = ToolSlugDefaults.Resolve(config);
 
         slugs.Should().BeEmpty(
-            "OpenCode is multi-provider; without an explicit slug list we don't guess.");
+            "an explicit ApiBaseUrl signals 'bypass the proxy' — no proxy token should be minted.");
     }
 
     [Theory]
-    [InlineData(CodeAssistantType.Aider)]
     [InlineData(CodeAssistantType.CodexCli)]
+    [InlineData(CodeAssistantType.Aider)]
+    public void Resolve_OpenAIDialectTools_WithoutBaseUrl_DefaultToOpenAI(CodeAssistantType tool)
+    {
+        // Codex CLI + Aider both speak OpenAI Chat Completions. When
+        // the user accepts the default routing, they get the same
+        // proxy-scoped token as OpenCode.
+        var config = new CodeAssistantConfig
+        {
+            Tool = tool,
+            RequiredModelSlugs = null,
+        };
+
+        var slugs = ToolSlugDefaults.Resolve(config);
+
+        slugs.Should().Equal("openai/gpt-5");
+    }
+
+    [Theory]
     [InlineData(CodeAssistantType.Continue)]
     [InlineData(CodeAssistantType.QwenCoder)]
     [InlineData(CodeAssistantType.GeminiCode)]

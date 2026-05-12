@@ -33,14 +33,31 @@ public static class ToolSlugDefaults
             CodeAssistantType.ClaudeCode
                 => new[] { "anthropic/claude-sonnet-4-6" },
 
-            // OpenCode is multi-provider. Without an explicit slug
-            // list we can't guess which provider the user actually
-            // wants — return empty (no proxy token) and let the API
-            // key resolution path handle credentials. Users routing
-            // OpenCode through the proxy should set
-            // RequiredModelSlugs (e.g. ["openai/gpt-4o"]).
+            // OpenCode is multi-provider. The Conductor launch UI's
+            // sub-picker (conductor#948 / M1.6.2) signals the user's
+            // backend choice via `ApiBaseUrl`:
+            //   - null/empty → user accepted the proxy default (OpenAI
+            //     via andy-models). Mint a token for the default OpenAI
+            //     slug.
+            //   - non-null → user picked OpenAI-compatible (own URL) or
+            //     Ollama. They're handling auth themselves; no proxy
+            //     token needed.
+            // rivoli-ai/conductor#944 (M1.5.2).
             CodeAssistantType.OpenCode
-                => Array.Empty<string>(),
+                => string.IsNullOrWhiteSpace(config.ApiBaseUrl)
+                    ? new[] { "openai/gpt-5" }
+                    : Array.Empty<string>(),
+
+            // Codex CLI + Aider both speak the OpenAI dialect, default
+            // through the proxy. Same slug as OpenCode-on-default.
+            CodeAssistantType.CodexCli
+                => string.IsNullOrWhiteSpace(config.ApiBaseUrl)
+                    ? new[] { "openai/gpt-5" }
+                    : Array.Empty<string>(),
+            CodeAssistantType.Aider
+                => string.IsNullOrWhiteSpace(config.ApiBaseUrl)
+                    ? new[] { "openai/gpt-5" }
+                    : Array.Empty<string>(),
 
             // Other tools — extend the map as concrete defaults
             // become clear. Returning empty keeps behaviour safe by
