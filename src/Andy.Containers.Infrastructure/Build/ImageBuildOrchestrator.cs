@@ -176,7 +176,16 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
             var spec = MapToSpec(template);
             var contextDir = Path.Combine(Path.GetTempPath(), $"andy-orchestrator-{Guid.NewGuid():N}");
             Directory.CreateDirectory(contextDir);
-            var context = new EmptyBuildContext(contextDir);
+            // P1F4 Part B (rivoli-ai/andy-containers#277). When the
+            // multipart register path staged files into
+            // template.UploadedFilesPath, enumerate them and surface
+            // each as IBuildContext.Files. The build backend's
+            // StageBuildContextAsync already copies context.Files into
+            // the build dir under their LogicalName, so this single
+            // wiring change is all that's needed for the M1.9
+            // `conductor-terminal-claude-code` template's
+            // `install-assistants.sh` to land in the build context.
+            var context = StagedBuildContext.ForTemplate(contextDir, template.UploadedFilesPath, _logger);
 
             try
             {
@@ -417,16 +426,71 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
     }
 
     /// <summary>
-    /// Empty <see cref="IBuildContext"/> for orchestrator-managed builds.
-    /// IM8 doesn't yet plumb multipart-uploaded files through the
-    /// orchestrator (the JSON-only register endpoint doesn't accept
-    /// them); files-on-disk staging will land alongside the multipart
-    /// register variant.
+    /// P1F4 Part B (rivoli-ai/andy-containers#277).
+    /// <see cref="IBuildContext"/> for orchestrator-managed builds.
+    /// When <see cref="ContainerTemplate.UploadedFilesPath"/> is set
+    /// (multipart register path, PR A), enumerates the staging
+    /// directory recursively and exposes each file as an
+    /// <see cref="UploadedFile"/> with <c>LogicalName</c> equal to
+    /// the file's path relative to the staging root — preserving any
+    /// nested subdirectories the uploader created. When the property
+    /// is null (JSON register path, or legacy rows) or the directory
+    /// has vanished, falls back to an empty file list — equivalent to
+    /// the pre-#277 behaviour.
     /// </summary>
-    private sealed class EmptyBuildContext : IBuildContext
+    internal sealed class StagedBuildContext : IBuildContext
     {
-        public EmptyBuildContext(string dir) { ContextDirectoryPath = dir; }
         public string ContextDirectoryPath { get; }
-        public IReadOnlyList<UploadedFile> Files => Array.Empty<UploadedFile>();
+        public IReadOnlyList<UploadedFile> Files { get; }
+
+        private StagedBuildContext(string contextDirectoryPath, IReadOnlyList<UploadedFile> files)
+        {
+            ContextDirectoryPath = contextDirectoryPath;
+            Files = files;
+        }
+
+        public static StagedBuildContext ForTemplate(
+            string contextDirectoryPath,
+            string? uploadedFilesPath,
+            ILogger logger)
+        {
+            if (string.IsNullOrWhiteSpace(uploadedFilesPath))
+            {
+                return new StagedBuildContext(contextDirectoryPath, Array.Empty<UploadedFile>());
+            }
+
+            if (!Directory.Exists(uploadedFilesPath))
+            {
+                // The staging dir is expected to outlive every build
+                // until the PR C cleanup pass — its absence usually
+                // means a manual /tmp wipe between API restarts. Warn
+                // (so operators can spot it) and proceed without
+                // uploaded files; the build will fail later when the
+                // Dockerfile references a missing source, with a
+                // clearer engine-side error than we could synthesise
+                // here.
+                logger.LogWarning(
+                    "Template's UploadedFilesPath '{Path}' is missing on disk; building without uploaded files.",
+                    uploadedFilesPath);
+                return new StagedBuildContext(contextDirectoryPath, Array.Empty<UploadedFile>());
+            }
+
+            var stagingRoot = Path.GetFullPath(uploadedFilesPath);
+            var files = new List<UploadedFile>();
+            foreach (var absolute in Directory.EnumerateFiles(stagingRoot, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(stagingRoot, absolute);
+                // Normalise to forward slashes so LogicalName matches
+                // the spec's `files[].source` value (which is always
+                // POSIX-style regardless of host OS) and the build
+                // backend's destination path inside the Linux build
+                // context.
+                var logical = relative.Replace(Path.DirectorySeparatorChar, '/');
+                var size = new FileInfo(absolute).Length;
+                files.Add(new UploadedFile(logical, absolute, size));
+            }
+
+            return new StagedBuildContext(contextDirectoryPath, files);
+        }
     }
 }

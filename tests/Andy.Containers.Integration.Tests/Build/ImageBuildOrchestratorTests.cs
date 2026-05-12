@@ -261,6 +261,140 @@ public class ImageBuildOrchestratorTests : IAsyncLifetime
         result.ErrorCode.Should().Be("registry.not_configured");
     }
 
+    // P1F4 Part B (rivoli-ai/andy-containers#277). When the multipart
+    // register path stamped UploadedFilesPath on the template (PR A),
+    // the orchestrator must enumerate that staging dir and surface
+    // each file via IBuildContext.Files — including files nested in
+    // subdirectories, whose LogicalName is the POSIX-style path
+    // relative to the staging root.
+    [Fact]
+    public async Task BuildAsync_WhenTemplateHasUploadedFilesPath_SurfacesFilesViaBuildContext()
+    {
+        var stagingDir = Directory.CreateTempSubdirectory("p1f4-partb-staging-").FullName;
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(stagingDir, "install-assistants.sh"),
+                "#!/usr/bin/env bash\nexit 0\n");
+            Directory.CreateDirectory(Path.Combine(stagingDir, "bin"));
+            await File.WriteAllTextAsync(
+                Path.Combine(stagingDir, "bin", "nested.sh"),
+                "echo nested\n");
+
+            var template = await _db.Templates.FindAsync(_templateId);
+            template!.UploadedFilesPath = stagingDir;
+            await _db.SaveChangesAsync();
+
+            SetupBackendBuilds("andy-build:tmp", "sha256:test-hash");
+            SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+            IBuildContext? captured = null;
+            _backend.Setup(b => b.BuildAsync(
+                    It.IsAny<TemplateSpec>(),
+                    It.IsAny<IBuildContext>(),
+                    It.IsAny<IProgress<BuildProgressEvent>>(),
+                    It.IsAny<CancellationToken>()))
+                .Callback<TemplateSpec, IBuildContext, IProgress<BuildProgressEvent>, CancellationToken>(
+                    (_, ctx, _, _) => captured = ctx)
+                .ReturnsAsync(new BuildArtifact(
+                    Digest: string.Empty,
+                    MediaType: "application/vnd.oci.image.manifest.v1+json",
+                    SizeBytes: 1000,
+                    SpecHash: "sha256:test-hash",
+                    LocalReference: "andy-build:tmp"));
+
+            await _orchestrator.BuildAsync(
+                new ImageBuildRequest(_templateId, null, false, "user"),
+                new Progress<BuildProgressEvent>(_ => { }),
+                CancellationToken.None);
+
+            captured.Should().NotBeNull();
+            captured!.Files.Should().HaveCount(2);
+            captured.Files.Should().Contain(f => f.LogicalName == "install-assistants.sh"
+                && f.AbsolutePath == Path.Combine(stagingDir, "install-assistants.sh"));
+            captured.Files.Should().Contain(f => f.LogicalName == "bin/nested.sh"
+                && f.AbsolutePath == Path.Combine(stagingDir, "bin", "nested.sh"),
+                "nested files must use POSIX-style LogicalName so the build backend writes them at the same relative path inside the Linux build context.");
+        }
+        finally
+        {
+            try { Directory.Delete(stagingDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    // P1F4 Part B back-compat: JSON register path (or legacy rows
+    // pre-#277) leaves UploadedFilesPath null. The orchestrator must
+    // still build, with an empty Files collection — exactly the
+    // pre-PR-B behaviour.
+    [Fact]
+    public async Task BuildAsync_WhenUploadedFilesPathIsNull_BuildContextHasNoFiles()
+    {
+        SetupBackendBuilds("andy-build:tmp", "sha256:test-hash");
+        SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+        IBuildContext? captured = null;
+        _backend.Setup(b => b.BuildAsync(
+                It.IsAny<TemplateSpec>(),
+                It.IsAny<IBuildContext>(),
+                It.IsAny<IProgress<BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<TemplateSpec, IBuildContext, IProgress<BuildProgressEvent>, CancellationToken>(
+                (_, ctx, _, _) => captured = ctx)
+            .ReturnsAsync(new BuildArtifact(
+                Digest: string.Empty,
+                MediaType: "application/vnd.oci.image.manifest.v1+json",
+                SizeBytes: 1000,
+                SpecHash: "sha256:test-hash",
+                LocalReference: "andy-build:tmp"));
+
+        await _orchestrator.BuildAsync(
+            new ImageBuildRequest(_templateId, null, false, "user"),
+            new Progress<BuildProgressEvent>(_ => { }),
+            CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.Files.Should().BeEmpty();
+    }
+
+    // P1F4 Part B graceful fallback: a stale UploadedFilesPath
+    // (manual /tmp wipe between API restarts) must not crash the
+    // build — the orchestrator surfaces an empty Files list and lets
+    // the build fail downstream with the engine's own error if the
+    // Dockerfile references the missing source.
+    [Fact]
+    public async Task BuildAsync_WhenUploadedFilesPathMissingOnDisk_BuildContextHasNoFiles()
+    {
+        var template = await _db.Templates.FindAsync(_templateId);
+        template!.UploadedFilesPath = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}");
+        await _db.SaveChangesAsync();
+
+        SetupBackendBuilds("andy-build:tmp", "sha256:test-hash");
+        SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+        IBuildContext? captured = null;
+        _backend.Setup(b => b.BuildAsync(
+                It.IsAny<TemplateSpec>(),
+                It.IsAny<IBuildContext>(),
+                It.IsAny<IProgress<BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<TemplateSpec, IBuildContext, IProgress<BuildProgressEvent>, CancellationToken>(
+                (_, ctx, _, _) => captured = ctx)
+            .ReturnsAsync(new BuildArtifact(
+                Digest: string.Empty,
+                MediaType: "application/vnd.oci.image.manifest.v1+json",
+                SizeBytes: 1000,
+                SpecHash: "sha256:test-hash",
+                LocalReference: "andy-build:tmp"));
+
+        await _orchestrator.BuildAsync(
+            new ImageBuildRequest(_templateId, null, false, "user"),
+            new Progress<BuildProgressEvent>(_ => { }),
+            CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.Files.Should().BeEmpty();
+    }
+
     private void SetupBackendBuilds(string localTag, string specHash)
     {
         _backend.Setup(b => b.BuildAsync(
