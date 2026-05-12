@@ -184,6 +184,101 @@ public class LocalZotAdapterRoundTripTests : IClassFixture<ZotContainerFixture>
         }
     }
 
+    /// <summary>
+    /// P1F3 (rivoli-ai/andy-containers#276). Parallel to
+    /// <see cref="PushPath_DockerCliUploaderToRealZot"/> but exercises
+    /// the Apple Containers path: build via <c>container build</c>,
+    /// then push via <see cref="AppleContainersUploader"/>. Gated on
+    /// the `container` CLI being on PATH (macOS 26+). Also needs zot
+    /// available for the registry side — when Docker isn't running
+    /// the test short-circuits like its docker sibling.
+    /// </summary>
+    [AppleContainerCliFact]
+    public async Task PushPath_AppleContainersUploaderToRealZot()
+    {
+        if (!_zot.IsAvailable)
+        {
+            return;
+        }
+
+        var contextDir = Directory.CreateTempSubdirectory("p1f3-pushpath-").FullName;
+        var localTag = $"andy-containers-p1f3-push-{Guid.NewGuid():N}";
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(contextDir, "Dockerfile"),
+                "FROM hello-world\n");
+
+            await RunContainerCliAsync([
+                "build",
+                "-t", localTag,
+                contextDir,
+            ]);
+
+            using var http = new HttpClient { BaseAddress = new Uri(_zot.BaseUrl) };
+            var adapter = new LocalZotAdapter(
+                http,
+                new AppleContainersUploader(NullLogger<AppleContainersUploader>.Instance),
+                NullLogger<LocalZotAdapter>.Instance,
+                registryId: "test-zot");
+
+            var artifact = new BuildArtifact(
+                Digest: string.Empty,
+                MediaType: "application/vnd.oci.image.manifest.v1+json",
+                SizeBytes: 0,
+                SpecHash: "sha256:test-spec-apple-pushpath",
+                LocalReference: localTag);
+
+            var reference = await adapter.PushAsync(
+                artifact,
+                repoPath: "p1f3-push",
+                tag: "v1",
+                CancellationToken.None);
+
+            reference.Digest.Should().StartWith("sha256:",
+                "the post-push HEAD must yield Docker-Content-Digest from zot when pushing via Apple Containers too.");
+
+            (await adapter.ExistsAsync("p1f3-push", reference.Digest, CancellationToken.None))
+                .Should().BeTrue("the manifest just pushed must be reachable by digest.");
+
+            // Best-effort cleanup; Apple's `container images delete`
+            // is the rough equivalent of `docker rmi -f`. Ignore the
+            // exit code so a stale image left behind from a prior run
+            // doesn't fail the test.
+            try { await RunContainerCliAsync(["images", "delete", localTag]); }
+            catch { /* best-effort */ }
+        }
+        finally
+        {
+            try { Directory.Delete(contextDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    private static async Task RunContainerCliAsync(string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "container",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var a in args)
+        {
+            psi.ArgumentList.Add(a);
+        }
+        using var proc = new System.Diagnostics.Process { StartInfo = psi };
+        proc.Start();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        await proc.StandardOutput.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        if (proc.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"container {string.Join(' ', args)} exited {proc.ExitCode}: {await stderrTask}");
+        }
+    }
+
     private static async Task RunDockerCliAsync(string[] args)
     {
         var psi = new System.Diagnostics.ProcessStartInfo

@@ -84,6 +84,27 @@ Implementations:
 - **`CodeBuildBackend`** (Phase 3) — AWS CodeBuild project.
 - **`BuildKitOnClusterBackend`** (Phase 3) — rootless BuildKit pod with `--frontend dockerfile`. Covers "no Docker daemon on dev laptops" customer policies.
 
+### `IRegistryUploader`
+
+`IRegistryAdapter.PushAsync` reads the digest authoritatively from the registry's HTTP API. The bytes themselves are uploaded by an `IRegistryUploader`:
+
+```csharp
+public interface IRegistryUploader
+{
+    Task PushAsync(string localReference, string remoteReference, CancellationToken ct);
+}
+```
+
+The split exists because *which CLI can push a built image* depends on *which engine built it*. Apple Containers and Docker maintain separate local image stores; an image built with `container build` is invisible to `docker push` and vice-versa.
+
+Implementations:
+
+- **`DockerCliUploader`** (IM6) — shells `docker tag` then `docker push`. Used when the build engine is Docker BuildKit.
+- **`AppleContainersUploader`** (P1F3, rivoli-ai/andy-containers#276) — shells `container images tag` then `container images push`. Used when the build engine is Apple Containers (macOS 26+).
+- **`EngineAwareRegistryUploader`** — the composite registered as `IRegistryUploader` in DI. Resolves `IBuildEngineDetector` on first push, caches the choice, and dispatches to the right concrete uploader. Throws `RegistryUploadException("EngineAwareRegistryUploader.NoEngine")` when no engine is detected.
+
+The adapter never sees the uploader split — it just calls `IRegistryUploader.PushAsync`, gets bytes pushed, and then asks the registry for the digest via HEAD.
+
 ### `IRegistryConfiguration`
 
 ```csharp
