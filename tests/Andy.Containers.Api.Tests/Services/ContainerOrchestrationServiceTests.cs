@@ -1,9 +1,12 @@
 using System.Text.Json;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Abstractions.Images;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Containers.Models.ImageManagement;
+using Andy.Containers.Storage;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -138,6 +141,107 @@ public class ContainerOrchestrationServiceTests : IDisposable
         var act = () => _service.CreateContainerAsync(request, CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Provider not found*");
+    }
+
+    // #274 (P1F1). When the IM pipeline has produced a BuildArtifact
+    // for the template, the orchestrator must consume the digest-pinned
+    // ref instead of template.BaseImage — otherwise the workspace pulls
+    // from the legacy base image and the whole Phase-1 pipeline is dead
+    // code at launch time.
+    [Fact]
+    public async Task CreateContainer_WhenBuildArtifactExists_UsesDigestPinnedImageReference()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        var artifact = new BuildArtifactEntity
+        {
+            Id = Guid.NewGuid(),
+            Digest = digest,
+            MediaType = "application/vnd.oci.image.manifest.v1+json",
+            SpecHash = "sha256:deadbeef",
+            TemplateId = template.Id,
+            BuildBackendId = "local-docker",
+            BuiltBy = "test",
+            BuiltAt = DateTime.UtcNow,
+        };
+        artifact.References.Add(new RegistryReferenceEntity
+        {
+            Id = Guid.NewGuid(),
+            BuildArtifactId = artifact.Id,
+            RegistryId = "local-zot",
+            RepoPath = "test-template",
+            Tag = "sha256-11111111",
+            PushedAt = DateTime.UtcNow,
+            PushedBy = "test",
+        });
+
+        var store = new Mock<IBuildArtifactStore>();
+        store.Setup(s => s.ListAsync(template.Id, "local-zot", 0, 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((IReadOnlyList<BuildArtifactEntity>)new[] { artifact }, 1));
+
+        var registries = new Mock<IRegistryConfiguration>();
+        registries.SetupGet(r => r.PrimaryRegistryId).Returns("local-zot");
+        registries.Setup(r => r.GetByIdOrThrow("local-zot"))
+            .Returns(new RegistryConfigEntry { Id = "local-zot", Kind = "zot", Url = "http://localhost:5050", IsPrimary = true });
+
+        var service = new ContainerOrchestrationService(
+            _db, _mockRouting.Object, _mockFactory.Object, _queue,
+            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            _configuration, new Mock<ILogger<ContainerOrchestrationService>>().Object,
+            buildArtifactStore: store.Object,
+            registryConfiguration: registries.Object);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "digest-pinned",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+        };
+
+        await service.CreateContainerAsync(request, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be(
+            $"localhost:5050/test-template@{digest}",
+            "the BuildArtifact's digest-pinned ref must win over the legacy template.BaseImage string.");
+    }
+
+    // #274 (P1F1). Back-compat: when no BuildArtifact exists for the
+    // template (templates that haven't been built through the IM
+    // pipeline, e.g. andy-desktop-* fixtures), fall back to
+    // template.BaseImage — the pre-IM behaviour.
+    [Fact]
+    public async Task CreateContainer_WhenNoBuildArtifactForTemplate_FallsBackToBaseImage()
+    {
+        var (template, provider) = await SeedTemplateAndProvider();
+
+        var store = new Mock<IBuildArtifactStore>();
+        store.Setup(s => s.ListAsync(template.Id, "local-zot", 0, 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((IReadOnlyList<BuildArtifactEntity>)Array.Empty<BuildArtifactEntity>(), 0));
+
+        var registries = new Mock<IRegistryConfiguration>();
+        registries.SetupGet(r => r.PrimaryRegistryId).Returns("local-zot");
+
+        var service = new ContainerOrchestrationService(
+            _db, _mockRouting.Object, _mockFactory.Object, _queue,
+            _mockProbeService.Object, new Mock<IApiKeyService>().Object,
+            _configuration, new Mock<ILogger<ContainerOrchestrationService>>().Object,
+            buildArtifactStore: store.Object,
+            registryConfiguration: registries.Object);
+
+        var request = new CreateContainerRequest
+        {
+            Name = "fallback",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+        };
+
+        await service.CreateContainerAsync(request, CancellationToken.None);
+
+        _queue.Reader.TryRead(out var job).Should().BeTrue();
+        job!.TemplateBaseImage.Should().Be(template.BaseImage,
+            "with no BuildArtifact persisted, the orchestrator must keep using the template's BaseImage (pre-IM back-compat).");
     }
 
     [Fact]
