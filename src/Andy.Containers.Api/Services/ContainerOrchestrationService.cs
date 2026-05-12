@@ -545,6 +545,38 @@ public class ContainerOrchestrationService : IContainerService
                 _logger.LogInformation(
                     "Injected per-container ANDY_SERVICE_TOKEN (tokenId={TokenId}, slugs={Slugs}, length={Length}) into container env",
                     minted.TokenId, string.Join(",", requiredSlugs), minted.Jwt.Length);
+
+                // rivoli-ai/conductor#944 (M1.5.2). Set the tool-specific
+                // env vars so the code assistant inside the container
+                // routes through the andy-models proxy with the per-
+                // container service token. Without this, Claude Code
+                // would read its real `ANTHROPIC_API_KEY` from the
+                // credentials path (if set) and skip the proxy entirely,
+                // losing the UsageEvent log + the proxy's key resolution.
+                //
+                // We overwrite anything the credentials-based path set
+                // — the proxy mode is the architecture intent, the
+                // direct-credential path is a fallback.
+                var routing = CodeAssistantProxyRouting.For(codeAssistant!);
+                if (routing is not null
+                    && !string.IsNullOrWhiteSpace(containerFacingProxyUrl))
+                {
+                    var dialectURL = CodeAssistantProxyRouting.BuildBaseUrl(
+                        containerFacingProxyUrl,
+                        routing.DialectPath);
+                    envVars[routing.KeyEnvVar] = minted.Jwt;
+                    envVars[routing.BaseUrlEnvVar] = dialectURL;
+                    _logger.LogInformation(
+                        "Routed {Tool} through andy-models proxy: {KeyEnv}=<jwt>, {BaseEnv}={Url}",
+                        codeAssistant!.Tool, routing.KeyEnvVar, routing.BaseUrlEnvVar,
+                        UrlRedactor.Redact(dialectURL));
+                }
+                else if (routing is null && codeAssistant is not null)
+                {
+                    _logger.LogInformation(
+                        "Code assistant {Tool} has no proxy routing entry — leaving credential-path env vars in place",
+                        codeAssistant.Tool);
+                }
             }
         }
 
