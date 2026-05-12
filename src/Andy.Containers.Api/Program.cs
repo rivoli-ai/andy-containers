@@ -167,9 +167,9 @@ try
     // IContainerService per call (which is itself scoped because it
     // takes ContainersDbContext).
     builder.Services.AddScoped<ICodeAssistantInstallExecutor, CodeAssistantInstallExecutor>();
-    builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
-    builder.Services.AddScoped<IApiKeyValidationService, ApiKeyValidationService>();
-    builder.Services.AddHttpClient("ApiKeyValidation");
+    // IApiKeyService / IApiKeyValidationService retired in
+    // rivoli-ai/conductor#946 (M1.5.4) — provider keys now live in
+    // andy-settings and reach containers via the andy-models proxy.
     builder.Services.AddScoped<IToolVersionDetector, ToolVersionDetector>();
     builder.Services.AddScoped<IImageManifestService, ImageManifestService>();
     builder.Services.AddScoped<IImageDiffService, ImageDiffService>();

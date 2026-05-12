@@ -37,8 +37,7 @@ public class ContainersMcpToolsImageTests : IDisposable
             _mockManifestService.Object,
             _mockDiffService.Object,
             mockCurrentUser.Object,
-            mockOrgMembership.Object,
-            new Mock<IApiKeyService>().Object);
+            mockOrgMembership.Object);
     }
 
     public void Dispose() => _db.Dispose();
