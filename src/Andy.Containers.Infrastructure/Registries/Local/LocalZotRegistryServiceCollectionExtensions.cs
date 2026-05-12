@@ -37,7 +37,17 @@ public static class LocalZotRegistryServiceCollectionExtensions
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(registryId);
 
-        services.TryAddSingleton<IRegistryUploader, DockerCliUploader>();
+        // P1F3 (rivoli-ai/andy-containers#276). Register both concrete
+        // uploaders + an engine-aware composite. The composite resolves
+        // IBuildEngineDetector on first push, caches the choice, and
+        // dispatches to DockerCliUploader (Docker BuildKit) or
+        // AppleContainersUploader (Apple Containers, macOS 26+).
+        // Without this dispatch the uploader was hard-wired to Docker
+        // and Apple Containers users hit "No such image" because the
+        // built image lives in Apple's separate store.
+        services.TryAddSingleton<DockerCliUploader>();
+        services.TryAddSingleton<AppleContainersUploader>();
+        services.TryAddSingleton<IRegistryUploader, EngineAwareRegistryUploader>();
 
         services.AddHttpClient<LocalZotAdapter>((sp, client) =>
         {
