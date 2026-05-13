@@ -1,0 +1,74 @@
+# rivoli-ai/conductor#1029 (M1.9.2). Template spec for the
+# conductor-terminal base image. Consumed by andy-containers'
+# `POST /api/templates/from-yaml` endpoint. The image-management
+# pipeline (Epic IM, M1.9.7) then builds the actual image tarball
+# and registers it in the embedded zot registry.
+#
+# `packages:` and `files:` keys mirror the Dockerfile so the
+# server-side YamlTemplateParser can validate this without holding
+# a Docker context — drift between this spec and Dockerfile means
+# the pipeline-built image differs from the local docker-build.
+# Keep them in lockstep.
+
+code: conductor-terminal
+name: Conductor Terminal (base)
+description: |
+  Minimal Linux base for Conductor's code-assistant container variants.
+  Ubuntu 22.04 LTS with bash + zsh, common VCS / network / editor
+  tools, a non-root `conductor` user (uid 1000), passwordless sudo,
+  and an entrypoint that conditionally runs install-assistants.sh.
+version: 1.0.0
+
+base_image: ubuntu:22.04
+
+# Packages installed on top of the base via apt. Mirrors the apt-get
+# install list in the Dockerfile. Keep these in sync.
+packages:
+  - ca-certificates
+  - curl
+  - wget
+  - gnupg
+  - git
+  - bash
+  - zsh
+  - vim
+  - nano
+  - tmux
+  - sudo
+  - locales
+  - openssh-client
+
+# Files materialised into the image from this directory's checkout.
+# The Conductor server reads source paths relative to the spec's
+# enclosing directory.
+files:
+  - source: entrypoint.sh
+    dest: /opt/conductor/entrypoint.sh
+    mode: "0755"
+  - source: conductor.bashrc
+    dest: /home/conductor/.bashrc
+    mode: "0644"
+  - source: conductor.tmux.conf
+    dest: /home/conductor/.tmux.conf
+    mode: "0644"
+
+# Imperative install steps. Recreate the user + workdir setup the
+# Dockerfile does; the pipeline-built image must produce the same
+# UID + permissions so bind-mounts work identically.
+install:
+  - locale-gen en_US.UTF-8
+  - useradd --create-home --uid 1000 --shell /bin/bash conductor
+  - 'echo "conductor ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/conductor'
+  - chmod 0440 /etc/sudoers.d/conductor
+  - mkdir -p /workspace
+  - chown conductor:conductor /workspace
+  - chown conductor:conductor /home/conductor/.bashrc /home/conductor/.tmux.conf
+
+entrypoint: /opt/conductor/entrypoint.sh
+
+# Markers the andy-containers build pipeline uses to surface this
+# image in the catalog UI + decide which images M1.9.6 seeds on
+# first launch. `is-base: true` is what the variant images
+# (M1.9.4 / M1.9.5) reference when they `extends: conductor-terminal`.
+markers:
+  is-base: true
