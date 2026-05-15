@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -21,17 +22,20 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly IServiceTokenService _serviceTokens;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IOptions<AndyModelsOptions> _options;
     private readonly ILogger<AndyModelsProxyTokenService> _logger;
 
     public AndyModelsProxyTokenService(
         IHttpClientFactory httpFactory,
         IServiceTokenService serviceTokens,
+        IHttpContextAccessor httpContextAccessor,
         IOptions<AndyModelsOptions> options,
         ILogger<AndyModelsProxyTokenService> logger)
     {
         _httpFactory = httpFactory;
         _serviceTokens = serviceTokens;
+        _httpContextAccessor = httpContextAccessor;
         _options = options;
         _logger = logger;
     }
@@ -60,7 +64,7 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
                 "AndyModels:BaseUrl is not configured. Cannot mint per-container proxy tokens.");
         }
 
-        var bearer = await GetBearerAsync(ct).ConfigureAwait(false);
+        var bearer = await GetMintBearerAsync(ct).ConfigureAwait(false);
         var http = _httpFactory.CreateClient(HttpClientName);
 
         // Resolve against the configured base. Path matches the
@@ -189,6 +193,57 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
         }
     }
 
+    /// <summary>
+    /// Bearer used on the mint path. Prefers an RFC 8693 OBO-exchanged
+    /// token (sub=user, act=andy-containers-api) when the current HTTP
+    /// request carries a user bearer; falls back to the pure-M2M token
+    /// (sub=andy-containers-api) when no inbound user token is
+    /// available (background callers).
+    ///
+    /// This is the consumer-side half of Epic IDP — paired with
+    /// rivoli-ai/andy-models#68's OBO-aware
+    /// <c>ProxyTokensController.CallerHasAsync</c>, it makes andy-rbac
+    /// see the originating user as the subject of the
+    /// <c>proxy:tokens:mint</c> check instead of <c>anonymous</c>.
+    /// Closes rivoli-ai/andy-containers#305.
+    /// </summary>
+    private async Task<string> GetMintBearerAsync(CancellationToken ct)
+    {
+        var userJwt = TryExtractInboundUserJwt();
+        if (!string.IsNullOrWhiteSpace(userJwt))
+        {
+            try
+            {
+                _logger.LogDebug(
+                    "Using OBO bearer (audience={Audience}) for proxy-token mint",
+                    AndyModelsApiAudience);
+                return await _serviceTokens
+                    .GetOnBehalfOfTokenAsync(userJwt, AndyModelsApiAudience, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (ServiceTokenException ex)
+            {
+                throw new ProxyTokenException(
+                    "Could not exchange user token for andy-models OBO bearer. " +
+                    "Check ServiceAuth:* configuration, that the andy-containers-api " +
+                    "OAuth client is on the TokenExchange:Policies allow-list for " +
+                    $"audience '{AndyModelsApiAudience}', and that the inbound user " +
+                    "token is a valid access token issued by andy-auth.", ex);
+            }
+        }
+
+        _logger.LogDebug(
+            "No inbound user token; falling back to M2M bearer (audience={Audience}) for proxy-token mint",
+            AndyModelsApiAudience);
+        return await GetBearerAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Pure M2M bearer (sub=andy-containers-api). Used on the revoke
+    /// path (no user context in destroy hooks) and as fallback on the
+    /// mint path when no inbound user token is available (background
+    /// callers).
+    /// </summary>
     private async Task<string> GetBearerAsync(CancellationToken ct)
     {
         try
@@ -212,6 +267,34 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
                 $"OAuth client is permitted to request scope '{AndyModelsApiAudience}' " +
                 "(see andy-containers/config/registration.json apiClient.scopes).", ex);
         }
+    }
+
+    /// <summary>
+    /// Extracts the inbound user's bearer token from the current HTTP
+    /// request, if any. Returns null when called outside an HTTP
+    /// context (background workers, hosted services), or when the
+    /// inbound request didn't carry a bearer header. Strips the
+    /// "Bearer " prefix; returns the raw JWT.
+    /// </summary>
+    private string? TryExtractInboundUserJwt()
+    {
+        var ctx = _httpContextAccessor.HttpContext;
+        if (ctx is null)
+        {
+            return null;
+        }
+        var header = ctx.Request.Headers.Authorization.ToString();
+        if (string.IsNullOrWhiteSpace(header))
+        {
+            return null;
+        }
+        // Tolerate "Bearer xyz" (canonical) and "bearer xyz" (some clients).
+        const string prefix = "Bearer ";
+        if (header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return header.Substring(prefix.Length).Trim();
+        }
+        return null;
     }
 
     /// <summary>

@@ -302,6 +302,7 @@ public class ContainerOrchestrationServiceProxyTokenTests : IDisposable
         public StubServiceTokenService(string token) { _token = token; }
         public Task<string> GetAccessTokenAsync(CancellationToken ct = default) => Task.FromResult(_token);
         public Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default) => Task.FromResult(_token);
+        public Task<string> GetOnBehalfOfTokenAsync(string subjectToken, string audience, CancellationToken ct = default) => Task.FromResult(_token);
     }
 
     /// <summary>

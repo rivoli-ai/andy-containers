@@ -76,6 +76,57 @@ public interface IServiceTokenService
     /// empty or whitespace.
     /// </exception>
     Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default);
+
+    /// <summary>
+    /// Exchanges a user access token (<paramref name="subjectToken"/>)
+    /// for an <em>on-behalf-of</em> access token whose <c>sub</c> is
+    /// the original user, whose <c>act</c> records this service as the
+    /// actor, and whose <c>aud</c> is <paramref name="audience"/>.
+    /// Implements the RFC 8693 OAuth 2.0 Token Exchange grant against
+    /// <c>andy-auth</c>'s <c>/connect/token</c> endpoint.
+    ///
+    /// <para>
+    /// Use this on every service-to-service call that originates from a
+    /// user request — without it the downstream RBAC check sees only
+    /// the service principal (or falls back to <c>anonymous</c>) instead
+    /// of the actual user. That failure mode is exactly what
+    /// rivoli-ai/andy-containers#305 exposed.
+    /// </para>
+    ///
+    /// <para>
+    /// Drives the consumer side of Epic IDP (rivoli-ai/conductor#1246).
+    /// This method intentionally mirrors the shape of
+    /// <c>Andy.Auth.M2MClient.IDelegatedTokenProvider.GetTokenOnBehalfOfAsync</c>
+    /// — once the M2M consolidation lands (covered by #990) the local
+    /// implementation here can be swapped for the shared library
+    /// version mechanically.
+    /// </para>
+    ///
+    /// <para>
+    /// Per (<paramref name="subjectToken"/>, <paramref name="audience"/>)
+    /// in-memory cache keyed by the subject token's SHA-256 hash — the
+    /// raw user JWT never lives in a cache key.
+    /// </para>
+    /// </summary>
+    /// <param name="subjectToken">
+    /// The user's bearer access token from the inbound HTTP request.
+    /// Must be a JWT this server's <c>andy-auth</c> validates as one of
+    /// its own issued tokens.
+    /// </param>
+    /// <param name="audience">
+    /// Downstream service the returned token will be presented to
+    /// (e.g. <c>urn:andy-models-api</c>).
+    /// </param>
+    /// <exception cref="ServiceTokenException">
+    /// Thrown on transport failure, when andy-auth rejects the request
+    /// (policy denial → <c>unauthorized_client</c>; invalid subject
+    /// token → <c>invalid_grant</c>), or when the response is empty /
+    /// malformed.
+    /// </exception>
+    Task<string> GetOnBehalfOfTokenAsync(
+        string subjectToken,
+        string audience,
+        CancellationToken ct = default);
 }
 
 /// <summary>

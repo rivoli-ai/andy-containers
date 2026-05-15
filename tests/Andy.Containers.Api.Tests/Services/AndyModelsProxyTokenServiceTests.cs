@@ -307,22 +307,102 @@ public class AndyModelsProxyTokenServiceTests
     }
 
     // -----------------------------------------------------------------
+    // Epic IDP (rivoli-ai/conductor#1246) — OBO bearer on mint path
+    // Closes rivoli-ai/andy-containers#305.
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task Mint_WithInboundUserBearer_UsesObOBearer()
+    {
+        // When the current HTTP request carries `Authorization: Bearer <user-jwt>`,
+        // the consumer exchanges the user token via OBO instead of using
+        // the pure M2M token. andy-models then sees `sub=<user>` /
+        // `act=<andy-containers-api>` and gates on the user's permission.
+        var bearer = new StubTokenService("obo-exchanged-jwt");
+        var (service, handler, _) = MakeService(
+            opts => opts.BaseUrl = "http://andy-models.test",
+            bearerProvider: bearer,
+            inboundUserJwt: "user.jwt.signature");
+        handler.SetSuccessJsonResponse(
+            "{\"tokenId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\"jwt\":\"j.w.t\",\"expiresAt\":\"2026-12-01T00:00:00Z\"}");
+
+        _ = await service.MintForContainerAsync("ctr", "user", new[] { "anthropic/claude-sonnet-4-6" });
+
+        bearer.LastSubjectToken.Should().Be("user.jwt.signature",
+            "the user's inbound token must be presented as subject_token to the OBO exchange.");
+        bearer.LastRequestedAudience.Should().Be("urn:andy-models-api");
+        handler.LastRequest!.Headers.Authorization.Should().Be(
+            new AuthenticationHeaderValue("Bearer", "obo-exchanged-jwt"),
+            "the bearer on the outbound call must be the OBO-exchanged token, not the user's raw JWT.");
+    }
+
+    [Fact]
+    public async Task Mint_WithoutInboundHttpContext_FallsBackToM2M()
+    {
+        // Background callers (workers, hosted services) have no
+        // inbound HTTP context. They keep the existing M2M behaviour.
+        var bearer = new StubTokenService("m2m-bearer");
+        var (service, handler, _) = MakeService(
+            opts => opts.BaseUrl = "http://andy-models.test",
+            bearerProvider: bearer);
+        handler.SetSuccessJsonResponse(
+            "{\"tokenId\":\"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\",\"jwt\":\"j.w.t\",\"expiresAt\":\"2026-12-01T00:00:00Z\"}");
+
+        _ = await service.MintForContainerAsync("ctr", "user", new[] { "anthropic/claude-sonnet-4-6" });
+
+        bearer.LastSubjectToken.Should().BeNull("no inbound user → no OBO exchange.");
+        bearer.LastRequestedAudience.Should().Be("urn:andy-models-api");
+        handler.LastRequest!.Headers.Authorization.Should().Be(
+            new AuthenticationHeaderValue("Bearer", "m2m-bearer"));
+    }
+
+    [Fact]
+    public async Task Mint_ObOExchangeFailure_WrappedAsProxyTokenException()
+    {
+        // OBO exchange failures should surface with a clear message
+        // pointing at the policy / config — not crash the request with
+        // a raw ServiceTokenException.
+        var bearer = new ThrowingTokenService(new ServiceTokenException("policy denied"));
+        var (service, _, _) = MakeService(
+            opts => opts.BaseUrl = "http://andy-models.test",
+            bearerProvider: bearer,
+            inboundUserJwt: "user.jwt.signature");
+
+        var act = async () => await service.MintForContainerAsync(
+            "ctr", "user", new[] { "anthropic/claude-sonnet-4-6" });
+
+        var ex = await act.Should().ThrowAsync<ProxyTokenException>();
+        ex.Which.Message.Should().Contain("OBO");
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 
     private static (AndyModelsProxyTokenService service, StubHttpHandler handler, IServiceTokenService bearer)
         MakeService(
             Action<AndyModelsOptions> configure,
-            IServiceTokenService? bearerProvider = null)
+            IServiceTokenService? bearerProvider = null,
+            string? inboundUserJwt = null)
     {
         var options = new AndyModelsOptions();
         configure(options);
         var handler = new StubHttpHandler();
         var factory = new SingleClientHttpClientFactory(handler);
         var bearer = bearerProvider ?? new StubTokenService("m2m-bearer-stub");
+
+        var httpContextAccessor = new Microsoft.AspNetCore.Http.HttpContextAccessor();
+        if (inboundUserJwt is not null)
+        {
+            var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+            ctx.Request.Headers.Authorization = $"Bearer {inboundUserJwt}";
+            httpContextAccessor.HttpContext = ctx;
+        }
+
         var service = new AndyModelsProxyTokenService(
             factory,
             bearer,
+            httpContextAccessor,
             Options.Create(options),
             NullLogger<AndyModelsProxyTokenService>.Instance);
         return (service, handler, bearer);
@@ -332,6 +412,7 @@ public class AndyModelsProxyTokenServiceTests
     {
         private readonly string _token;
         public string? LastRequestedAudience { get; private set; }
+        public string? LastSubjectToken { get; private set; }
         public StubTokenService(string token) { _token = token; }
         public Task<string> GetAccessTokenAsync(CancellationToken ct = default)
         {
@@ -343,6 +424,12 @@ public class AndyModelsProxyTokenServiceTests
             LastRequestedAudience = audience;
             return Task.FromResult(_token);
         }
+        public Task<string> GetOnBehalfOfTokenAsync(string subjectToken, string audience, CancellationToken ct = default)
+        {
+            LastRequestedAudience = audience;
+            LastSubjectToken = subjectToken;
+            return Task.FromResult(_token);
+        }
     }
 
     private sealed class ThrowingTokenService : IServiceTokenService
@@ -352,6 +439,8 @@ public class AndyModelsProxyTokenServiceTests
         public Task<string> GetAccessTokenAsync(CancellationToken ct = default)
             => Task.FromException<string>(_ex);
         public Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default)
+            => Task.FromException<string>(_ex);
+        public Task<string> GetOnBehalfOfTokenAsync(string subjectToken, string audience, CancellationToken ct = default)
             => Task.FromException<string>(_ex);
     }
 

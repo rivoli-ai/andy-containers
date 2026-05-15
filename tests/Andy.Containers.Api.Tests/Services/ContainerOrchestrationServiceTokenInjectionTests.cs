@@ -250,5 +250,8 @@ public class ContainerOrchestrationServiceTokenInjectionTests : IDisposable
 
         public Task<string> GetAccessTokenAsync(string audience, CancellationToken ct = default)
             => GetAccessTokenAsync(ct);
+
+        public Task<string> GetOnBehalfOfTokenAsync(string subjectToken, string audience, CancellationToken ct = default)
+            => GetAccessTokenAsync(ct);
     }
 }
