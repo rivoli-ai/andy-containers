@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -37,6 +39,11 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
     // dictionary lookup + an HTTP mint behind the cache miss.
     private readonly SemaphoreSlim _gate = new(initialCount: 1, maxCount: 1);
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
+
+    // Epic IDP (rivoli-ai/conductor#1246). Separate cache for OBO
+    // tokens, keyed by (SHA-256 of the user's subject token, audience).
+    // Hashing keeps the raw user JWT out of cache keys.
+    private readonly Dictionary<DelegatedCacheKey, CacheEntry> _delegatedCache = new();
 
     /// <summary>HttpClient name registered in DI; tests can override.</summary>
     public const string HttpClientName = "ServiceTokenClient";
@@ -118,6 +125,154 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
         token = string.Empty;
         return false;
     }
+
+    public async Task<string> GetOnBehalfOfTokenAsync(
+        string subjectToken,
+        string audience,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(subjectToken))
+        {
+            throw new ServiceTokenException(
+                "subject_token is required for on-behalf-of token requests.");
+        }
+        if (string.IsNullOrWhiteSpace(audience))
+        {
+            throw new ServiceTokenException(
+                "Audience is required for on-behalf-of token requests.");
+        }
+
+        var key = new DelegatedCacheKey(HashSubject(subjectToken), audience);
+
+        // Fast path: cached and not within refresh skew.
+        if (TryGetFreshCachedDelegated(key, out var fast))
+        {
+            return fast;
+        }
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Double-check after acquiring the gate.
+            if (TryGetFreshCachedDelegated(key, out var current))
+            {
+                return current;
+            }
+
+            var fresh = await MintOnBehalfOfAsync(subjectToken, audience, ct).ConfigureAwait(false);
+            var expiry = _timeProvider.GetUtcNow() + TimeSpan.FromSeconds(fresh.ExpiresInSeconds);
+            _delegatedCache[key] = new CacheEntry(fresh.AccessToken!, expiry);
+            return fresh.AccessToken!;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private bool TryGetFreshCachedDelegated(DelegatedCacheKey key, out string token)
+    {
+        if (_delegatedCache.TryGetValue(key, out var entry)
+            && _timeProvider.GetUtcNow() + RefreshSkew < entry.Expiry)
+        {
+            token = entry.Token;
+            return true;
+        }
+        token = string.Empty;
+        return false;
+    }
+
+    private async Task<TokenResponse> MintOnBehalfOfAsync(
+        string subjectToken,
+        string audience,
+        CancellationToken ct)
+    {
+        var opts = _options.Value;
+        if (string.IsNullOrWhiteSpace(opts.TokenEndpoint))
+        {
+            throw new ServiceTokenException(
+                "ServiceAuth:TokenEndpoint is not configured. Cannot mint on-behalf-of tokens.");
+        }
+        if (string.IsNullOrWhiteSpace(opts.ClientId))
+        {
+            throw new ServiceTokenException(
+                "ServiceAuth:ClientId is not configured. Cannot mint on-behalf-of tokens.");
+        }
+
+        var http = _httpFactory.CreateClient(HttpClientName);
+
+        // RFC 8693 §2.1 wire shape. The grant URN and token-type URN
+        // are normative; the `resource` parameter names the downstream
+        // audience.
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
+            ["client_id"] = opts.ClientId,
+            ["client_secret"] = opts.ClientSecret ?? string.Empty,
+            ["subject_token"] = subjectToken,
+            ["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
+            ["resource"] = audience,
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, opts.TokenEndpoint)
+        {
+            Content = new FormUrlEncodedContent(form),
+        };
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new ServiceTokenException(
+                $"Token endpoint unreachable for OBO exchange: {opts.TokenEndpoint}", ex);
+        }
+
+        using var _ = response;
+        if (!response.IsSuccessStatusCode)
+        {
+            var bodyPreview = await SafeReadPreviewAsync(response, ct).ConfigureAwait(false);
+            throw new ServiceTokenException(
+                $"Token endpoint returned HTTP {(int)response.StatusCode} for OBO exchange (audience={audience}). " +
+                $"Body preview: {bodyPreview}");
+        }
+
+        TokenResponse? parsed;
+        try
+        {
+            parsed = await response.Content.ReadFromJsonAsync<TokenResponse>(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            throw new ServiceTokenException(
+                "Token endpoint OBO response was not valid JSON.", ex);
+        }
+        if (parsed is null || string.IsNullOrWhiteSpace(parsed.AccessToken))
+        {
+            throw new ServiceTokenException(
+                "Token endpoint OBO response is missing the `access_token` field.");
+        }
+
+        _logger.LogInformation(
+            "Minted OBO token (clientId={ClientId} audience={Audience} expiresInSeconds={ExpiresInSeconds})",
+            opts.ClientId, audience, parsed.ExpiresInSeconds);
+        return parsed;
+    }
+
+    private static string HashSubject(string subjectToken)
+    {
+        var bytes = Encoding.UTF8.GetBytes(subjectToken);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash);
+    }
+
+    /// <summary>
+    /// Cache key for OBO tokens. Hashing the subject token keeps the
+    /// raw user JWT out of the dictionary key.
+    /// </summary>
+    private readonly record struct DelegatedCacheKey(string SubjectTokenHash, string Audience);
 
     private async Task<TokenResponse> MintAsync(string audience, CancellationToken ct)
     {
