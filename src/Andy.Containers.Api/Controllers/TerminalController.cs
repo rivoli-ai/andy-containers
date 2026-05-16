@@ -683,7 +683,10 @@ public class TerminalController : ControllerBase
 
                     if (result.Count > 0)
                     {
-                        if (result.Count > 10 && buffer[0] == '{' && IsResizeMessage(buffer, result.Count, out _, out _))
+                        // Swallow resize control frames so they never
+                        // become shell stdin. This path doesn't apply
+                        // the resize (see comment above the task).
+                        if (TryParseResizeFrame(buffer, result.Count, out _, out _))
                         {
                             continue;
                         }
@@ -812,10 +815,11 @@ public class TerminalController : ControllerBase
 
                     // Resize messages route to the daemon's PTY-size
                     // API (provider-specific). The kernel propagates
-                    // SIGWINCH down to the inner shell.
-                    if (result.Count > 10
-                        && buffer[0] == '{'
-                        && IsResizeMessage(buffer, result.Count, out var newCols, out var newRows))
+                    // SIGWINCH down to the inner shell. Frames that
+                    // match the resize shape are always swallowed
+                    // (never written to stdin) even when the values
+                    // are unusable — that's the conductor #836 fix.
+                    if (TryParseResizeFrame(buffer, result.Count, out var newCols, out var newRows))
                     {
                         if (IsValidTerminalSize(newCols, newRows))
                         {
@@ -1135,10 +1139,38 @@ public class TerminalController : ControllerBase
     internal static string BuildTmuxHasSessionArguments(string containerUser, string externalId)
         => $"exec -u {containerUser} {externalId} tmux has-session -t {TmuxSessionName}";
 
-    private static bool IsResizeMessage(byte[] buffer, int count, out int cols, out int rows)
+    /// <summary>
+    /// Returns <c>true</c> iff the buffer holds a well-formed
+    /// <c>{"type":"resize","cols":N,"rows":N}</c> control frame
+    /// emitted by Conductor's Ghostty surface on every grid resize.
+    /// </summary>
+    /// <remarks>
+    /// This recognises the frame by shape only. Whether the parsed
+    /// cols/rows are usable as PTY dimensions is a separate decision
+    /// — call <see cref="IsValidTerminalSize"/> for that. Conflating
+    /// the two caused conductor #836: a 5-row Ghostty surface fired a
+    /// resize frame, the prior implementation rejected it on the
+    /// rows>5 bound, and the JSON fell through to the PTY's stdin
+    /// where the shell printed it as <c>{"type":"resize","cols":88,
+    /// "rows":5}</c> on the user's prompt line.
+    ///
+    /// Any frame matching this shape MUST be swallowed by callers
+    /// (never forwarded to the PTY) even when the values are
+    /// out-of-range — the PTY-exec path can still skip the resize
+    /// itself based on <see cref="IsValidTerminalSize"/>.
+    ///
+    /// Public for unit tests.
+    /// </remarks>
+    internal static bool TryParseResizeFrame(byte[] buffer, int count, out int cols, out int rows)
     {
         cols = 0;
         rows = 0;
+
+        // Fast reject: shortest plausible payload is
+        // `{"type":"resize","cols":1,"rows":1}` (35 bytes). Avoids
+        // UTF-8 + JSON parse cost on every shell keystroke.
+        if (count <= 10 || buffer[0] != (byte)'{') return false;
+
         try
         {
             var text = System.Text.Encoding.UTF8.GetString(buffer, 0, count);
@@ -1149,14 +1181,17 @@ public class TerminalController : ControllerBase
             if (doc.RootElement.TryGetProperty("type", out var typeProp) &&
                 typeProp.GetString() == "resize" &&
                 doc.RootElement.TryGetProperty("cols", out var colsProp) &&
-                doc.RootElement.TryGetProperty("rows", out var rowsProp))
+                doc.RootElement.TryGetProperty("rows", out var rowsProp) &&
+                colsProp.TryGetInt32(out cols) &&
+                rowsProp.TryGetInt32(out rows))
             {
-                cols = colsProp.GetInt32();
-                rows = rowsProp.GetInt32();
-                return cols > 10 && cols < 500 && rows > 5 && rows < 200;
+                return true;
             }
         }
         catch { /* not a resize message */ }
+
+        cols = 0;
+        rows = 0;
         return false;
     }
 }

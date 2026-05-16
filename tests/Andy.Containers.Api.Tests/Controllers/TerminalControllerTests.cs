@@ -342,6 +342,71 @@ public class TerminalControllerTests : IDisposable
         TerminalController.IsValidTerminalSize(cols, rows).Should().BeFalse(reason);
     }
 
+    // MARK: - TryParseResizeFrame (conductor #836 corrective)
+    //
+    // Regression: prior implementation conflated frame recognition
+    // with value validation. A small Ghostty surface fired
+    // `{"type":"resize","cols":88,"rows":5}`, the old `rows > 5`
+    // bound rejected it as "not a resize message", and the JSON fell
+    // through to the PTY's stdin where the shell printed it on the
+    // user's prompt. The shape-match must succeed independently of
+    // whether the values are usable.
+
+    [Theory]
+    [InlineData(88, 5)]   // the exact case from the conductor #836 report
+    [InlineData(80, 24)]
+    [InlineData(2, 2)]
+    [InlineData(500, 200)]
+    [InlineData(10000, 10000)]  // shape match even when values exceed PTY bounds
+    [InlineData(1, 1)]          // shape match even when values are below tmux floor
+    public void TryParseResizeFrame_RecognisesFrameByShape_RegardlessOfValues(int cols, int rows)
+    {
+        var frame = $"{{\"type\":\"resize\",\"cols\":{cols},\"rows\":{rows}}}";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(frame);
+
+        var result = TerminalController.TryParseResizeFrame(bytes, bytes.Length, out var parsedCols, out var parsedRows);
+
+        result.Should().BeTrue("the frame matches the resize shape");
+        parsedCols.Should().Be(cols);
+        parsedRows.Should().Be(rows);
+    }
+
+    [Theory]
+    [InlineData("ls -la\n", "shell command")]
+    [InlineData("echo hi\n", "shell command")]
+    [InlineData("{\"type\":\"input\",\"data\":\"foo\"}", "different frame type")]
+    [InlineData("{\"cols\":80,\"rows\":24}", "missing type field — old format")]
+    [InlineData("{\"type\":\"resize\"}", "missing cols/rows")]
+    [InlineData("{\"type\":\"resize\",\"cols\":\"eighty\",\"rows\":24}", "non-integer cols")]
+    [InlineData("not json at all", "not JSON")]
+    [InlineData("{ malformed", "malformed JSON")]
+    [InlineData("a", "single byte under length floor")]
+    [InlineData("aaaaaaaaaa", "ten bytes — equals length floor (exclusive)")]
+    public void TryParseResizeFrame_ReturnsFalse_ForNonResizeInput(string text, string reason)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+
+        var result = TerminalController.TryParseResizeFrame(bytes, bytes.Length, out var cols, out var rows);
+
+        result.Should().BeFalse(reason);
+        cols.Should().Be(0);
+        rows.Should().Be(0);
+    }
+
+    [Fact]
+    public void TryParseResizeFrame_ResetsOutParams_OnMalformedJson()
+    {
+        // Defensive: malformed JSON that partially parses (e.g. type
+        // matches but cols throws on GetInt32) must still leave the
+        // out-params at zero rather than half-populated.
+        var bytes = System.Text.Encoding.UTF8.GetBytes("{\"type\":\"resize\",\"cols\":\"eighty\",\"rows\":24}");
+
+        TerminalController.TryParseResizeFrame(bytes, bytes.Length, out var cols, out var rows);
+
+        cols.Should().Be(0);
+        rows.Should().Be(0);
+    }
+
     // MARK: - BuildWelcomeBannerCommand (conductor #838 corrective)
 
     [Fact]
