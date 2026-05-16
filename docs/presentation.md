@@ -303,7 +303,7 @@ The hard work runs asynchronously in the background worker.
 - **Andy RBAC** `[RequirePermission]` on every controller
 - **Resource types**: container, template, provider, workspace, credential, api-key, image
 - **Audit**: `ContainerEvent` rows capture every state transition
-- Service-to-service calls propagate the caller's JWT (`BearerForwardingHandler` pattern)
+- Service-to-service calls propagate the caller's JWT via the `DelegatedBearerHandler` (OBO) pattern
 - Secrets (`ConnectionConfig`, env vars, API keys) encrypted with ASP.NET Core Data Protection
 
 ---
@@ -327,6 +327,8 @@ Mount: `/var/run/docker.sock` for the Docker provider.
 
 ## Ports & Docker
 
+Local `dotnet run` (canonical, from `config/registration.json`):
+
 | Port | Service |
 |------|---------|
 | 5200 | API HTTPS |
@@ -335,7 +337,7 @@ Mount: `/var/run/docker.sock` for the Docker provider.
 | 5434 | PostgreSQL |
 | 4222 | NATS |
 
-`docker-compose.yml` runs Postgres 16, NATS 2, API, Web. Dockerfile is multi-stage with custom CA injection and non-root runtime.
+`docker compose up` shifts to the docker-port set (`7200/7201/6200/7434/7422`) — see `docker-compose.yml` and `docs/docker-setup.md`. Dockerfile is multi-stage with custom CA injection and non-root runtime.
 
 Volumes: `postgres_data`, `nats_data`, `dataprotection_keys`.
 

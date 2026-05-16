@@ -5,16 +5,18 @@
 All services run in Docker via `docker compose up`:
 
 ```yaml
-# Andy Containers services
-postgres          -> localhost:5434   # PostgreSQL 16-alpine (maps to internal 5432)
-api               -> localhost:5200   # API (HTTPS), localhost:5201 (HTTP)
-web               -> localhost:4200   # Angular frontend (nginx)
+# Andy Containers services (Docker port mappings — see docker-compose.yml)
+postgres          -> localhost:7434   # PostgreSQL 16-alpine (maps to internal 5432)
+api               -> localhost:7200   # API (HTTPS), localhost:7201 (HTTP)
+web               -> localhost:6200   # Angular frontend (nginx)
 
 # Dependent Andy services
 andy-auth         -> localhost:5001   # Andy Auth (HTTPS), localhost:5002 (HTTP)
 andy-rbac-api     -> localhost:7003   # Andy RBAC API (HTTPS), localhost:7004 (HTTP)
 andy-rbac-web     -> localhost:5180   # Andy RBAC Web (HTTPS), localhost:5181 (HTTP)
 ```
+
+For local (non-Docker) `dotnet run` the API and Angular dev server use the canonical local ports `5200/5201/4200` per [`config/registration.json`](../config/registration.json).
 
 ## Volumes and Mounts
 
@@ -64,13 +66,15 @@ docker compose build api
 
 ## Port Reference
 
-### Andy Containers
+### Andy Containers (Docker)
 
 | Service | HTTPS | HTTP | Internal |
 |---------|-------|------|----------|
-| API | 5200 | 5201 | 8443/8080 |
-| Frontend | -- | 4200 | 80 |
-| PostgreSQL | -- | 5434 | 5432 |
+| API | 7200 | 7201 | 8443/8080 |
+| Frontend | -- | 6200 | 80 |
+| PostgreSQL | -- | 7434 | 5432 |
+
+Local (non-Docker) `dotnet run`: API `5200/5201`, Angular `4200`, Postgres `5434` — see `config/registration.json` for the canonical port map.
 
 ### Related Andy Services
 
@@ -83,7 +87,7 @@ docker compose build api
 ## Database
 
 - **Engine**: PostgreSQL 16-alpine
-- **External port**: 5434 (maps to internal 5432)
+- **External port (Docker)**: 7434 (maps to internal 5432). Local `dotnet run` connects on 5434.
 - **Schema**: Auto-created on first startup via `EnsureCreatedAsync()`
 - **Seed data**: Providers and templates seeded automatically by `DataSeeder`
 - **Persistence**: Data persists across restarts via Docker volume
