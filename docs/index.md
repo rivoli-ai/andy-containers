@@ -41,13 +41,15 @@ Andy Containers provisions, manages, and orchestrates isolated development envir
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| Frontend | http://localhost:4200 | Angular 18 web UI |
-| API (HTTPS) | https://localhost:5200 | REST / MCP API |
-| API (HTTP) | http://localhost:5201 | HTTP access |
-| PostgreSQL | localhost:5434 | Database (postgres:16-alpine) |
+| Frontend | http://localhost:6200 | Angular 18 web UI (Docker) |
+| API (HTTPS) | https://localhost:7200 | REST / MCP API (Docker) |
+| API (HTTP) | http://localhost:7201 | HTTP access (Docker) |
+| PostgreSQL | localhost:7434 | Database (postgres:16-alpine, Docker) |
 | Andy Auth | https://localhost:5001 | OAuth 2.0 / OIDC server |
 | Andy RBAC API | https://localhost:7003 | RBAC permission server |
 | Andy RBAC Web | https://localhost:5180 | RBAC admin UI |
+
+For local (non-Docker) development the API uses `5200/5201` and the Angular dev server uses `4200` — see [`config/registration.json`](https://github.com/rivoli-ai/andy-containers/blob/main/config/registration.json).
 
 ## Background Workers
 

@@ -796,9 +796,9 @@ Five `BackgroundService` workers run concurrently:
 ### 13.1 Docker Compose (Local Development)
 
 ```
-PostgreSQL ← andy-containers-db (port 5434)
-API Server ← andy-containers-api (port 5200)
-Web UI     ← andy-containers-web (port 5280)
+PostgreSQL ← andy-containers-db (port 7434 docker / 5434 local)
+API Server ← andy-containers-api (port 7200 docker / 5200 local)
+Web UI     ← andy-containers-web (port 6200 docker / 4200 local)
 ```
 
 ### 13.2 Production

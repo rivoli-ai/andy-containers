@@ -943,9 +943,9 @@ The Dockerfile (`src/Andy.Containers.Api/Dockerfile`) uses a two-stage build:
 
 ```yaml
 services:
-  postgres:          # PostgreSQL 16 Alpine, port 5434:5432
-  api:               # Andy Containers API, ports 5200:8443 (HTTPS), 5201:8080 (HTTP)
-  web:               # Angular SPA (nginx), port 4200:80
+  postgres:          # PostgreSQL 16 Alpine, port 7434:5432
+  api:               # Andy Containers API, ports 7200:8443 (HTTPS), 7201:8080 (HTTP)
+  web:               # Angular SPA (nginx), port 6200:8443
 ```
 
 Key docker-compose features:
