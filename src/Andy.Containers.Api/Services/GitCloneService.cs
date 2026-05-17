@@ -123,8 +123,13 @@ public class GitCloneService : IGitCloneService
     private async Task CloneRepositoryInternalAsync(Guid containerId, ContainerGitRepository repo, CancellationToken ct)
     {
         using var activity = ActivitySources.Git.StartActivity("GitClone");
-        activity?.SetTag("url", repo.Url);
-        activity?.SetTag("branch", repo.Branch);
+        // OT7 (rivoli-ai/conductor#1265). `url` → semconv `url.full`,
+        // `branch` → `andy.containers.git.branch`. Legacy names
+        // dual-emit during the 0.2.4 transition window.
+        activity?.SetTag("url.full", repo.Url);
+        activity?.SetTag("andy.containers.git.branch", repo.Branch);
+        activity?.SetTag("url", repo.Url);       // deprecated; removed in 0.3.0
+        activity?.SetTag("branch", repo.Branch); // deprecated; removed in 0.3.0
         var sw = Stopwatch.StartNew();
 
         repo.CloneStatus = GitCloneStatus.Cloning;

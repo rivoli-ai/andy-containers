@@ -34,7 +34,10 @@ public class InfrastructureProviderFactory : IInfrastructureProviderFactory
     public IInfrastructureProvider GetProvider(InfrastructureProvider providerEntity)
     {
         using var activity = ActivitySources.Infrastructure.StartActivity("ResolveProvider");
-        activity?.SetTag("provider", providerEntity.Type.ToString());
+        // OT7 (rivoli-ai/conductor#1265). `provider` → `andy.containers.provider`.
+        var providerTag = providerEntity.Type.ToString();
+        activity?.SetTag("andy.containers.provider", providerTag);
+        activity?.SetTag("provider", providerTag); // deprecated; removed in 0.3.0
 
         return providerEntity.Type switch
         {

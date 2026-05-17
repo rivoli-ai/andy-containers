@@ -61,8 +61,14 @@ public class ContainerProvisioningWorker : BackgroundService
     private async Task ProcessJobAsync(ContainerProvisionJob job, CancellationToken stoppingToken)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("ProvisionContainer");
-        activity?.SetTag("containerId", job.ContainerId.ToString());
-        activity?.SetTag("provider", job.ProviderCode);
+        // OT7 (rivoli-ai/conductor#1265). Attributes renamed under the
+        // `andy.containers.*` namespace per docs/semconv-compliance.md.
+        // Legacy names dual-emit during the 0.2.4 transition window.
+        var containerIdTag = job.ContainerId.ToString();
+        activity?.SetTag("andy.containers.id", containerIdTag);
+        activity?.SetTag("andy.containers.provider", job.ProviderCode);
+        activity?.SetTag("containerId", containerIdTag);    // deprecated; removed in 0.3.0
+        activity?.SetTag("provider", job.ProviderCode);     // deprecated; removed in 0.3.0
         var sw = Stopwatch.StartNew();
 
         _logger.LogInformation("Processing provisioning job for container {ContainerId} on provider {Provider}",
