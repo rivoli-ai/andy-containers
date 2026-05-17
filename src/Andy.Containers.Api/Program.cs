@@ -187,6 +187,14 @@ try
     builder.Services.AddScoped<Andy.Containers.Storage.IImageBuildOrchestrator, Andy.Containers.Infrastructure.Build.ImageBuildOrchestrator>();
     builder.Services.AddScoped<Andy.Containers.Storage.IBuildArtifactStore, Andy.Containers.Infrastructure.Data.BuildArtifactStore>();
 
+    // rivoli-ai/conductor#1014 (M1.9.6). ensure-pull endpoint —
+    // Docker CLI based image rehoster from upstream registries
+    // (e.g. ghcr.io/rivoli-ai) into the local zot. Singleton
+    // because it holds no per-request state and the underlying
+    // CLI process is idempotent.
+    builder.Services.AddSingleton<Andy.Containers.Abstractions.Images.IImagePullService,
+        Andy.Containers.Infrastructure.Images.DockerCliImagePullService>();
+
     // IM9 (rivoli-ai/andy-containers#263). Build event bus +
     // execution registry are singletons (process-local in-memory
     // state); the async executor is a singleton too because it
