@@ -462,11 +462,19 @@ try
 
     app.UseHttpsRedirection();
 
+    // HC.8.1 of rivoli-ai/conductor#1245: expose the OpenAPI
+    // document in every environment so Conductor's in-app Help Center
+    // can ingest /openapi.json from the bundled service. The Swagger
+    // UI itself stays development-only.
+    app.UseSwagger();
     if (app.Environment.IsDevelopment())
     {
-        app.UseSwagger();
         app.UseSwaggerUI();
     }
+    // Stable alias so every andy-* service exposes the same
+    // path. HC.8.1 of rivoli-ai/conductor#1245.
+    app.MapGet("/openapi.json", () => Results.Redirect("/swagger/v1/swagger.json"))
+        .ExcludeFromDescription();
 
     app.UseDefaultFiles();
     app.UseStaticFiles(new StaticFileOptions
