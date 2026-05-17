@@ -12,6 +12,8 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Andy.Containers.Api.Telemetry;
 using Andy.Rbac.Client;
+using Andy.Telemetry;
+using OpenTelemetry.Trace;
 using Serilog;
 using System.Text.Json.Serialization;
 
@@ -323,8 +325,36 @@ try
         });
     });
 
-    // OpenTelemetry
-    builder.Services.AddAndyTelemetry(builder.Configuration);
+    // --- OpenTelemetry (via Andy.Telemetry) ---
+    // OT5 (rivoli-ai/conductor#1263). Replaces the per-service OpenTelemetry
+    // hand-roll with the shared library so every Andy service shares the same
+    // attribute set, propagator stack, and OTLP export config. UnifiedProxy
+    // already emits server-side request spans, so AspNetCore instrumentation
+    // stays off here to avoid double-counting.
+    builder.Services.AddAndyTelemetry(builder.Configuration, o =>
+    {
+        if (string.IsNullOrWhiteSpace(o.ServiceName))
+            o.ServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "andy-containers";
+        if (string.IsNullOrWhiteSpace(o.OtlpEndpoint))
+            o.OtlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+        if (string.IsNullOrWhiteSpace(o.Protocol) || o.Protocol == "grpc")
+        {
+            var envProtocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
+            if (!string.IsNullOrWhiteSpace(envProtocol))
+                o.Protocol = envProtocol;
+        }
+        foreach (var source in Andy.Containers.Api.Telemetry.ActivitySources.All)
+            o.ActivitySources.Add(source);
+        foreach (var meter in Andy.Containers.Api.Telemetry.Meters.All)
+            o.Meters.Add(meter);
+        o.EnableAspNetCoreInstrumentation = false;
+        o.EnableHttpClientInstrumentation = true;
+    });
+    // gRPC client + EF Core tracing are service-specific (not bundled in Andy.Telemetry).
+    builder.Services.AddOpenTelemetry()
+        .WithTracing(t => t
+            .AddGrpcClientInstrumentation()
+            .AddEntityFrameworkCoreInstrumentation());
 
     // Messaging (ADR 0001) — registers IMessageBus (InMemory by default,
     // Nats when Messaging:Provider=Nats) and the OutboxDispatcher.
@@ -494,6 +524,11 @@ try
     app.UseAuthorization();
     app.MapControllers().RequireAuthorization();
     app.MapHealthChecks("/health").AllowAnonymous();
+
+    // OT5 (rivoli-ai/conductor#1263): Prometheus /metrics endpoint
+    // exposed by Andy.Telemetry. OTLP push is independent.
+    app.MapAndyTelemetry();
+
     app.MapFallbackToFile("index.html");
 
     Log.Information("Andy Containers API starting");

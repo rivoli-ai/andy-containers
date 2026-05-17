@@ -73,3 +73,7 @@ site/
 
 # Claude Code session state — worktrees, plans, memory.
 .claude/
+
+# OT5 (rivoli-ai/conductor#1263): allow Andy.Telemetry.<v>.nupkg
+# under local-packages/ to flow through the local nuget feed.
+!local-packages/*.nupkg
