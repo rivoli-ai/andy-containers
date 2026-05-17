@@ -108,8 +108,15 @@ public class ContainerOrchestrationService : IContainerService
     public async Task<Container> CreateContainerAsync(CreateContainerRequest request, CancellationToken ct)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("CreateContainer");
-        activity?.SetTag("templateId", request.TemplateId?.ToString() ?? request.TemplateCode);
-        activity?.SetTag("provider", request.ProviderCode ?? request.ProviderId?.ToString());
+        // OT7 (rivoli-ai/conductor#1265). Attributes renamed under the
+        // `andy.containers.*` namespace per docs/semconv-compliance.md.
+        // Legacy names dual-emit during the 0.2.4 transition window.
+        var templateTag = request.TemplateId?.ToString() ?? request.TemplateCode;
+        var providerTag = request.ProviderCode ?? request.ProviderId?.ToString();
+        activity?.SetTag("andy.containers.template_id", templateTag);
+        activity?.SetTag("andy.containers.provider", providerTag);
+        activity?.SetTag("templateId", templateTag); // deprecated; removed in 0.3.0
+        activity?.SetTag("provider", providerTag);   // deprecated; removed in 0.3.0
 
         // Conductor #878. Per-user quota check. Done BEFORE
         // resolving template/provider so a user at the cap
@@ -623,7 +630,11 @@ public class ContainerOrchestrationService : IContainerService
         _logger.LogInformation("Container {ContainerId} enqueued for provisioning on {Provider}",
             container.Id, provider.Code);
 
-        Meters.ContainersCreated.Add(1, new KeyValuePair<string, object?>("provider", container.Provider));
+        // OT7 (rivoli-ai/conductor#1265). `provider` → `andy.containers.provider`.
+        // Legacy name dual-emits during 0.2.4 transition; removed in 0.3.0.
+        Meters.ContainersCreated.Add(1,
+            new KeyValuePair<string, object?>("andy.containers.provider", container.Provider),
+            new KeyValuePair<string, object?>("provider", container.Provider)); // deprecated
 
         return container;
     }
@@ -745,7 +756,8 @@ public class ContainerOrchestrationService : IContainerService
     public async Task StartContainerAsync(Guid containerId, CancellationToken ct)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("StartContainer");
-        activity?.SetTag("containerId", containerId.ToString());
+        activity?.SetTag("andy.containers.id", containerId.ToString());
+        activity?.SetTag("containerId", containerId.ToString()); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
 
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status != ContainerStatus.Stopped)
@@ -764,7 +776,8 @@ public class ContainerOrchestrationService : IContainerService
     public async Task StopContainerAsync(Guid containerId, CancellationToken ct)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("StopContainer");
-        activity?.SetTag("containerId", containerId.ToString());
+        activity?.SetTag("andy.containers.id", containerId.ToString());
+        activity?.SetTag("containerId", containerId.ToString()); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
 
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status != ContainerStatus.Running)
@@ -787,7 +800,8 @@ public class ContainerOrchestrationService : IContainerService
     public async Task DestroyContainerAsync(Guid containerId, CancellationToken ct)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("DeleteContainer");
-        activity?.SetTag("containerId", containerId.ToString());
+        activity?.SetTag("andy.containers.id", containerId.ToString());
+        activity?.SetTag("containerId", containerId.ToString()); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
 
         var container = await GetContainerAsync(containerId, ct);
         if (container.ExternalId is not null)
@@ -824,7 +838,8 @@ public class ContainerOrchestrationService : IContainerService
     public async Task<ExecResult> ExecAsync(Guid containerId, string command, CancellationToken ct)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("ExecCommand");
-        activity?.SetTag("containerId", containerId.ToString());
+        activity?.SetTag("andy.containers.id", containerId.ToString());
+        activity?.SetTag("containerId", containerId.ToString()); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
 
         var container = await GetContainerAsync(containerId, ct);
         // Allow exec on Running (normal) and Creating (provisioning worker running setup scripts)
@@ -840,8 +855,10 @@ public class ContainerOrchestrationService : IContainerService
     public async Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("ExecCommand");
-        activity?.SetTag("containerId", containerId.ToString());
-        activity?.SetTag("timeout", timeout.TotalSeconds);
+        activity?.SetTag("andy.containers.id", containerId.ToString());
+        activity?.SetTag("containerId", containerId.ToString()); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
+        activity?.SetTag("andy.containers.timeout_seconds", timeout.TotalSeconds);
+        activity?.SetTag("timeout", timeout.TotalSeconds); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
 
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status is not (ContainerStatus.Running or ContainerStatus.Creating))

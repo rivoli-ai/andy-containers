@@ -22,7 +22,10 @@ public class GitCredentialService : IGitCredentialService
     public async Task<GitCredential> CreateAsync(string ownerId, string label, string token, string? gitHost, GitCredentialType type, CancellationToken ct)
     {
         using var activity = ActivitySources.Git.StartActivity("GitCredential.Create");
-        activity?.SetTag("gitCredential.host", gitHost ?? "unknown");
+        // OT7 (rivoli-ai/conductor#1265). `gitCredential.*` → `andy.containers.git.*`.
+        var hostTag = gitHost ?? "unknown";
+        activity?.SetTag("andy.containers.git.host", hostTag);
+        activity?.SetTag("gitCredential.host", hostTag); // deprecated; removed in 0.3.0
 
         var credential = new GitCredential
         {
@@ -97,8 +100,13 @@ public class GitCredentialService : IGitCredentialService
     public async Task<string?> ResolveTokenAsync(string ownerId, string? credentialRef, string? gitHost, CancellationToken ct)
     {
         using var activity = ActivitySources.Git.StartActivity("GitCredential.Resolve");
-        activity?.SetTag("gitCredential.host", gitHost ?? "unknown");
-        activity?.SetTag("gitCredential.hasRef", (!string.IsNullOrEmpty(credentialRef)).ToString());
+        // OT7 (rivoli-ai/conductor#1265). `gitCredential.*` → `andy.containers.git.*`.
+        var hostTag = gitHost ?? "unknown";
+        var hasRefTag = (!string.IsNullOrEmpty(credentialRef)).ToString();
+        activity?.SetTag("andy.containers.git.host", hostTag);
+        activity?.SetTag("andy.containers.git.has_credential_ref", hasRefTag);
+        activity?.SetTag("gitCredential.host", hostTag);   // deprecated; removed in 0.3.0
+        activity?.SetTag("gitCredential.hasRef", hasRefTag); // deprecated; removed in 0.3.0
 
         GitCredential? credential = null;
 

@@ -20,8 +20,14 @@ public class ImageDiffService : IImageDiffService
     public async Task<ImageDiffResponse> DiffAsync(Guid fromImageId, Guid toImageId, CancellationToken ct = default)
     {
         using var activity = ActivitySources.Introspection.StartActivity("ComputeImageDiff");
-        activity?.SetTag("fromImageId", fromImageId.ToString());
-        activity?.SetTag("toImageId", toImageId.ToString());
+        // OT7 (rivoli-ai/conductor#1265). `fromImageId`/`toImageId` →
+        // `andy.containers.image_id.from` / `andy.containers.image_id.to`.
+        var fromIdTag = fromImageId.ToString();
+        var toIdTag = toImageId.ToString();
+        activity?.SetTag("andy.containers.image_id.from", fromIdTag);
+        activity?.SetTag("andy.containers.image_id.to", toIdTag);
+        activity?.SetTag("fromImageId", fromIdTag); // deprecated; removed in 0.3.0
+        activity?.SetTag("toImageId", toIdTag);     // deprecated; removed in 0.3.0
         var sw = Stopwatch.StartNew();
 
         var fromImage = await _db.Images.FindAsync([fromImageId], ct)

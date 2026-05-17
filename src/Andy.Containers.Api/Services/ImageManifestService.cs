@@ -33,7 +33,10 @@ public class ImageManifestService : IImageManifestService
         Guid imageId, CancellationToken ct = default)
     {
         using var activity = ActivitySources.Introspection.StartActivity("ResolveImageManifest");
-        activity?.SetTag("imageId", imageId.ToString());
+        // OT7 (rivoli-ai/conductor#1265). `imageId` → `andy.containers.image_id`.
+        var imageIdTag = imageId.ToString();
+        activity?.SetTag("andy.containers.image_id", imageIdTag);
+        activity?.SetTag("imageId", imageIdTag); // deprecated; removed in 0.3.0
 
         var image = await _db.Images
             .Include(i => i.Template)
