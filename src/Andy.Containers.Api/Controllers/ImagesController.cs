@@ -2,6 +2,7 @@ using Andy.Containers.Abstractions.Images;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Containers.Models.ImageManagement;
 using Andy.Containers.Storage;
 using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
@@ -534,6 +535,71 @@ public class ImagesController : ControllerBase
 
         await _artifactStore.RemoveReferenceAsync(referenceId, ct);
         return NoContent();
+    }
+
+    /// <summary>
+    /// rivoli-ai/conductor#1014 (M1.9.6). Pull an image from an
+    /// upstream registry and rehost it in a local registry.
+    /// Conductor's <c>RegistrySeedingMonitor</c> calls this when its
+    /// poll loop reports a missing required image, so the
+    /// <c>conductor-terminal-*</c> tarballs published to a public
+    /// registry can land in the embedded local zot without users
+    /// running docker pull themselves.
+    ///
+    /// Idempotent: if the destination already holds the requested
+    /// artifact the response carries <c>alreadyPresent: true</c> and
+    /// the cost is one HEAD against the registry. Repeated polls on
+    /// the same coordinate are cheap.
+    ///
+    /// Auth: requires <c>image:write</c> (same as other push-side
+    /// surfaces). Source-side auth — when the upstream is private —
+    /// is plumbed through the host Docker CLI's existing credential
+    /// helpers; the API does not accept auth tokens on the wire.
+    /// </summary>
+    [RequirePermission("image:write")]
+    [HttpPost("ensure-pull")]
+    public async Task<IActionResult> EnsurePull(
+        [FromBody] EnsurePullRequest request,
+        [FromServices] IImagePullService puller,
+        CancellationToken ct)
+    {
+        if (request is null)
+        {
+            return BadRequest(new ImageManagementErrorBody
+            {
+                Code = "ensure_pull_missing_body",
+                Message = "request body is required.",
+            });
+        }
+
+        try
+        {
+            var result = await puller.EnsurePullAsync(request, ct);
+            return Ok(result);
+        }
+        catch (ImagePullException ex)
+        {
+            // Map to the IM10 error shape so the Conductor client
+            // sees a structured body it can branch on. The puller
+            // already encoded a stable code per failure mode; pass
+            // it through verbatim. Validation-style failures
+            // (missing fields, unknown destination) return 400; the
+            // rest map to 503 since the upstream is the failing
+            // boundary.
+            var status = ex.Code.StartsWith("ensure_pull_invalid_") ||
+                         ex.Code.StartsWith("ensure_pull_unknown_destination_registry")
+                ? StatusCodes.Status400BadRequest
+                : StatusCodes.Status503ServiceUnavailable;
+            return new ObjectResult(new ImageManagementErrorBody
+            {
+                Code = ex.Code,
+                Message = ex.Message,
+                BuildLog = ImageManagementProblemDetailsFactory.TruncateLog(ex.CapturedOutput, maxBytes: 4_096),
+            })
+            {
+                StatusCode = status,
+            };
+        }
     }
 }
 
