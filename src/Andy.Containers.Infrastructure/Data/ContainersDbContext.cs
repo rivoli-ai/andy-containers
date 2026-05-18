@@ -1,8 +1,10 @@
+using System.Text.Json;
 using Andy.Containers.Messaging;
 using Andy.Containers.Models;
 using Andy.Containers.Models.ImageManagement;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace Andy.Containers.Infrastructure.Data;
 
@@ -352,6 +354,38 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
                 wr.Property(w => w.WorkspaceId).HasColumnName("WorkspaceRef_WorkspaceId");
                 wr.Property(w => w.Branch).HasColumnName("WorkspaceRef_Branch").HasMaxLength(200);
             });
+
+            // OutputArtifacts (rivoli-ai/andy-containers#316). Persisted as
+            // JSON so the schema can absorb shape changes (new fields on
+            // RunOutputArtifact) without a per-field migration. We
+            // round-trip the IReadOnlyList<RunOutputArtifact> through a
+            // value converter rather than EF's OwnsMany(...).ToJson()
+            // because the latter requires a parent navigation reference
+            // and would force us to either model RunOutputArtifact as a
+            // mutable entity or rebuild the collection on every read —
+            // both worse than a single JSON column for an essentially
+            // append-only list. Comparer uses sequence equality so EF
+            // change-tracking notices replacements (entire-list swaps,
+            // which is the only mutation pattern callers use today).
+            var jsonOpts = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            var outputArtifactsConverter = new Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<
+                IReadOnlyList<RunOutputArtifact>?, string?>(
+                v => v == null ? null : JsonSerializer.Serialize(v, jsonOpts),
+                v => string.IsNullOrEmpty(v)
+                    ? null
+                    : JsonSerializer.Deserialize<List<RunOutputArtifact>>(v, jsonOpts));
+            var outputArtifactsComparer = new ValueComparer<IReadOnlyList<RunOutputArtifact>?>(
+                (a, b) => ReferenceEquals(a, b) || (a != null && b != null && a.SequenceEqual(b)),
+                v => v == null ? 0 : v.Aggregate(0, (h, x) => HashCode.Combine(h, x.GetHashCode())),
+                v => v == null ? null : v.ToList());
+            var outputArtifactsProp = e.Property(r => r.OutputArtifacts)
+                .HasConversion(outputArtifactsConverter)
+                .Metadata;
+            outputArtifactsProp.SetValueComparer(outputArtifactsComparer);
+            if (jsonColumnType != null)
+            {
+                e.Property(r => r.OutputArtifacts).HasColumnType(jsonColumnType);
+            }
         });
 
         // EnvironmentProfile — catalog of runtime shapes (X1, rivoli-ai/andy-containers#90).

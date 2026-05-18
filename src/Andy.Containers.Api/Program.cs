@@ -403,6 +403,14 @@ try
     // the terminal run.* event to the outbox.
     builder.Services.AddScoped<IHeadlessRunner, HeadlessRunner>();
 
+    // rivoli-ai/andy-containers#316. Output-artifact collector:
+    // probes /workspace/.andy/outputs/ via IContainerService.ExecAsync
+    // at terminal-event time and emits the manifest on the run.* event
+    // payload (and persists onto Run.OutputArtifacts for the agent-run
+    // path). Scoped because the default impl pulls in the request-scoped
+    // IContainerService and a request-scoped logger.
+    builder.Services.AddScoped<IOutputArtifactCollector, FilesystemOutputArtifactCollector>();
+
     // AP5 (rivoli-ai/andy-containers#107). Mode dispatcher: selects the
     // run's container, transitions Pending → Provisioning, and routes
     // headless runs to the runner above (terminal/desktop modes branch

@@ -17,6 +17,10 @@ public sealed class HeadlessRunner : IHeadlessRunner
     private readonly IRunCancellationRegistry _cancellation;
     private readonly ITokenIssuer _tokens;
     private readonly ILogger<HeadlessRunner> _logger;
+    // #316. Optional so the existing test surface keeps working.
+    // When null, terminal events publish without an OutputArtifacts
+    // manifest — pre-#316 wire shape exactly.
+    private readonly IOutputArtifactCollector? _artifactCollector;
 
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
     // and exits with code 4 (→ RunEventKind.Timeout) when its CTS fires.
@@ -36,13 +40,15 @@ public sealed class HeadlessRunner : IHeadlessRunner
         ContainersDbContext db,
         IRunCancellationRegistry cancellation,
         ITokenIssuer tokens,
-        ILogger<HeadlessRunner> logger)
+        ILogger<HeadlessRunner> logger,
+        IOutputArtifactCollector? artifactCollector = null)
     {
         _containers = containers;
         _db = db;
         _cancellation = cancellation;
         _tokens = tokens;
         _logger = logger;
+        _artifactCollector = artifactCollector;
     }
 
     public async Task<HeadlessRunOutcome> StartAsync(Run run, string configPath, CancellationToken ct = default)
@@ -169,6 +175,37 @@ public sealed class HeadlessRunner : IHeadlessRunner
         int? exitCode, double? durationSeconds, string? error,
         CancellationToken ct)
     {
+        // #316. Collect artifacts BEFORE the persistence try/catch so a
+        // probe-time exec failure (logged inside the collector) can't
+        // accidentally short-circuit the terminal-event write. The
+        // collector runs only when AP5 assigned a container (no
+        // container → nothing inside which to scan).
+        IReadOnlyList<RunOutputArtifact>? artifacts = null;
+        if (_artifactCollector is not null && run.ContainerId is { } containerId)
+        {
+            try
+            {
+                var container = await _db.Containers.FindAsync(new object[] { containerId }, ct);
+                if (container is not null)
+                {
+                    artifacts = await _artifactCollector.CollectAsync(container, ct);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Caller cancelled the terminal write — let the parent
+                // catch handle it; don't mask with an artifact-collection
+                // log line.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Artifact collection failed for Run {RunId}; emitting terminal event without manifest.",
+                    run.Id);
+            }
+        }
+
         try
         {
             // Best-effort transition. If the run is already terminal (e.g.
@@ -184,7 +221,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 run.Error ??= error;
             }
 
-            _db.AppendAgentRunEvent(run, kind, exitCode, durationSeconds);
+            _db.AppendAgentRunEvent(run, kind, exitCode, durationSeconds, artifacts);
             await _db.SaveChangesAsync(ct);
         }
         catch (Exception ex)
