@@ -203,7 +203,11 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
 
         // RFC 8693 §2.1 wire shape. The grant URN and token-type URN
         // are normative; the `resource` parameter names the downstream
-        // audience.
+        // audience. The `scope` parameter is included so OpenIddict's
+        // resource validator can resolve the audience through the seeded
+        // scope→resource mapping (registration-manifest-driven); without
+        // it, the embedded andy-auth — which has no `OpenIddict:Resources`
+        // config — rejects the request with `invalid_target`.
         var form = new Dictionary<string, string>
         {
             ["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -212,6 +216,7 @@ public sealed class ServiceTokenService : IServiceTokenService, IDisposable
             ["subject_token"] = subjectToken,
             ["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
             ["resource"] = audience,
+            ["scope"] = audience,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, opts.TokenEndpoint)
