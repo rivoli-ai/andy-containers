@@ -32,9 +32,29 @@ namespace Andy.Containers.Models;
 /// MIME type guessed from the filename extension. Null when the
 /// extension is unknown or the file has none.
 /// </param>
+/// <param name="DocsRef">
+/// rivoli-ai/andy-containers#320. Pointer into andy-docs for the
+/// uploaded bytes, populated by the collector during terminal-event
+/// processing. <c>null</c> when:
+/// <list type="bullet">
+///   <item>The collector ran with no <c>IAndyDocsClient</c> registered
+///   (metadata-only mode — the pre-#320 wire shape).</item>
+///   <item>The andy-docs upload failed (transient network error,
+///   5xx response, timeout). The artifact is still emitted with
+///   metadata; downstream consumers (andy-tasks#275 Phase 2) treat
+///   a null <c>DocsRef</c> as "bytes unavailable" and surface a
+///   degraded UX rather than dropping the artifact entirely.</item>
+///   <item>The file was read but unreadable (empty / vanished /
+///   permission-denied at upload time).</item>
+/// </list>
+/// Nullable keeps the JSON wire shape backwards-compatible —
+/// <c>EventJson.Options</c> omits null fields, so v2 consumers see
+/// exactly the v2 payload they expect.
+/// </param>
 public sealed record RunOutputArtifact(
     string Name,
     string RelativePath,
     long SizeBytes,
     string Sha256,
-    string? ContentType);
+    string? ContentType,
+    DocsRef? DocsRef = null);

@@ -196,8 +196,8 @@ public class RunEventOutboxTests
         using var doc = JsonDocument.Parse(entry.PayloadJson);
         var root = doc.RootElement;
         root.GetProperty("schema_version").GetInt32().Should().Be(RunEventPayload.SchemaVersion);
-        root.GetProperty("schema_version").GetInt32().Should().Be(2,
-            "OutputArtifacts shipped in the v2 wire shape");
+        root.GetProperty("schema_version").GetInt32().Should().Be(3,
+            "DocsRef on RunOutputArtifact bumped the wire shape to v3 (#320)");
 
         var arr = root.GetProperty("output_artifacts");
         arr.GetArrayLength().Should().Be(2);
@@ -331,5 +331,137 @@ public class RunEventOutboxTests
         back.OutputArtifacts!.Should().HaveCount(1);
         back.OutputArtifacts![0].Name.Should().Be("r.pdf");
         back.OutputArtifacts![0].Sha256.Should().Be(new string('d', 64));
+    }
+
+    // ----- rivoli-ai/andy-containers#320 DocsRef coverage -----
+
+    [Fact]
+    public void RunEventPayload_WithDocsRef_RoundTripsThroughEventJson()
+    {
+        // After #320 each RunOutputArtifact carries an optional DocsRef.
+        // Serialise + deserialise asserts both that the payload reaches
+        // consumers with DocsRef intact AND that the JSON property name
+        // is snake_cased to `docs_ref` per EventJson's policy.
+        var docDocId = Guid.NewGuid();
+        var docLinkId = Guid.NewGuid();
+        var payload = new RunEventPayload(
+            RunId: Guid.NewGuid(),
+            StoryId: null,
+            Status: "Succeeded",
+            ExitCode: 0,
+            DurationSeconds: 2.0,
+            OutputArtifacts: new[]
+            {
+                new RunOutputArtifact(
+                    Name: "report.pdf",
+                    RelativePath: "report.pdf",
+                    SizeBytes: 12345,
+                    Sha256: new string('a', 64),
+                    ContentType: "application/pdf",
+                    DocsRef: new DocsRef(docDocId, docLinkId)),
+            });
+
+        var json = JsonSerializer.Serialize(payload,
+            Andy.Containers.Messaging.EventJson.Options);
+
+        // Wire-form: snake_case property, nested object with snake_case keys.
+        using var doc = JsonDocument.Parse(json);
+        var arr = doc.RootElement.GetProperty("output_artifacts");
+        arr.GetArrayLength().Should().Be(1);
+        var artifact = arr[0];
+        artifact.TryGetProperty("docs_ref", out var docsRefEl).Should().BeTrue(
+            "DocsRef must serialise as snake_case `docs_ref` for consumer compat");
+        docsRefEl.GetProperty("document_id").GetString().Should().Be(docDocId.ToString());
+        docsRefEl.GetProperty("link_id").GetString().Should().Be(docLinkId.ToString());
+
+        // Round-trip parses back into the typed record.
+        var back = JsonSerializer.Deserialize<RunEventPayload>(json,
+            Andy.Containers.Messaging.EventJson.Options);
+        back.Should().NotBeNull();
+        back!.OutputArtifacts!.Single().DocsRef.Should().NotBeNull();
+        back.OutputArtifacts!.Single().DocsRef!.DocumentId.Should().Be(docDocId);
+        back.OutputArtifacts!.Single().DocsRef!.LinkId.Should().Be(docLinkId);
+    }
+
+    [Fact]
+    public void RunEventPayload_WithNullDocsRef_OmitsFieldFromWire()
+    {
+        // Metadata-only fallback (andy-docs down / not configured) leaves
+        // DocsRef null. The JSON wire shape must OMIT the property so v2
+        // consumers see exactly the v2 payload they expect — no surprise
+        // null on a field they don't know about.
+        var payload = new RunEventPayload(
+            RunId: Guid.NewGuid(),
+            StoryId: null,
+            Status: "Succeeded",
+            ExitCode: 0,
+            DurationSeconds: 1.0,
+            OutputArtifacts: new[]
+            {
+                new RunOutputArtifact("a.txt", "a.txt", 3, new string('a', 64), "text/plain"),
+            });
+
+        var json = JsonSerializer.Serialize(payload,
+            Andy.Containers.Messaging.EventJson.Options);
+
+        using var doc = JsonDocument.Parse(json);
+        var artifact = doc.RootElement.GetProperty("output_artifacts")[0];
+        artifact.TryGetProperty("docs_ref", out _).Should().BeFalse(
+            "EventJson omits null properties on write — pre-v3 consumers see no docs_ref key");
+    }
+
+    [Fact]
+    public async Task AppendAgentRunEvent_WithDocsRefPopulated_RoundTripsThroughOutboxAndPersists()
+    {
+        // Integration: write through AppendAgentRunEvent + the EF
+        // JSON-column converter on Run.OutputArtifacts, then read back
+        // and verify DocsRef survives both the outbox payload AND the
+        // database row. Together these prove the v3 wire shape is
+        // wired end-to-end (collector → outbox → entity → consumer).
+        using var db = InMemoryDbHelper.CreateContext();
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "triage-agent",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            ContainerId = Guid.NewGuid(),
+            Status = RunStatus.Succeeded,
+        };
+        db.Runs.Add(run);
+        await db.SaveChangesAsync();
+
+        var docDocId = Guid.NewGuid();
+        var docLinkId = Guid.NewGuid();
+        var artifacts = new List<RunOutputArtifact>
+        {
+            new("report.pdf", "report.pdf", 12345, new string('a', 64), "application/pdf",
+                DocsRef: new DocsRef(docDocId, docLinkId)),
+        };
+
+        db.AppendAgentRunEvent(run, RunEventKind.Finished,
+            exitCode: 0, durationSeconds: 4.2, outputArtifacts: artifacts);
+        await db.SaveChangesAsync();
+
+        // Outbox payload carries the DocsRef.
+        var entry = await db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        var arr = doc.RootElement.GetProperty("output_artifacts");
+        arr[0].GetProperty("docs_ref").GetProperty("document_id").GetString()
+            .Should().Be(docDocId.ToString());
+        arr[0].GetProperty("docs_ref").GetProperty("link_id").GetString()
+            .Should().Be(docLinkId.ToString());
+
+        // Schema version reflects the v3 bump.
+        doc.RootElement.GetProperty("schema_version").GetInt32().Should().Be(3);
+
+        // Persisted Run row also carries the DocsRef (through the
+        // EF JSON converter on Run.OutputArtifacts).
+        var persisted = await db.Runs.FindAsync(run.Id);
+        persisted!.OutputArtifacts.Should().NotBeNull();
+        persisted.OutputArtifacts!.Single().DocsRef.Should().NotBeNull();
+        persisted.OutputArtifacts!.Single().DocsRef!.DocumentId.Should().Be(docDocId);
+        persisted.OutputArtifacts!.Single().DocsRef!.LinkId.Should().Be(docLinkId);
     }
 }

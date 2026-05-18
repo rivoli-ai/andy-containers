@@ -3,6 +3,7 @@
 
 using System.Globalization;
 using Andy.Containers.Abstractions;
+using Andy.Containers.Infrastructure.Audit;
 using Andy.Containers.Models;
 using Microsoft.Extensions.Logging;
 
@@ -54,15 +55,38 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
     // realistic agent output budget.
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(30);
 
+    // rivoli-ai/andy-containers#320. Wall-clock cap on the per-file
+    // base64 read. Keep distinct from ProbeTimeout so a large artifact
+    // can't burn the whole probe budget on its first file. 60s
+    // accommodates a multi-hundred-MB artifact streamed through the
+    // exec channel; smaller files are the common case.
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(60);
+
+    // rivoli-ai/andy-containers#320. Hard upload cap per artifact. The
+    // exec-channel base64 round-trip materialises the full payload in
+    // memory twice (once as base64 stdout, once as the decoded byte[]),
+    // so we cap at 64MiB to keep peak RSS bounded even when an agent
+    // produces a pathologically large file. Larger artifacts log a
+    // warning and are emitted metadata-only (no DocsRef).
+    private const long MaxUploadSizeBytes = 64L * 1024 * 1024;
+
     private readonly IContainerService _containers;
+    private readonly IAndyDocsClient? _andyDocs;
     private readonly ILogger<FilesystemOutputArtifactCollector> _logger;
 
     public FilesystemOutputArtifactCollector(
         IContainerService containers,
-        ILogger<FilesystemOutputArtifactCollector> logger)
+        ILogger<FilesystemOutputArtifactCollector> logger,
+        IAndyDocsClient? andyDocs = null)
     {
         _containers = containers;
         _logger = logger;
+        // rivoli-ai/andy-containers#320. Optional. When null, the
+        // collector operates in pre-#320 metadata-only mode — every
+        // emitted artifact has DocsRef=null. Live DI registers the
+        // client iff AndyDocs:ApiBaseUrl is set, so dev / embedded
+        // setups without andy-docs degrade cleanly.
+        _andyDocs = andyDocs;
     }
 
     public async Task<IReadOnlyList<RunOutputArtifact>> CollectAsync(
@@ -105,7 +129,22 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
                 return Array.Empty<RunOutputArtifact>();
             }
 
-            return ParseProbeOutput(result.StdOut);
+            var parsed = ParseProbeOutput(result.StdOut);
+
+            // rivoli-ai/andy-containers#320. After enumeration, push
+            // each artifact's bytes to andy-docs. The client is
+            // best-effort: failures collapse to a metadata-only entry
+            // (DocsRef stays null) so a transient andy-docs outage
+            // never blocks container stop. When the client isn't wired
+            // (DI didn't register one — typical in dev / embedded
+            // mode without an andy-docs instance), we short-circuit
+            // and return the parsed manifest unchanged.
+            if (_andyDocs is null || parsed.Count == 0)
+            {
+                return parsed;
+            }
+
+            return await UploadAndAttachDocsRefsAsync(container, parsed, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -119,6 +158,149 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
                 "Failed to collect output artifacts from container {ContainerId}: {Message}",
                 container.Id, ex.Message);
             return Array.Empty<RunOutputArtifact>();
+        }
+    }
+
+    // rivoli-ai/andy-containers#320. Per-artifact byte read + andy-docs
+    // upload. One bad file MUST NOT kill the whole collection — each
+    // file is wrapped in its own try/catch so a single read failure
+    // or upload error just leaves that one artifact metadata-only.
+    private async Task<IReadOnlyList<RunOutputArtifact>> UploadAndAttachDocsRefsAsync(
+        Container container,
+        IReadOnlyList<RunOutputArtifact> parsed,
+        CancellationToken ct)
+    {
+        var enriched = new List<RunOutputArtifact>(parsed.Count);
+        foreach (var artifact in parsed)
+        {
+            DocsRef? docsRef = null;
+            try
+            {
+                if (artifact.SizeBytes > MaxUploadSizeBytes)
+                {
+                    _logger.LogWarning(
+                        "Artifact {RelativePath} in container {ContainerId} is {SizeBytes} bytes — exceeds upload cap ({MaxBytes}); emitting metadata-only.",
+                        artifact.RelativePath, container.Id, artifact.SizeBytes, MaxUploadSizeBytes);
+                }
+                else
+                {
+                    var bytes = await ReadArtifactBytesAsync(container, artifact, ct);
+                    if (bytes is not null)
+                    {
+                        var request = new UploadRequest(
+                            Content: bytes.Value,
+                            MimeType: artifact.ContentType ?? "application/octet-stream",
+                            Name: artifact.Name,
+                            Digest: artifact.Sha256,
+                            Links: new[]
+                            {
+                                new DocumentLinkDescriptor(
+                                    TargetType: "Run",
+                                    TargetId: container.Id.ToString(),
+                                    Role: "Output"),
+                            });
+                        docsRef = await _andyDocs!.UploadAsync(request, ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Caller cancelled — propagate so the terminal-event
+                // path can decide. Don't mask with a log line.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to upload artifact {RelativePath} from container {ContainerId} to andy-docs; emitting metadata-only.",
+                    artifact.RelativePath, container.Id);
+                docsRef = null;
+            }
+
+            // Even if docsRef is null we still surface the artifact —
+            // metadata + sha is useful to downstream consumers (#316
+            // contract). #320 just adds the optional DocsRef pointer.
+            enriched.Add(artifact with { DocsRef = docsRef });
+        }
+        return enriched;
+    }
+
+    // rivoli-ai/andy-containers#320. Read a single artifact's bytes out
+    // of the container via the exec channel. We `base64`-encode in the
+    // container and decode here — `cat` over an exec channel mangles
+    // binary content on every provider that line-buffers stdout (LF/CR
+    // translation, EOF detection). base64 is portable across the BSD
+    // and GNU coreutils variants we ship in our base images.
+    //
+    // Returns null on any non-cancellation failure (exec error, decode
+    // error, size mismatch). The caller treats null as "no bytes →
+    // metadata-only entry, no DocsRef".
+    private async Task<ReadOnlyMemory<byte>?> ReadArtifactBytesAsync(
+        Container container,
+        RunOutputArtifact artifact,
+        CancellationToken ct)
+    {
+        // Re-anchor the relative path against the outputs root. Path
+        // separators are normalised to forward slashes by the collector
+        // contract, so a naive concat works.
+        var absolutePath = OutputsRoot + "/" + artifact.RelativePath;
+        // Single-quote the path inside a sh -c invocation, doubling
+        // any embedded single quotes via the POSIX `'\''` escape.
+        var quoted = "'" + absolutePath.Replace("'", "'\\''") + "'";
+        // `-w 0` suppresses line wrapping (BusyBox + GNU coreutils);
+        // BSD `base64` ignores `-w` but we tolerate the difference by
+        // stripping all whitespace from stdout below before decoding.
+        var script = $"base64 -w 0 {quoted} 2>/dev/null || base64 {quoted} 2>/dev/null";
+
+        ExecResult exec;
+        try
+        {
+            exec = await _containers.ExecAsync(
+                container.Id, $"sh -c '{script.Replace("'", "'\\''")}'", ReadTimeout, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to read bytes for artifact {RelativePath} from container {ContainerId}: {Message}",
+                artifact.RelativePath, container.Id, ex.Message);
+            return null;
+        }
+
+        if (exec.ExitCode != 0 || string.IsNullOrWhiteSpace(exec.StdOut))
+        {
+            _logger.LogWarning(
+                "base64 read for artifact {RelativePath} in container {ContainerId} exited {ExitCode}; StdErr: {StdErr}",
+                artifact.RelativePath, container.Id, exec.ExitCode, Truncate(exec.StdErr, 200));
+            return null;
+        }
+
+        try
+        {
+            // Strip all whitespace (BSD `base64` always wraps at 76;
+            // some shells re-emit with \r\n). Pre-strip rather than
+            // rely on Convert.FromBase64String's narrow whitespace
+            // tolerance.
+            var raw = exec.StdOut;
+            var buf = new char[raw.Length];
+            var n = 0;
+            for (var i = 0; i < raw.Length; i++)
+            {
+                var c = raw[i];
+                if (!char.IsWhiteSpace(c)) buf[n++] = c;
+            }
+            var bytes = Convert.FromBase64CharArray(buf, 0, n);
+            return bytes;
+        }
+        catch (FormatException ex)
+        {
+            _logger.LogWarning(ex,
+                "base64 output for artifact {RelativePath} in container {ContainerId} failed to decode.",
+                artifact.RelativePath, container.Id);
+            return null;
         }
     }
 
