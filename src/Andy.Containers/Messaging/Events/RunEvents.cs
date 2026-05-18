@@ -20,6 +20,14 @@ namespace Andy.Containers.Messaging.Events;
 // EventJson WhenWritingNull policy) so legacy v1 consumers continue to
 // deserialise without schema friction; consumers that opt in
 // (andy-tasks#275) project it onto TaskNode.OutputDocRefs.
+//
+// v3 (rivoli-ai/andy-containers#320) extends each RunOutputArtifact with
+// an optional DocsRef (DocumentId + LinkId) populated when the bytes
+// were successfully uploaded to andy-docs during collection. The
+// payload shape itself is unchanged — only the per-artifact record
+// grew a new nullable field. v2 consumers continue to deserialise
+// successfully (DocsRef is ignored as an unknown property under the
+// EventJson tolerant-read policy).
 public sealed record RunEventPayload(
     Guid RunId,
     Guid? StoryId,
@@ -28,11 +36,10 @@ public sealed record RunEventPayload(
     double? DurationSeconds,
     IReadOnlyList<RunOutputArtifact>? OutputArtifacts = null)
 {
-    // Bumped to 2 when OutputArtifacts landed. New consumers can
-    // gate behaviour on schema_version >= 2; v1 consumers ignore
-    // the new field (the property is omitted when null and EventJson
-    // tolerates unknown properties on read).
-    public const int SchemaVersion = 2;
+    // Bumped to 3 when DocsRef landed on RunOutputArtifact (#320).
+    // Consumers that need the bytes-uploaded guarantee can gate on
+    // schema_version >= 3; pre-v3 consumers ignore DocsRef cleanly.
+    public const int SchemaVersion = 3;
 
     public int Schema_Version => SchemaVersion;
 }

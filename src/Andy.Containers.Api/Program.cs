@@ -4,6 +4,7 @@ using Andy.Containers.Api.Data;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Configurator;
 using Andy.Containers.DependencyInjection;
+using Andy.Containers.Infrastructure.Audit;
 using Andy.Containers.Infrastructure.Build.Local;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
@@ -403,12 +404,72 @@ try
     // the terminal run.* event to the outbox.
     builder.Services.AddScoped<IHeadlessRunner, HeadlessRunner>();
 
+    // rivoli-ai/andy-containers#320. andy-docs HTTP client for the
+    // output-artifact collector. Registered only when AndyDocs:ApiBaseUrl
+    // is set so dev / embedded mode (no andy-docs instance) does NOT
+    // fail at startup; in that mode the collector falls back to
+    // metadata-only artifacts (DocsRef stays null on every emitted
+    // RunOutputArtifact, matching the pre-#320 wire shape exactly).
+    builder.Services.Configure<AndyDocsOptions>(
+        builder.Configuration.GetSection(AndyDocsOptions.SectionName));
+    var docsBaseUrl = builder.Configuration[$"{AndyDocsOptions.SectionName}:ApiBaseUrl"];
+    if (!string.IsNullOrWhiteSpace(docsBaseUrl))
+    {
+        var docsOptions = builder.Configuration
+            .GetSection(AndyDocsOptions.SectionName)
+            .Get<AndyDocsOptions>() ?? new AndyDocsOptions();
+        var docsBuilder = builder.Services.AddHttpClient(AndyDocsHttpClient.HttpClientName, client =>
+        {
+            // Trailing slash so URI resolution preserves any path
+            // prefix (e.g. embedded mode where the base might be
+            // http://localhost:9100/docs).
+            client.BaseAddress = new Uri(docsBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = docsOptions.Timeout;
+        });
+        // Attach the M2M bearer when AndyAuth is configured. In bypass
+        // mode (Authority empty) we leave the client anonymous, mirroring
+        // the existing AndyModels / inbound JWT-bearer postures.
+        var docsAuthority = builder.Configuration["AndyAuth:Authority"];
+        if (!string.IsNullOrWhiteSpace(docsAuthority))
+        {
+            var audience = docsOptions.Audience;
+            docsBuilder.AddHttpMessageHandler(sp =>
+            {
+                var tokens = sp.GetRequiredService<IServiceTokenService>();
+                var logger = sp.GetService<ILogger<ServiceBearerHandler>>();
+                return new ServiceBearerHandler(
+                    async ct =>
+                    {
+                        try
+                        {
+                            return await tokens.GetAccessTokenAsync(audience, ct);
+                        }
+                        catch (ServiceTokenException)
+                        {
+                            // Surface as "no token" — the handler then
+                            // sends anonymously and andy-docs replies
+                            // 401, which the client treats as a normal
+                            // upload failure (best-effort fallback).
+                            return null;
+                        }
+                    },
+                    logger);
+            });
+        }
+        builder.Services.AddSingleton<IAndyDocsClient, AndyDocsHttpClient>();
+    }
+
     // rivoli-ai/andy-containers#316. Output-artifact collector:
     // probes /workspace/.andy/outputs/ via IContainerService.ExecAsync
     // at terminal-event time and emits the manifest on the run.* event
     // payload (and persists onto Run.OutputArtifacts for the agent-run
     // path). Scoped because the default impl pulls in the request-scoped
     // IContainerService and a request-scoped logger.
+    //
+    // #320: the collector now also pushes each artifact's bytes to
+    // andy-docs via the optionally-registered IAndyDocsClient above.
+    // The dependency is optional — when the client isn't registered
+    // (no AndyDocs:ApiBaseUrl) the collector emits metadata-only.
     builder.Services.AddScoped<IOutputArtifactCollector, FilesystemOutputArtifactCollector>();
 
     // AP5 (rivoli-ai/andy-containers#107). Mode dispatcher: selects the
