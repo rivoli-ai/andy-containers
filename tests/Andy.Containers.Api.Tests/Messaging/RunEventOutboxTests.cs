@@ -154,4 +154,182 @@ public class RunEventOutboxTests
         var entry = await db.OutboxEntries.SingleAsync();
         entry.CorrelationId.Should().Be(run.Id);
     }
+
+    // ----- rivoli-ai/andy-containers#316 OutputArtifacts coverage -----
+
+    [Fact]
+    public async Task AppendAgentRunEvent_WithOutputArtifacts_PersistsOnRunAndSerialisesToPayload()
+    {
+        using var db = InMemoryDbHelper.CreateContext();
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "triage-agent",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            ContainerId = Guid.NewGuid(),
+            Status = RunStatus.Succeeded,
+        };
+        db.Runs.Add(run);
+        await db.SaveChangesAsync();
+
+        var artifacts = new List<RunOutputArtifact>
+        {
+            new("report.pdf", "report.pdf", 12345, new string('a', 64), "application/pdf"),
+            new("data.json", "sub/data.json", 678, new string('b', 64), "application/json"),
+        };
+
+        db.AppendAgentRunEvent(run, RunEventKind.Finished,
+            exitCode: 0, durationSeconds: 4.2, outputArtifacts: artifacts);
+        await db.SaveChangesAsync();
+
+        // Persisted on the Run row.
+        var persisted = await db.Runs.FindAsync(run.Id);
+        persisted!.OutputArtifacts.Should().NotBeNull();
+        persisted.OutputArtifacts!.Should().HaveCount(2);
+        persisted.OutputArtifacts.Should().Contain(a =>
+            a.RelativePath == "report.pdf" && a.SizeBytes == 12345);
+
+        // Round-trips through the outbox payload as a snake_case array.
+        var entry = await db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        var root = doc.RootElement;
+        root.GetProperty("schema_version").GetInt32().Should().Be(RunEventPayload.SchemaVersion);
+        root.GetProperty("schema_version").GetInt32().Should().Be(2,
+            "OutputArtifacts shipped in the v2 wire shape");
+
+        var arr = root.GetProperty("output_artifacts");
+        arr.GetArrayLength().Should().Be(2);
+        arr[0].GetProperty("name").GetString().Should().Be("report.pdf");
+        arr[0].GetProperty("relative_path").GetString().Should().Be("report.pdf");
+        arr[0].GetProperty("size_bytes").GetInt64().Should().Be(12345);
+        arr[0].GetProperty("sha256").GetString().Should().Be(new string('a', 64));
+        arr[0].GetProperty("content_type").GetString().Should().Be("application/pdf");
+    }
+
+    [Fact]
+    public async Task AppendAgentRunEvent_WithoutOutputArtifacts_OmitsFieldFromPayload()
+    {
+        // Legacy callers (and the headless runner pre-#316 surface)
+        // pass no artifacts. The wire payload must omit the field so
+        // existing v1 consumers continue to decode without seeing a
+        // null where they expect "no field".
+        using var db = InMemoryDbHelper.CreateContext();
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            Status = RunStatus.Succeeded,
+        };
+        db.Runs.Add(run);
+        await db.SaveChangesAsync();
+
+        db.AppendAgentRunEvent(run, RunEventKind.Finished, exitCode: 0);
+        await db.SaveChangesAsync();
+
+        var entry = await db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        doc.RootElement.TryGetProperty("output_artifacts", out _).Should().BeFalse(
+            "EventJson omits null properties on write");
+
+        var persisted = await db.Runs.FindAsync(run.Id);
+        persisted!.OutputArtifacts.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AppendAgentRunEvent_EmptyArtifactList_StillSerialisedAsEmptyArray()
+    {
+        // The collector returns an empty list (not null) when the
+        // outputs directory exists but is empty. The payload should
+        // carry the empty array — that's semantically different from
+        // "no artifact collection ran".
+        using var db = InMemoryDbHelper.CreateContext();
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            Status = RunStatus.Succeeded,
+        };
+        db.Runs.Add(run);
+        await db.SaveChangesAsync();
+
+        db.AppendAgentRunEvent(run, RunEventKind.Finished,
+            exitCode: 0, outputArtifacts: Array.Empty<RunOutputArtifact>());
+        await db.SaveChangesAsync();
+
+        var entry = await db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        doc.RootElement.GetProperty("output_artifacts").GetArrayLength().Should().Be(0);
+
+        var persisted = await db.Runs.FindAsync(run.Id);
+        persisted!.OutputArtifacts.Should().NotBeNull();
+        persisted.OutputArtifacts!.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AppendRunEvent_WithOutputArtifacts_SurfacesOnContainerPayload()
+    {
+        // The container-lifecycle path also accepts the manifest.
+        // Container has no persisted column for it (decided in #316);
+        // we only verify the payload carries the array.
+        using var db = InMemoryDbHelper.CreateContext();
+        var container = new Container
+        {
+            Id = Guid.NewGuid(),
+            Name = "c",
+            OwnerId = "u",
+            Status = ContainerStatus.Stopped
+        };
+        var artifacts = new List<RunOutputArtifact>
+        {
+            new("out.txt", "out.txt", 11, new string('c', 64), "text/plain"),
+        };
+
+        db.AppendRunEvent(container, RunEventKind.Finished,
+            exitCode: 0, durationSeconds: 1.0, outputArtifacts: artifacts);
+        await db.SaveChangesAsync();
+
+        var entry = await db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        var arr = doc.RootElement.GetProperty("output_artifacts");
+        arr.GetArrayLength().Should().Be(1);
+        arr[0].GetProperty("name").GetString().Should().Be("out.txt");
+    }
+
+    [Fact]
+    public void RunEventPayload_RoundTripsThroughEventJson()
+    {
+        // Sanity: serialize then deserialize a populated payload with
+        // EventJson.Options. Snake-case property names must reach the
+        // consumer side cleanly.
+        var payload = new RunEventPayload(
+            RunId: Guid.NewGuid(),
+            StoryId: Guid.NewGuid(),
+            Status: "Succeeded",
+            ExitCode: 0,
+            DurationSeconds: 1.5,
+            OutputArtifacts: new[]
+            {
+                new RunOutputArtifact("r.pdf", "r.pdf", 99, new string('d', 64), "application/pdf"),
+            });
+
+        var json = JsonSerializer.Serialize(payload,
+            Andy.Containers.Messaging.EventJson.Options);
+        var back = JsonSerializer.Deserialize<RunEventPayload>(json,
+            Andy.Containers.Messaging.EventJson.Options);
+
+        back.Should().NotBeNull();
+        back!.RunId.Should().Be(payload.RunId);
+        back.OutputArtifacts.Should().NotBeNull();
+        back.OutputArtifacts!.Should().HaveCount(1);
+        back.OutputArtifacts![0].Name.Should().Be("r.pdf");
+        back.OutputArtifacts![0].Sha256.Should().Be(new string('d', 64));
+    }
 }

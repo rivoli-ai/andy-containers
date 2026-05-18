@@ -54,6 +54,19 @@ public class Run
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     /// <summary>
+    /// Manifest of files produced by the agent in the well-known outputs
+    /// directory (<c>/workspace/.andy/outputs/</c>), collected at
+    /// terminal-event time. Persisted as JSON (jsonb on Postgres, TEXT on
+    /// SQLite) so late subscribers can replay the artifact list without
+    /// rescanning the (potentially torn-down) container.
+    ///
+    /// Issue rivoli-ai/andy-containers#316. Companion field on the wire
+    /// event lives at <c>RunEventPayload.OutputArtifacts</c>; the two are
+    /// always written together by <c>RunEventOutbox.AppendAgentRunEvent</c>.
+    /// </summary>
+    public IReadOnlyList<RunOutputArtifact>? OutputArtifacts { get; set; }
+
+    /// <summary>
     /// Transition the run to <paramref name="next"/> according to AP1's state-machine
     /// invariants. Throws <see cref="InvalidOperationException"/> for illegal
     /// transitions so callers cannot silently corrupt history.

@@ -30,6 +30,12 @@ public class ContainerOrchestrationService : IContainerService
     private readonly IDataProtector? _proxyTokenProtector;
     private readonly IBuildArtifactStore? _buildArtifactStore;
     private readonly IRegistryConfiguration? _registryConfiguration;
+    // rivoli-ai/andy-containers#316. Optional so the existing test
+    // surface (which doesn't construct one) keeps working; live DI
+    // always supplies FilesystemOutputArtifactCollector. When null,
+    // terminal events publish without an OutputArtifacts manifest —
+    // matches the v1 schema-version-1 wire shape exactly.
+    private readonly IOutputArtifactCollector? _artifactCollector;
 
     /// <summary>
     /// rivoli-ai/conductor#943. Data-protection purpose for encrypting
@@ -60,7 +66,8 @@ public class ContainerOrchestrationService : IContainerService
         IProxyTokenService? proxyTokenService = null,
         IDataProtectionProvider? dataProtection = null,
         IBuildArtifactStore? buildArtifactStore = null,
-        IRegistryConfiguration? registryConfiguration = null)
+        IRegistryConfiguration? registryConfiguration = null,
+        IOutputArtifactCollector? artifactCollector = null)
     {
         _db = db;
         _routing = routing;
@@ -84,6 +91,35 @@ public class ContainerOrchestrationService : IContainerService
         // pre-IM behaviour. Live DI always supplies both.
         _buildArtifactStore = buildArtifactStore;
         _registryConfiguration = registryConfiguration;
+        // #316. Optional; null = pre-#316 wire shape, no artifact
+        // manifest on the terminal event.
+        _artifactCollector = artifactCollector;
+    }
+
+    // rivoli-ai/andy-containers#316. Wraps the collector call so a
+    // misbehaving probe (exec failure, hash crash, timeout) can never
+    // block the terminal-event write. Returns null on any failure —
+    // the outbox helper omits the OutputArtifacts field when null,
+    // preserving the v1-compatible wire shape.
+    private async Task<IReadOnlyList<RunOutputArtifact>?> TryCollectArtifactsAsync(
+        Container container, CancellationToken ct)
+    {
+        if (_artifactCollector is null) return null;
+        try
+        {
+            return await _artifactCollector.CollectAsync(container, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Artifact collection failed for container {ContainerId}; emitting terminal event without manifest. {Message}",
+                container.Id, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>
@@ -784,6 +820,13 @@ public class ContainerOrchestrationService : IContainerService
             throw new InvalidOperationException($"Container is {container.Status}, cannot stop");
 
         var infra = _providerFactory.GetProvider(container.Provider!);
+
+        // #316. Collect artifacts BEFORE stopping the container — the
+        // probe runs in-band via ExecAsync so the container must still
+        // be Running when we ask. A Stopped container would just yield
+        // an exec-failed warning and an empty manifest.
+        var artifacts = await TryCollectArtifactsAsync(container, ct);
+
         await infra.StopContainerAsync(container.ExternalId!, ct);
 
         container.Status = ContainerStatus.Stopped;
@@ -793,7 +836,8 @@ public class ContainerOrchestrationService : IContainerService
         var durationSeconds = (container.StartedAt.HasValue && container.StoppedAt.HasValue)
             ? (container.StoppedAt.Value - container.StartedAt.Value).TotalSeconds
             : (double?)null;
-        _db.AppendRunEvent(container, RunEventKind.Finished, exitCode: null, durationSeconds: durationSeconds);
+        _db.AppendRunEvent(container, RunEventKind.Finished,
+            exitCode: null, durationSeconds: durationSeconds, outputArtifacts: artifacts);
         await _db.SaveChangesAsync(ct);
     }
 
@@ -804,6 +848,16 @@ public class ContainerOrchestrationService : IContainerService
         activity?.SetTag("containerId", containerId.ToString()); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
 
         var container = await GetContainerAsync(containerId, ct);
+
+        // #316. Collect artifacts BEFORE the destroy call wipes the
+        // filesystem. Only meaningful while the container is still
+        // running; for already-stopped rows (e.g. a destroy after a
+        // prior stop) the probe will exec-fail and the helper returns
+        // null — terminal event still publishes, just without a manifest.
+        var artifacts = container.Status == ContainerStatus.Running
+            ? await TryCollectArtifactsAsync(container, ct)
+            : null;
+
         if (container.ExternalId is not null)
         {
             var infra = _providerFactory.GetProvider(container.Provider!);
@@ -829,7 +883,8 @@ public class ContainerOrchestrationService : IContainerService
         var destroyedDuration = (container.StartedAt.HasValue)
             ? (DateTime.UtcNow - container.StartedAt.Value).TotalSeconds
             : (double?)null;
-        _db.AppendRunEvent(container, RunEventKind.Cancelled, exitCode: null, durationSeconds: destroyedDuration);
+        _db.AppendRunEvent(container, RunEventKind.Cancelled,
+            exitCode: null, durationSeconds: destroyedDuration, outputArtifacts: artifacts);
         await _db.SaveChangesAsync(ct);
 
         Meters.ContainersDeleted.Add(1);

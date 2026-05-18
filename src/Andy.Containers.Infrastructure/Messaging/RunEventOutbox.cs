@@ -18,19 +18,27 @@ public static class RunEventOutbox
     // Container-lifecycle variant. Subject is keyed on Container.Id —
     // this is the legacy run.* path used by the provisioning worker /
     // orchestration service for create/stop/destroy transitions.
+    //
+    // outputArtifacts (rivoli-ai/andy-containers#316) is optional and
+    // flows straight into the payload. The container path does not
+    // persist artifacts onto the Container entity (no column) — the
+    // agent-run path is where replay matters; here we publish in-memory
+    // and let consumers store them downstream.
     public static void AppendRunEvent(
         this ContainersDbContext db,
         Container container,
         RunEventKind kind,
         int? exitCode = null,
-        double? durationSeconds = null)
+        double? durationSeconds = null,
+        IReadOnlyList<RunOutputArtifact>? outputArtifacts = null)
     {
         var payload = new RunEventPayload(
             RunId: container.Id,
             StoryId: container.StoryId,
             Status: container.Status.ToString(),
             ExitCode: exitCode,
-            DurationSeconds: durationSeconds);
+            DurationSeconds: durationSeconds,
+            OutputArtifacts: outputArtifacts);
 
         var subject = $"andy.containers.events.run.{container.Id}.{kind.ToSubjectKind()}";
 
@@ -54,19 +62,35 @@ public static class RunEventOutbox
     // back to the run row directly. Status mirrors Run.Status; the
     // CorrelationId chain prefers Run.CorrelationId over a fresh id so
     // ADR-0001 header semantics are preserved end-to-end.
+    //
+    // outputArtifacts (rivoli-ai/andy-containers#316) is additionally
+    // persisted on Run.OutputArtifacts so a late subscriber can replay
+    // the manifest off the entity even after the outbox row has been
+    // dispatched + reaped.
     public static void AppendAgentRunEvent(
         this ContainersDbContext db,
         Run run,
         RunEventKind kind,
         int? exitCode = null,
-        double? durationSeconds = null)
+        double? durationSeconds = null,
+        IReadOnlyList<RunOutputArtifact>? outputArtifacts = null)
     {
+        // Persist onto the Run row first so the payload and the entity
+        // agree byte-for-byte (the payload reads `run.OutputArtifacts`
+        // back via the local variable — assigning before serialise keeps
+        // the in-memory and on-the-wire copies identical).
+        if (outputArtifacts is not null)
+        {
+            run.OutputArtifacts = outputArtifacts;
+        }
+
         var payload = new RunEventPayload(
             RunId: run.Id,
             StoryId: null,
             Status: run.Status.ToString(),
             ExitCode: exitCode,
-            DurationSeconds: durationSeconds);
+            DurationSeconds: durationSeconds,
+            OutputArtifacts: outputArtifacts);
 
         var subject = $"andy.containers.events.run.{run.Id}.{kind.ToSubjectKind()}";
 

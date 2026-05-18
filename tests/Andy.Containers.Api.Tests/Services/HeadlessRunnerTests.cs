@@ -390,6 +390,142 @@ public class HeadlessRunnerTests : IDisposable
             "ADR-0001 root-causation chain must propagate from the Run");
     }
 
+    // ----- rivoli-ai/andy-containers#316 OutputArtifacts wiring -----
+
+    [Fact]
+    public async Task StartAsync_WithArtifactCollector_PersistsAndPublishesArtifacts()
+    {
+        // End-to-end through the runner's terminal path: collector is
+        // invoked, results land on Run.OutputArtifacts AND on the
+        // outbox payload's output_artifacts array.
+        var artifacts = new List<RunOutputArtifact>
+        {
+            new("report.pdf", "report.pdf", 100, new string('a', 64), "application/pdf"),
+            new("data.json", "sub/data.json", 50, new string('b', 64), "application/json"),
+        };
+        var collector = new Mock<IOutputArtifactCollector>();
+        collector
+            .Setup(c => c.CollectAsync(It.IsAny<Container>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(artifacts);
+
+        // Seed a real container row so the runner can FindAsync it.
+        var run = SeedRun();
+        SeedContainer(run.ContainerId!.Value);
+
+        var runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance, collector.Object);
+        SetupExec(run.ContainerId.Value, exitCode: 0);
+
+        await runner.StartAsync(run, "/tmp/x/config.json");
+
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.OutputArtifacts.Should().HaveCount(2);
+        persisted.OutputArtifacts!.Should().Contain(a => a.RelativePath == "report.pdf");
+
+        var entry = await _db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        var arr = doc.RootElement.GetProperty("output_artifacts");
+        arr.GetArrayLength().Should().Be(2);
+        arr[0].GetProperty("relative_path").GetString().Should().Be("report.pdf");
+
+        collector.Verify(
+            c => c.CollectAsync(It.Is<Container>(ct => ct.Id == run.ContainerId.Value),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task StartAsync_CollectorThrows_TerminalEventStillWritten()
+    {
+        // Collector failures must NEVER block the terminal-event write.
+        // The runner logs and proceeds with a null manifest (no
+        // output_artifacts field on the payload).
+        var collector = new Mock<IOutputArtifactCollector>();
+        collector
+            .Setup(c => c.CollectAsync(It.IsAny<Container>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("probe exec died"));
+
+        var run = SeedRun();
+        SeedContainer(run.ContainerId!.Value);
+
+        var runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance, collector.Object);
+        SetupExec(run.ContainerId.Value, exitCode: 0);
+
+        var outcome = await runner.StartAsync(run, "/tmp/x/config.json");
+
+        outcome.Status.Should().Be(RunStatus.Succeeded,
+            "collector failures must not corrupt the run outcome");
+
+        var entry = await _db.OutboxEntries.SingleAsync();
+        entry.Subject.Should().EndWith(".finished");
+
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        doc.RootElement.TryGetProperty("output_artifacts", out _).Should().BeFalse(
+            "a failed probe omits the field so v1 consumers stay happy");
+
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.OutputArtifacts.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StartAsync_NoCollector_BehavesLikePreFix()
+    {
+        // Pre-#316 wire shape: no collector configured → payload
+        // omits output_artifacts entirely, Run.OutputArtifacts stays null.
+        var run = SeedRun();
+        SetupExec(run.ContainerId!.Value, exitCode: 0);
+
+        // Default _runner (constructed in the class ctor) has no
+        // collector. Exercise it directly.
+        await _runner.StartAsync(run, "/tmp/x/config.json");
+
+        var entry = await _db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        doc.RootElement.TryGetProperty("output_artifacts", out _).Should().BeFalse();
+
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.OutputArtifacts.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StartAsync_NoContainerId_DoesNotInvokeCollector()
+    {
+        // AP5 never assigned a container → nothing to scan, no exec
+        // round-trip to spend.
+        var collector = new Mock<IOutputArtifactCollector>();
+        var run = SeedRunWithoutContainer();
+
+        var runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance, collector.Object);
+
+        await runner.StartAsync(run, "/tmp/x/config.json");
+
+        collector.Verify(
+            c => c.CollectAsync(It.IsAny<Container>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    private void SeedContainer(Guid containerId)
+    {
+        // Minimal Container row for the runner's collector-path FindAsync.
+        // The Container Status doesn't matter for these tests since the
+        // mocked collector ignores it; we still seed it as Running for
+        // realism.
+        _db.Containers.Add(new Container
+        {
+            Id = containerId,
+            Name = $"c-{containerId:N}",
+            OwnerId = "u",
+            ExternalId = "ext-" + containerId.ToString("N")[..8],
+            Status = ContainerStatus.Running,
+        });
+        _db.SaveChanges();
+    }
+
     // Writes a real headless config to a temp file so the runner can
     // parse limits.timeout_seconds. Other fields are placeholders — only
     // the limits block is exercised by these tests, but a complete object

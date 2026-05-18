@@ -197,6 +197,107 @@ public class RunRepositoryTests : IAsyncLifetime
         reloaded.EndedAt.Should().BeNull();
     }
 
+    // ----- rivoli-ai/andy-containers#316 OutputArtifacts column -----
+
+    [Fact]
+    public async Task Run_OutputArtifactsColumn_RoundTripsAsJson()
+    {
+        // Verifies the new column added in AddRunOutputArtifacts:
+        // a List<RunOutputArtifact> persists, reloads byte-for-byte
+        // through EF's value converter, and survives a fresh DbContext
+        // (i.e. not memoised on the change-tracker).
+        var artifacts = new List<RunOutputArtifact>
+        {
+            new("report.pdf", "report.pdf", 12345, new string('a', 64), "application/pdf"),
+            new("data.json", "sub/data.json", 67, new string('b', 64), "application/json"),
+        };
+        var run = new Run
+        {
+            AgentId = "artifact-agent",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            OutputArtifacts = artifacts,
+        };
+        _db.Runs.Add(run);
+        await _db.SaveChangesAsync();
+
+        using var otherDb = new ContainersDbContext(
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+        var reloaded = await otherDb.Runs.SingleAsync(r => r.Id == run.Id);
+
+        reloaded.OutputArtifacts.Should().NotBeNull();
+        reloaded.OutputArtifacts!.Should().HaveCount(2);
+        reloaded.OutputArtifacts.Should().BeEquivalentTo(artifacts);
+    }
+
+    [Fact]
+    public async Task Run_OutputArtifactsColumn_DefaultsToNull()
+    {
+        // Existing rows (pre-#316) must continue to deserialise with
+        // OutputArtifacts == null, not as an empty list — empty-list
+        // means "we ran a probe and it found nothing", null means
+        // "we never collected".
+        var run = new Run
+        {
+            AgentId = "no-artifacts",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+        };
+        _db.Runs.Add(run);
+        await _db.SaveChangesAsync();
+
+        using var otherDb = new ContainersDbContext(
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+        var reloaded = await otherDb.Runs.SingleAsync(r => r.Id == run.Id);
+
+        reloaded.OutputArtifacts.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Run_OutputArtifactsColumn_PersistsAsTextOnSqlite()
+    {
+        // The schema-level invariant: a JSON-converted column lands as
+        // a TEXT cell on SQLite (and jsonb on Postgres — covered by the
+        // migration file). Probing the raw cell guards against EF
+        // silently picking a different storage shape across upgrades.
+        var run = new Run
+        {
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            OutputArtifacts = new[]
+            {
+                new RunOutputArtifact("a.txt", "a.txt", 1, new string('a', 64), "text/plain")
+            },
+        };
+        _db.Runs.Add(run);
+        await _db.SaveChangesAsync();
+
+        var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT OutputArtifacts FROM Runs LIMIT 1";
+        var raw = await cmd.ExecuteScalarAsync() as string;
+        raw.Should().NotBeNull();
+        raw.Should().Contain("a.txt").And.Contain("text/plain");
+    }
+
+    [Fact]
+    public async Task Run_OutputArtifactsColumn_ListedInTableInfo()
+    {
+        var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM pragma_table_info('Runs') ORDER BY cid";
+        using var reader = await cmd.ExecuteReaderAsync();
+        var columns = new List<string>();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(0));
+        }
+        columns.Should().Contain("OutputArtifacts",
+            "the AddRunOutputArtifacts migration / model config must have created this column");
+    }
+
     [Fact]
     public async Task Run_QueryByStatus_UsesIndexedColumn()
     {
