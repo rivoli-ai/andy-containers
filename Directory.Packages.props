@@ -64,7 +64,7 @@
          Core / gRPC client instrumentation, which the shared library
          intentionally doesn't bundle. Serilog OTel sink stays for log
          forwarding (OT3 territory). -->
-    <PackageVersion Include="Andy.Telemetry" Version="0.2.8" />
+    <PackageVersion Include="Andy.Telemetry" Version="0.2.9" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.GrpcNetClient" Version="1.11.0-beta.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.0.0-beta.12" />
     <PackageVersion Include="Serilog.Sinks.OpenTelemetry" Version="4.1.1" />
