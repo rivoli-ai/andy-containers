@@ -1,0 +1,28 @@
+# Catppuccin Mocha — the darkest of the four Catppuccin flavours.
+# Source: https://github.com/catppuccin/catppuccin (canonical palette).
+id: catppuccin-mocha
+name: catppuccin-mocha
+display_name: Catppuccin Mocha
+kind: terminal
+version: 1
+palette:
+  background: "#1e1e2e"
+  foreground: "#cdd6f4"
+  cursor: "#f5e0dc"
+  selection: "#585b70"
+  ansi_0: "#45475a"
+  ansi_1: "#f38ba8"
+  ansi_2: "#a6e3a1"
+  ansi_3: "#f9e2af"
+  ansi_4: "#89b4fa"
+  ansi_5: "#f5c2e7"
+  ansi_6: "#94e2d5"
+  ansi_7: "#bac2de"
+  ansi_8: "#585b70"
+  ansi_9: "#f38ba8"
+  ansi_10: "#a6e3a1"
+  ansi_11: "#f9e2af"
+  ansi_12: "#89b4fa"
+  ansi_13: "#f5c2e7"
+  ansi_14: "#94e2d5"
+  ansi_15: "#a6adc8"

@@ -1,0 +1,30 @@
+# Gruvbox Dark — Pavel Pertsev's retro-warm palette.
+# Source: https://github.com/morhetz/gruvbox (canonical palette,
+# "dark medium" variant — bg0_h is darker than the standard bg,
+# bg is brighter; we use the standard bg for general legibility).
+id: gruvbox-dark
+name: gruvbox-dark
+display_name: Gruvbox Dark
+kind: terminal
+version: 1
+palette:
+  background: "#282828"
+  foreground: "#ebdbb2"
+  cursor: "#ebdbb2"
+  selection: "#504945"
+  ansi_0: "#282828"
+  ansi_1: "#cc241d"
+  ansi_2: "#98971a"
+  ansi_3: "#d79921"
+  ansi_4: "#458588"
+  ansi_5: "#b16286"
+  ansi_6: "#689d6a"
+  ansi_7: "#a89984"
+  ansi_8: "#928374"
+  ansi_9: "#fb4934"
+  ansi_10: "#b8bb26"
+  ansi_11: "#fabd2f"
+  ansi_12: "#83a598"
+  ansi_13: "#d3869b"
+  ansi_14: "#8ec07c"
+  ansi_15: "#ebdbb2"

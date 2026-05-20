@@ -1,0 +1,30 @@
+# Tokyo Night — folke/tokyonight.nvim's signature palette,
+# inspired by Tokyo's neon-lit streets at night.
+# Source: https://github.com/folke/tokyonight.nvim (canonical
+# palette, "night" style).
+id: tokyo-night
+name: tokyo-night
+display_name: Tokyo Night
+kind: terminal
+version: 1
+palette:
+  background: "#1a1b26"
+  foreground: "#c0caf5"
+  cursor: "#c0caf5"
+  selection: "#33467c"
+  ansi_0: "#15161e"
+  ansi_1: "#f7768e"
+  ansi_2: "#9ece6a"
+  ansi_3: "#e0af68"
+  ansi_4: "#7aa2f7"
+  ansi_5: "#bb9af7"
+  ansi_6: "#7dcfff"
+  ansi_7: "#a9b1d6"
+  ansi_8: "#414868"
+  ansi_9: "#f7768e"
+  ansi_10: "#9ece6a"
+  ansi_11: "#e0af68"
+  ansi_12: "#7aa2f7"
+  ansi_13: "#bb9af7"
+  ansi_14: "#7dcfff"
+  ansi_15: "#c0caf5"

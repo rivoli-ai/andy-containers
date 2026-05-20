@@ -1,0 +1,28 @@
+# Catppuccin Latte — the light variant of the Catppuccin family.
+# Source: https://github.com/catppuccin/catppuccin (canonical palette).
+id: catppuccin-latte
+name: catppuccin-latte
+display_name: Catppuccin Latte
+kind: terminal
+version: 1
+palette:
+  background: "#eff1f5"
+  foreground: "#4c4f69"
+  cursor: "#dc8a78"
+  selection: "#acb0be"
+  ansi_0: "#5c5f77"
+  ansi_1: "#d20f39"
+  ansi_2: "#40a02b"
+  ansi_3: "#df8e1d"
+  ansi_4: "#1e66f5"
+  ansi_5: "#ea76cb"
+  ansi_6: "#179299"
+  ansi_7: "#acb0be"
+  ansi_8: "#6c6f85"
+  ansi_9: "#d20f39"
+  ansi_10: "#40a02b"
+  ansi_11: "#df8e1d"
+  ansi_12: "#1e66f5"
+  ansi_13: "#ea76cb"
+  ansi_14: "#179299"
+  ansi_15: "#bcc0cc"

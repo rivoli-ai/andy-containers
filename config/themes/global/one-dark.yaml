@@ -1,0 +1,28 @@
+# One Dark — the Atom editor's signature dark theme.
+# Source: https://github.com/atom/one-dark-ui (canonical palette).
+id: one-dark
+name: one-dark
+display_name: One Dark
+kind: terminal
+version: 1
+palette:
+  background: "#282c34"
+  foreground: "#abb2bf"
+  cursor: "#528bff"
+  selection: "#3e4451"
+  ansi_0: "#3f4451"
+  ansi_1: "#e06c75"
+  ansi_2: "#98c379"
+  ansi_3: "#e5c07b"
+  ansi_4: "#61afef"
+  ansi_5: "#c678dd"
+  ansi_6: "#56b6c2"
+  ansi_7: "#abb2bf"
+  ansi_8: "#4f5666"
+  ansi_9: "#be5046"
+  ansi_10: "#98c379"
+  ansi_11: "#d19a66"
+  ansi_12: "#61afef"
+  ansi_13: "#c678dd"
+  ansi_14: "#56b6c2"
+  ansi_15: "#e6e6e6"
