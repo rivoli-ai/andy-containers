@@ -1,0 +1,29 @@
+# Gruvbox Light — the light counterpart to Gruvbox Dark.
+# Source: https://github.com/morhetz/gruvbox (canonical palette,
+# "light medium" variant).
+id: gruvbox-light
+name: gruvbox-light
+display_name: Gruvbox Light
+kind: terminal
+version: 1
+palette:
+  background: "#fbf1c7"
+  foreground: "#3c3836"
+  cursor: "#3c3836"
+  selection: "#d5c4a1"
+  ansi_0: "#fbf1c7"
+  ansi_1: "#cc241d"
+  ansi_2: "#98971a"
+  ansi_3: "#d79921"
+  ansi_4: "#458588"
+  ansi_5: "#b16286"
+  ansi_6: "#689d6a"
+  ansi_7: "#7c6f64"
+  ansi_8: "#928374"
+  ansi_9: "#9d0006"
+  ansi_10: "#79740e"
+  ansi_11: "#b57614"
+  ansi_12: "#076678"
+  ansi_13: "#8f3f71"
+  ansi_14: "#427b58"
+  ansi_15: "#3c3836"
