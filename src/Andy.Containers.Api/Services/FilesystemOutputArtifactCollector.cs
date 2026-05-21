@@ -93,12 +93,18 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
     private readonly ILogger<FilesystemOutputArtifactCollector> _logger;
 
     /// <summary>
-    /// DI-preferred constructor (marked with <see
-    /// cref="ActivatorUtilitiesConstructorAttribute"/>). Resolves
-    /// <see cref="IContainerService"/> lazily through the supplied
-    /// service provider to break the registration cycle.
+    /// DI constructor. Resolves <see cref="IContainerService"/>
+    /// lazily through the supplied service provider to break the
+    /// registration cycle introduced by #319/#322
+    /// (`IOutputArtifactCollector → IContainerService → IOutputArtifactCollector`).
+    ///
+    /// Note: the previous attempt used <see cref="ActivatorUtilitiesConstructorAttribute"/>
+    /// on this ctor and kept an `IContainerService`-taking sibling ctor
+    /// for tests, but ValidateOnBuild still walked all `public` ctors
+    /// and detected the cycle anyway. So the test-convenience ctor
+    /// below is `internal` — DI skips non-public ctors entirely, but
+    /// the test projects have `InternalsVisibleTo`.
     /// </summary>
-    [ActivatorUtilitiesConstructor]
     public FilesystemOutputArtifactCollector(
         IServiceProvider services,
         ILogger<FilesystemOutputArtifactCollector> logger,
@@ -115,14 +121,13 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
     }
 
     /// <summary>
-    /// Test-convenience overload. DI never picks this constructor —
-    /// see <see cref="ActivatorUtilitiesConstructorAttribute"/> on the
-    /// other ctor — so it does not reintroduce the SP.5.4 DI cycle.
-    /// Tests that need to inject a mock <see cref="IContainerService"/>
-    /// directly use this form to avoid the boilerplate of wrapping
-    /// the mock in a one-entry <c>ServiceCollection</c>.
+    /// Test-only overload. <c>internal</c> so DI never scans it during
+    /// `ValidateOnBuild`; visible to <c>Andy.Containers.Api.Tests</c>
+    /// via <c>InternalsVisibleTo</c>. Lets the unit tests inject a
+    /// mock <see cref="IContainerService"/> directly without
+    /// wrapping it in a one-entry service provider.
     /// </summary>
-    public FilesystemOutputArtifactCollector(
+    internal FilesystemOutputArtifactCollector(
         IContainerService containers,
         ILogger<FilesystemOutputArtifactCollector> logger,
         IAndyDocsClient? andyDocs = null)
