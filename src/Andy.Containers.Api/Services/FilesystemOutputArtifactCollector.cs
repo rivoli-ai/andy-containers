@@ -5,6 +5,7 @@ using System.Globalization;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Infrastructure.Audit;
 using Andy.Containers.Models;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Andy.Containers.Api.Services;
@@ -70,16 +71,40 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
     // warning and are emitted metadata-only (no DocsRef).
     private const long MaxUploadSizeBytes = 64L * 1024 * 1024;
 
-    private readonly IContainerService _containers;
+    // Resolved lazily on first use to break the DI cycle
+    // `IOutputArtifactCollector → IContainerService →
+    // IOutputArtifactCollector` introduced by #319/#322. The collector
+    // only calls `ExecAsync` on the container service, which is safe to
+    // resolve on-demand at collection time (well after the host has
+    // finished building the service provider). Eager constructor
+    // injection deadlocked `ValidateOnBuild` and crashed the host on
+    // start.
+    private readonly IServiceProvider _services;
+    private IContainerService? _containersCache;
+    private IContainerService Containers
+    {
+        get
+        {
+            _containersCache ??= _services.GetRequiredService<IContainerService>();
+            return _containersCache;
+        }
+    }
     private readonly IAndyDocsClient? _andyDocs;
     private readonly ILogger<FilesystemOutputArtifactCollector> _logger;
 
+    /// <summary>
+    /// DI-preferred constructor (marked with <see
+    /// cref="ActivatorUtilitiesConstructorAttribute"/>). Resolves
+    /// <see cref="IContainerService"/> lazily through the supplied
+    /// service provider to break the registration cycle.
+    /// </summary>
+    [ActivatorUtilitiesConstructor]
     public FilesystemOutputArtifactCollector(
-        IContainerService containers,
+        IServiceProvider services,
         ILogger<FilesystemOutputArtifactCollector> logger,
         IAndyDocsClient? andyDocs = null)
     {
-        _containers = containers;
+        _services = services;
         _logger = logger;
         // rivoli-ai/andy-containers#320. Optional. When null, the
         // collector operates in pre-#320 metadata-only mode — every
@@ -87,6 +112,36 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
         // client iff AndyDocs:ApiBaseUrl is set, so dev / embedded
         // setups without andy-docs degrade cleanly.
         _andyDocs = andyDocs;
+    }
+
+    /// <summary>
+    /// Test-convenience overload. DI never picks this constructor —
+    /// see <see cref="ActivatorUtilitiesConstructorAttribute"/> on the
+    /// other ctor — so it does not reintroduce the SP.5.4 DI cycle.
+    /// Tests that need to inject a mock <see cref="IContainerService"/>
+    /// directly use this form to avoid the boilerplate of wrapping
+    /// the mock in a one-entry <c>ServiceCollection</c>.
+    /// </summary>
+    public FilesystemOutputArtifactCollector(
+        IContainerService containers,
+        ILogger<FilesystemOutputArtifactCollector> logger,
+        IAndyDocsClient? andyDocs = null)
+    {
+        _services = new SingleServiceProvider(containers);
+        _containersCache = containers;
+        _logger = logger;
+        _andyDocs = andyDocs;
+    }
+
+    /// <summary>
+    /// Minimal <see cref="IServiceProvider"/> wrapper for the
+    /// test-convenience constructor. Returns the one container
+    /// service it was constructed with; everything else is null.
+    /// </summary>
+    private sealed class SingleServiceProvider(IContainerService containers) : IServiceProvider
+    {
+        public object? GetService(Type serviceType) =>
+            serviceType == typeof(IContainerService) ? containers : null;
     }
 
     public async Task<IReadOnlyList<RunOutputArtifact>> CollectAsync(
@@ -118,7 +173,7 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
                 "[ -n \"$sz\" ] && [ -n \"$h\" ] && printf \"%s\\t%s\\t%s\\n\" \"$sz\" \"$h\" \"{}\"'; " +
                 "fi";
 
-            var result = await _containers.ExecAsync(
+            var result = await Containers.ExecAsync(
                 container.Id, $"sh -c '{script.Replace("'", "'\\''")}'", ProbeTimeout, ct);
 
             if (result.ExitCode != 0)
@@ -255,7 +310,7 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
         ExecResult exec;
         try
         {
-            exec = await _containers.ExecAsync(
+            exec = await Containers.ExecAsync(
                 container.Id, $"sh -c '{script.Replace("'", "'\\''")}'", ReadTimeout, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
