@@ -63,14 +63,13 @@ All endpoints require authentication (JWT Bearer token) and RBAC permissions via
 
 ## API Keys
 
-| Method | Endpoint | Permission | Description |
-|--------|----------|------------|-------------|
-| GET | `/api-keys` | settings:read | List API keys |
-| POST | `/api-keys` | settings:write | Create API key |
-| PUT | `/api-keys/{id}` | settings:write | Update API key |
-| DELETE | `/api-keys/{id}` | settings:write | Delete API key |
-| POST | `/api-keys/{id}/validate` | settings:write | Re-validate key |
-| GET | `/api-keys/{id}/history` | settings:read | Get audit trail |
+The legacy `/api/api-keys` surface and `ApiKeyCredentials` table were
+retired in M1.5 (`rivoli-ai/conductor#946`). Provider API keys now live
+in **andy-settings** under `andy.models.providers.<slug>.apiKey` and
+reach containers via the andy-models proxy with a per-container service
+token — containers no longer see raw provider keys. See
+[`docs/migrations/api-keys-to-settings.md`](migrations/api-keys-to-settings.md)
+for the operator runbook.
 
 ## Git Credentials
 

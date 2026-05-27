@@ -174,7 +174,7 @@ All routes `[Authorize]` + `[RequirePermission]`.
 **gRPC** — `ContainersGrpc.proto` → `ContainerGrpcService`:
 
 - `CreateContainer`, `GetContainerStatus`, `ExecCommand`
-- `StreamLogs` (server-streaming) — used by DevPilot agents
+- `StreamLogs` (server-streaming) — used by agent runners and downstream consumers
 
 **MCP** — `Mcp/ContainersMcpTools.cs` (via `/mcp`):
 
@@ -339,7 +339,7 @@ Local `dotnet run` (canonical, from `config/registration.json`):
 
 `docker compose up` shifts to the docker-port set (`7200/7201/6200/7434/7422`) — see `docker-compose.yml` and `docs/docker-setup.md`. Dockerfile is multi-stage with custom CA injection and non-root runtime.
 
-Volumes: `postgres_data`, `nats_data`, `dataprotection_keys`.
+Volumes: `postgres_data`, `nats_data`. (Data Protection keys are persisted in the `DataProtectionKeys` Postgres table — see `docs/operations/data-protection.md`.)
 
 ---
 

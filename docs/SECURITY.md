@@ -284,7 +284,7 @@ All Docker images set these for corporate proxy/SSL compatibility:
 - [ ] `AndyAuth:Authority` set to production auth server
 - [ ] `Rbac:ApiBaseUrl` set to production RBAC server
 - [ ] API keys encrypted with production-grade Data Protection keys
-- [ ] Data Protection keys persisted to durable storage (not ephemeral volume)
+- [ ] Data Protection key ring persisted in the `DataProtectionKeys` Postgres table (see `docs/operations/data-protection.md`); ensure the underlying Postgres is encrypted at rest
 - [ ] CORS origins restricted to production domains
 - [ ] Container expiry policies configured
 - [ ] Non-root container user enforcement verified

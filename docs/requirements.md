@@ -8,7 +8,7 @@ Andy Containers is a development container management platform for the rivoli-ai
 
 1. **Infrastructure Agnostic** -- Provide a single API that manages containers across Docker, Apple Containers, Azure (ACI/ACA/ACP), AWS Fargate, GCP Cloud Run, Fly.io, Hetzner, DigitalOcean, Civo, and third-party SSH hosts, with automatic provider health monitoring and routing.
 2. **Catalog-Driven Reproducibility** -- Enable teams to define, version, and share container templates in a hierarchical catalog (Global / Organization / Team / User) with declarative YAML-first configuration and content-addressed image tracking.
-3. **Agent-Native Development** -- First-class integration with AI code assistants (Claude Code, Codex CLI, Aider, and others) and Andy DevPilot for spawning AI agents on containers with headless or UI-attached modes.
+3. **Agent-Native Development** -- First-class integration with AI code assistants (Claude Code, Codex CLI, Aider, and others) plus a first-class `Run` entity (Epic AP) that spawns `andy-cli` as the in-container agent runtime in headless, terminal-attached, or desktop modes, with lifecycle events published to NATS for downstream services (e.g. `andy-issues`).
 4. **Security-First Operations** -- Gate all operations through Andy Auth (OAuth 2.0 / OIDC) and Andy RBAC (organization-scoped, per-endpoint permissions) with encrypted credential storage and zero-trust networking.
 5. **Multi-Surface Access** -- Expose container management through REST API, gRPC, MCP tools, CLI, and Angular web UI so that humans, scripts, and AI assistants can all interact with the platform.
 6. **Comprehensive Testing** -- Unit and integration tests for backend and frontend with sufficient code coverage to maintain confidence in production deployments.
@@ -123,7 +123,7 @@ Andy Containers is a development container management platform for the rivoli-ai
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | FR-74 | REST API with 60+ endpoints across containers, templates, images, providers, workspaces, git credentials, organizations, API keys, and terminal resources | Must |
-| FR-75 | gRPC service for high-performance service-to-service communication (DevPilot integration) | Must |
+| FR-75 | gRPC service for high-performance service-to-service communication | Must |
 | FR-76 | MCP (Model Context Protocol) server with 22 tools for AI assistant integration | Must |
 | FR-77 | MCP tools cover: container management, template browsing, provider listing, workspace listing, image management (list, introspect, diff, tool search), git operations (clone, pull, list repos, credentials), organization summaries, image builds, API key management | Must |
 | FR-78 | OpenAPI/Swagger specification for REST API documentation | Must |

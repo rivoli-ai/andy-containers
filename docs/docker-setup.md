@@ -24,8 +24,12 @@ For local (non-Docker) `dotnet run` the API and Angular dev server use the canon
 |-------|---------|
 | `./certs` | Self-signed HTTPS certificates and corporate CA certs |
 | `/var/run/docker.sock` | Docker socket for container-in-container management |
-| `dataprotection-keys` | ASP.NET Core Data Protection key persistence volume |
-| `postgres-data` | PostgreSQL data directory |
+| `postgres_data` | PostgreSQL data directory |
+| `nats_data` | NATS JetStream data directory |
+
+> ASP.NET Core Data Protection keys are persisted in the `DataProtectionKeys`
+> Postgres table (RC2 / #200), not a Docker volume. See
+> [`docs/operations/data-protection.md`](operations/data-protection.md).
 
 ## Certificate Management
 
