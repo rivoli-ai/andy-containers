@@ -560,6 +560,110 @@ public class HeadlessRunnerTests : IDisposable
             });
     }
 
+    // ----- EX.7 (rivoli-ai/andy-containers#328) input staging -----
+
+    [Fact]
+    public async Task StartAsync_RunWithInputs_StagesBeforeSpawningAndyCli()
+    {
+        var containerId = Guid.NewGuid();
+        var run = SeedRun(containerId);
+        SeedContainer(containerId);
+        SetupExec(containerId, exitCode: 0, stdOut: "ok");
+
+        var docId = Guid.NewGuid();
+        var configPath = WriteRealConfigWithInputs(
+            new HeadlessInput { DocsRef = docId, DestRelativePath = "prior/report.json" });
+
+        var stager = new Mock<IInputArtifactStager>();
+        var runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance, artifactCollector: null, inputStager: stager.Object);
+
+        var outcome = await runner.StartAsync(run, configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded);
+        // The stager was invoked with the config's declared input.
+        stager.Verify(s => s.StageAsync(
+            It.Is<Container>(c => c.Id == containerId),
+            It.Is<IReadOnlyList<HeadlessInput>>(i => i.Count == 1 && i[0].DocsRef == docId),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        File.Delete(configPath);
+    }
+
+    [Fact]
+    public async Task StartAsync_StagingFails_RunFailsWithoutSpawningAndyCli()
+    {
+        var containerId = Guid.NewGuid();
+        var run = SeedRun(containerId);
+        SeedContainer(containerId);
+
+        string? spawnCommand = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => spawnCommand = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var docId = Guid.NewGuid();
+        var configPath = WriteRealConfigWithInputs(
+            new HeadlessInput { DocsRef = docId, DestRelativePath = "a.txt" });
+
+        var stager = new Mock<IInputArtifactStager>();
+        stager.Setup(s => s.StageAsync(
+                It.IsAny<Container>(), It.IsAny<IReadOnlyList<HeadlessInput>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InputStagingException(
+                docId, "a.txt", InputStagingFailure.NotFound, "EX.7: cannot stage input 'a.txt': document not found."));
+
+        var runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance, artifactCollector: null, inputStager: stager.Object);
+
+        var outcome = await runner.StartAsync(run, configPath);
+
+        outcome.Status.Should().Be(RunStatus.Failed);
+        outcome.Error.Should().Contain("a.txt");
+        spawnCommand.Should().BeNull("staging failure must short-circuit before andy-cli spawns");
+
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.Status.Should().Be(RunStatus.Failed);
+        File.Delete(configPath);
+    }
+
+    [Fact]
+    public async Task StartAsync_NoInputs_DoesNotInvokeStager()
+    {
+        var run = SeedRun();
+        SetupExec(run.ContainerId!.Value, exitCode: 0);
+        var configPath = WriteRealConfig(timeoutSeconds: 60); // no inputs
+
+        var stager = new Mock<IInputArtifactStager>();
+        var runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance, artifactCollector: null, inputStager: stager.Object);
+
+        var outcome = await runner.StartAsync(run, configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded);
+        stager.Verify(s => s.StageAsync(
+            It.IsAny<Container>(), It.IsAny<IReadOnlyList<HeadlessInput>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        File.Delete(configPath);
+    }
+
+    private static string WriteRealConfigWithInputs(params HeadlessInput[] inputs)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"ex7-test-{Guid.NewGuid():N}.json");
+        var config = new HeadlessRunConfig
+        {
+            RunId = Guid.NewGuid(),
+            Limits = new HeadlessLimits { MaxIterations = 4, TimeoutSeconds = 60 },
+            Inputs = inputs,
+        };
+        File.WriteAllText(path, HeadlessConfigJson.Serialize(config));
+        return path;
+    }
+
     private Run SeedRun(Guid? containerId = null, Guid? correlationId = null)
         => SeedRunCore(containerId ?? Guid.NewGuid(), correlationId);
 

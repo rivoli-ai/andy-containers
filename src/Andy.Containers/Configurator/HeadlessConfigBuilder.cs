@@ -95,7 +95,102 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
                 MaxIterations = agent.Limits.MaxIterations,
                 TimeoutSeconds = agent.Limits.TimeoutSeconds,
             },
+            // EX.7 (rivoli-ai/andy-containers#328). Map + validate the
+            // cross-container input handoff. Empty collapses to null (same
+            // posture as env_vars / boundaries) so a run without inputs
+            // emits no `inputs` key — wire shape identical to pre-EX.7.
+            Inputs = MapInputs(run.Inputs),
         };
+    }
+
+    // EX.7 (rivoli-ai/andy-containers#328). Validate + project the run's
+    // declared inputs onto the headless config. A malformed dest path
+    // throws ArgumentException here — RunConfigurator turns that into a
+    // RunConfiguratorResult.Fail, so a bad handoff fails the run START
+    // rather than staging into an unexpected location (or escaping the
+    // inputs root). Returns null for the empty/absent case.
+    private static IReadOnlyList<HeadlessInput>? MapInputs(IReadOnlyList<RunInput>? inputs)
+    {
+        if (inputs is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var mapped = new List<HeadlessInput>(inputs.Count);
+        foreach (var input in inputs)
+        {
+            if (input.DocsRef == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "RunInput.DocsRef must be a non-empty andy-docs document id.", nameof(inputs));
+            }
+
+            var dest = ValidateDestRelativePath(input.DestRelativePath);
+            mapped.Add(new HeadlessInput { DocsRef = input.DocsRef, DestRelativePath = dest });
+        }
+
+        return mapped;
+    }
+
+    // EX.7 path-traversal guard. The dest must be a normalised relative
+    // path that stays under /workspace/.andy/inputs/. We reject — rather
+    // than sanitise — so an upstream bug surfaces as a clear run-start
+    // error instead of silently relocating a file. Mirrors the defensive
+    // posture FilesystemOutputArtifactCollector takes on the output side
+    // (paths-outside-root are skipped).
+    public static string ValidateDestRelativePath(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw new ArgumentException(
+                "RunInput.DestRelativePath is required (the staging destination under /workspace/.andy/inputs/).",
+                nameof(raw));
+        }
+
+        // Normalise separators to forward slashes; the inputs root is a
+        // POSIX path inside the container.
+        var normalised = raw.Replace('\\', '/').Trim();
+
+        if (normalised.StartsWith('/'))
+        {
+            throw new ArgumentException(
+                $"RunInput.DestRelativePath '{raw}' must be relative — no leading slash.", nameof(raw));
+        }
+
+        // Reject Windows drive / UNC prefixes that survive separator
+        // normalisation (e.g. "C:/x", "//host/share").
+        if (normalised.Length >= 2 && normalised[1] == ':')
+        {
+            throw new ArgumentException(
+                $"RunInput.DestRelativePath '{raw}' must be relative — no drive prefix.", nameof(raw));
+        }
+
+        var segments = normalised.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+        {
+            throw new ArgumentException(
+                $"RunInput.DestRelativePath '{raw}' resolves to an empty path.", nameof(raw));
+        }
+
+        foreach (var segment in segments)
+        {
+            if (segment == "..")
+            {
+                throw new ArgumentException(
+                    $"RunInput.DestRelativePath '{raw}' must not contain a '..' traversal segment.", nameof(raw));
+            }
+            if (segment == ".")
+            {
+                // A bare "." segment is meaningless noise; reject so the
+                // staged path is unambiguous.
+                throw new ArgumentException(
+                    $"RunInput.DestRelativePath '{raw}' must not contain a '.' segment.", nameof(raw));
+            }
+        }
+
+        // Re-join from the validated segments so the stager works against
+        // a canonical, collapsed relative path.
+        return string.Join('/', segments);
     }
 
     private static HeadlessTool MapTool(AgentSpecTool tool)

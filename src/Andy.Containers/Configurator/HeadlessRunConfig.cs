@@ -29,6 +29,42 @@ public sealed record HeadlessRunConfig
     public Guid? PolicyId { get; init; }
     public IReadOnlyList<string>? Boundaries { get; init; }
     public HeadlessLimits Limits { get; init; } = new();
+
+    /// <summary>
+    /// EX.7 (rivoli-ai/andy-containers#328). Optional cross-container
+    /// artifact handoff. Each entry names an andy-docs document
+    /// (<see cref="HeadlessInput.DocsRef"/>) and a destination path,
+    /// relative to <c>/workspace/.andy/inputs/</c>, where its bytes are
+    /// staged inside the container <em>before</em> andy-cli is spawned.
+    /// Symmetric with the outputs collector's
+    /// <c>/workspace/.andy/outputs/</c>. <c>null</c> (and the empty list,
+    /// which the builder collapses to <c>null</c>) means "no input
+    /// staging" — behaviour identical to pre-EX.7.
+    /// </summary>
+    public IReadOnlyList<HeadlessInput>? Inputs { get; init; }
+}
+
+/// <summary>
+/// EX.7 (rivoli-ai/andy-containers#328). One cross-container input: the
+/// andy-docs document to fetch and where to land it under the inputs root.
+/// </summary>
+public sealed record HeadlessInput
+{
+    /// <summary>
+    /// andy-docs document id whose current-version bytes are staged. The
+    /// stager resolves the document's head content-hash and downloads that
+    /// blob (see <c>FilesystemInputArtifactStager</c>).
+    /// </summary>
+    public Guid DocsRef { get; init; }
+
+    /// <summary>
+    /// Destination path relative to <c>/workspace/.andy/inputs/</c>. Must
+    /// be a normalised relative path — no leading slash, no <c>..</c>
+    /// segment, no drive/UNC prefix. The builder rejects traversal at
+    /// config-build time so a malformed handoff fails the run start rather
+    /// than escaping the inputs root.
+    /// </summary>
+    public string DestRelativePath { get; init; } = string.Empty;
 }
 
 public sealed record HeadlessAgent

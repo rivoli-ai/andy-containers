@@ -67,6 +67,18 @@ public class Run
     public IReadOnlyList<RunOutputArtifact>? OutputArtifacts { get; set; }
 
     /// <summary>
+    /// EX.7 (rivoli-ai/andy-containers#328). Cross-container input
+    /// handoff: andy-docs documents to stage under
+    /// <c>/workspace/.andy/inputs/</c> before the agent starts. Set by the
+    /// caller (e.g. andy-tasks EX.4 ContextHandoffBuilder) when a run
+    /// depends on artifacts produced by a prior task in a different
+    /// container. <c>null</c>/empty means no staging — behaviour
+    /// unchanged. Flows into <c>HeadlessRunConfig.Inputs</c> via the
+    /// configurator and is consumed by the runner's input stager.
+    /// </summary>
+    public IReadOnlyList<RunInput>? Inputs { get; set; }
+
+    /// <summary>
     /// Transition the run to <paramref name="next"/> according to AP1's state-machine
     /// invariants. Throws <see cref="InvalidOperationException"/> for illegal
     /// transitions so callers cannot silently corrupt history.

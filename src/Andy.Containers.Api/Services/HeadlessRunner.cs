@@ -21,6 +21,12 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // When null, terminal events publish without an OutputArtifacts
     // manifest — pre-#316 wire shape exactly.
     private readonly IOutputArtifactCollector? _artifactCollector;
+    // EX.7 (#328). Optional. When null (or when a run declares no
+    // inputs) the spawn path is unchanged. When a run DOES declare inputs
+    // but no stager is wired, that's a misconfiguration the stager itself
+    // surfaces — so we only need null-tolerance here for the no-inputs
+    // common case.
+    private readonly IInputArtifactStager? _inputStager;
 
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
     // and exits with code 4 (→ RunEventKind.Timeout) when its CTS fires.
@@ -41,7 +47,8 @@ public sealed class HeadlessRunner : IHeadlessRunner
         IRunCancellationRegistry cancellation,
         ITokenIssuer tokens,
         ILogger<HeadlessRunner> logger,
-        IOutputArtifactCollector? artifactCollector = null)
+        IOutputArtifactCollector? artifactCollector = null,
+        IInputArtifactStager? inputStager = null)
     {
         _containers = containers;
         _db = db;
@@ -49,6 +56,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
         _tokens = tokens;
         _logger = logger;
         _artifactCollector = artifactCollector;
+        _inputStager = inputStager;
     }
 
     public async Task<HeadlessRunOutcome> StartAsync(Run run, string configPath, CancellationToken ct = default)
@@ -92,6 +100,20 @@ public sealed class HeadlessRunner : IHeadlessRunner
         // throw) wakes RunsController.Cancel's WaitForTerminalAsync.
         using var registration = _cancellation.Register(run.Id, ct);
         var execToken = registration.Token;
+
+        // EX.7 (rivoli-ai/andy-containers#328). Stage cross-container input
+        // artifacts into /workspace/.andy/inputs/ BEFORE spawning andy-cli.
+        // A missing/oversized/failed input fails the run start with a clear
+        // typed error — the agent must never start against an empty input.
+        // No inputs → no-op, spawn path unchanged.
+        var stagingFailure = await StageInputsAsync(run, containerId, configPath, execToken);
+        if (stagingFailure is not null)
+        {
+            sw.Stop();
+            return await TerminateAsync(run, RunEventKind.Failed, RunStatus.Failed,
+                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds, error: stagingFailure,
+                CancellationToken.None);
+        }
 
         var command = $"andy-cli run --headless --config {ShellEscape(configPath)}";
         var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
@@ -275,6 +297,84 @@ public sealed class HeadlessRunner : IHeadlessRunner
             _logger.LogWarning(ex,
                 "Run {RunId} could not transition {From} → {To}: {Message}",
                 run.Id, run.Status, next, ex.Message);
+        }
+    }
+
+    // EX.7 (rivoli-ai/andy-containers#328). Stage the run's declared input
+    // artifacts into the container before andy-cli spawns. Returns null on
+    // success (including the no-inputs / no-stager common case) or an
+    // actionable error string on failure (which the caller turns into a
+    // Failed terminal outcome). We source the inputs from the on-disk
+    // config the configurator just wrote — they went through the builder's
+    // path-traversal validation there.
+    private async Task<string?> StageInputsAsync(
+        Run run, Guid containerId, string configPath, CancellationToken ct)
+    {
+        IReadOnlyList<HeadlessInput>? inputs;
+        try
+        {
+            var json = await File.ReadAllTextAsync(configPath, ct);
+            var config = JsonSerializer.Deserialize<HeadlessRunConfig>(json, HeadlessConfigJson.Options);
+            inputs = config?.Inputs;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The config was unreadable. If the run declared inputs we
+            // cannot honour them, so fail rather than start without them;
+            // if it declared none, there's nothing to stage and we let the
+            // spawn proceed (a malformed config will surface as an andy-cli
+            // exit-code mismatch).
+            if (run.Inputs is { Count: > 0 })
+            {
+                _logger.LogError(ex,
+                    "EX.7: could not read inputs from config {Path} for Run {RunId}; failing run start.",
+                    configPath, run.Id);
+                return $"Could not read input config: {ex.Message}";
+            }
+            return null;
+        }
+
+        if (inputs is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        if (_inputStager is null)
+        {
+            _logger.LogError(
+                "EX.7: Run {RunId} declares {Count} input(s) but no input stager is wired; failing run start.",
+                run.Id, inputs.Count);
+            return "Run declares input artifacts but input staging is not available on this deployment.";
+        }
+
+        var container = await _db.Containers.FindAsync(new object[] { containerId }, ct);
+        if (container is null)
+        {
+            _logger.LogError(
+                "EX.7: Run {RunId} container {ContainerId} not found; cannot stage inputs.",
+                run.Id, containerId);
+            return $"Run container {containerId} not found; cannot stage inputs.";
+        }
+
+        try
+        {
+            await _inputStager.StageAsync(container, inputs, ct);
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (InputStagingException ex)
+        {
+            _logger.LogError(ex,
+                "EX.7: input staging failed for Run {RunId} (docs-ref {DocsRef}, dest '{Dest}', {Failure}): {Message}",
+                run.Id, ex.DocsRef, ex.DestRelativePath, ex.Failure, ex.Message);
+            return ex.Message;
         }
     }
 
