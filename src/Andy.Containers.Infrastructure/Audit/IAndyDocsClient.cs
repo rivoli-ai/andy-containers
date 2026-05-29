@@ -32,6 +32,66 @@ namespace Andy.Containers.Infrastructure.Audit;
 public interface IAndyDocsClient
 {
     Task<DocsRef?> UploadAsync(UploadRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// EX.7 (rivoli-ai/andy-containers#328). Download the current-version
+    /// bytes of an andy-docs document by id. Resolves the document's head
+    /// content-hash (<c>GET /api/documents/{id}</c>) and fetches that blob
+    /// (<c>GET /api/documents/{id}/at/{hash}:blob</c>).
+    ///
+    /// <para>
+    /// Unlike <see cref="UploadAsync"/> (best-effort, null-on-failure),
+    /// download is on the run-START critical path: a missing or failed
+    /// fetch MUST fail the run rather than start the agent with an empty
+    /// input. The return type therefore distinguishes the failure modes so
+    /// the caller can map each to a clear, typed run-start error:
+    /// <see cref="DocumentDownloadResult"/> carries either the bytes or a
+    /// <see cref="DocumentDownloadFailure"/>. The method throws only on
+    /// caller-initiated cancellation or programmer error.
+    /// </para>
+    /// </summary>
+    /// <param name="maxSizeBytes">
+    /// Hard cap on the downloaded payload. A document whose declared or
+    /// streamed size exceeds this returns
+    /// <see cref="DocumentDownloadFailure.TooLarge"/>.
+    /// </param>
+    Task<DocumentDownloadResult> DownloadAsync(
+        Guid documentId, long maxSizeBytes, CancellationToken ct = default);
+}
+
+/// <summary>
+/// EX.7 download outcome. Exactly one of <see cref="Content"/> /
+/// <see cref="Failure"/> is set: <see cref="Failure"/> is
+/// <see cref="DocumentDownloadFailure.None"/> on success.
+/// </summary>
+public sealed record DocumentDownloadResult(
+    DocumentDownloadFailure Failure,
+    ReadOnlyMemory<byte> Content,
+    string? MimeType)
+{
+    public bool IsSuccess => Failure == DocumentDownloadFailure.None;
+
+    public static DocumentDownloadResult Ok(ReadOnlyMemory<byte> content, string? mimeType) =>
+        new(DocumentDownloadFailure.None, content, mimeType);
+
+    public static DocumentDownloadResult Fail(DocumentDownloadFailure failure) =>
+        new(failure, ReadOnlyMemory<byte>.Empty, null);
+}
+
+/// <summary>EX.7 download failure classes, mapped to typed run-start errors by the stager.</summary>
+public enum DocumentDownloadFailure
+{
+    /// <summary>No failure — the result carries content.</summary>
+    None = 0,
+
+    /// <summary>Document id (or its head version) not found in andy-docs (404).</summary>
+    NotFound,
+
+    /// <summary>Document exceeds the configured input size cap.</summary>
+    TooLarge,
+
+    /// <summary>Transient / unexpected fetch failure (network error, 5xx, timeout, mis-shaped body).</summary>
+    FetchFailed,
 }
 
 /// <summary>

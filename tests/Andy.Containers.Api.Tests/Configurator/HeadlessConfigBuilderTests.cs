@@ -175,6 +175,116 @@ public class HeadlessConfigBuilderTests
         act.Should().Throw<ArgumentException>().WithMessage("*Run.Id*");
     }
 
+    // ----- EX.7 (rivoli-ai/andy-containers#328) inputs mapping -----
+
+    [Fact]
+    public void Build_NoInputs_OmitsInputsAndSerializesWithoutKey()
+    {
+        var run = SeedRun();
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Inputs.Should().BeNull("a run without inputs carries no inputs section");
+
+        var json = HeadlessConfigJson.Serialize(config);
+        json.Should().NotContain("\"inputs\"",
+            "the WhenWritingNull policy must drop the absent inputs key entirely");
+    }
+
+    [Fact]
+    public void Build_EmptyInputsCollapseToNull()
+    {
+        var run = SeedRun();
+        run.Inputs = Array.Empty<RunInput>();
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Inputs.Should().BeNull(
+            "empty inputs collapse to null, matching env_vars/boundaries posture");
+    }
+
+    [Fact]
+    public void Build_WithInputs_MapsAndSerializesSnakeCase()
+    {
+        var run = SeedRun();
+        var docA = Guid.NewGuid();
+        var docB = Guid.NewGuid();
+        run.Inputs = new[]
+        {
+            new RunInput(docA, "prior/report.json"),
+            new RunInput(docB, "context.md"),
+        };
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Inputs.Should().HaveCount(2);
+        config.Inputs![0].DocsRef.Should().Be(docA);
+        config.Inputs[0].DestRelativePath.Should().Be("prior/report.json");
+        config.Inputs[1].DocsRef.Should().Be(docB);
+        config.Inputs[1].DestRelativePath.Should().Be("context.md");
+
+        // Round-trips through the configurator's snake_case serializer with
+        // the AQ1 wire names docs_ref / dest_relative_path.
+        var json = HeadlessConfigJson.Serialize(config);
+        json.Should().Contain("\"inputs\"");
+        json.Should().Contain("\"docs_ref\"");
+        json.Should().Contain("\"dest_relative_path\"");
+        json.Should().Contain(docA.ToString());
+
+        // And deserializes back into an equivalent shape.
+        var roundTripped = System.Text.Json.JsonSerializer.Deserialize<HeadlessRunConfig>(
+            json, HeadlessConfigJson.Options);
+        roundTripped!.Inputs.Should().HaveCount(2);
+        roundTripped.Inputs![0].DocsRef.Should().Be(docA);
+        roundTripped.Inputs[0].DestRelativePath.Should().Be("prior/report.json");
+    }
+
+    [Fact]
+    public void Build_InputWithEmptyDocsRef_Throws()
+    {
+        var run = SeedRun();
+        run.Inputs = new[] { new RunInput(Guid.Empty, "x.json") };
+        var spec = TriageAgent();
+
+        var act = () => _builder.Build(run, spec);
+
+        act.Should().Throw<ArgumentException>().WithMessage("*DocsRef*");
+    }
+
+    [Theory]
+    [InlineData("/etc/passwd")]            // absolute path
+    [InlineData("../escape.txt")]          // leading traversal
+    [InlineData("a/../../b.txt")]          // mid-path traversal
+    [InlineData("..")]                     // bare traversal
+    [InlineData("C:/windows/x")]           // drive prefix
+    [InlineData("\\\\host\\share\\x")]     // UNC prefix
+    [InlineData("")]                       // empty
+    [InlineData("   ")]                    // whitespace
+    public void Build_InputWithTraversalOrAbsoluteDest_Throws(string dest)
+    {
+        var run = SeedRun();
+        run.Inputs = new[] { new RunInput(Guid.NewGuid(), dest) };
+        var spec = TriageAgent();
+
+        var act = () => _builder.Build(run, spec);
+
+        act.Should().Throw<ArgumentException>(
+            "a traversal/absolute dest must fail the run start, not escape the inputs root");
+    }
+
+    [Theory]
+    [InlineData("report.json", "report.json")]
+    [InlineData("sub/dir/data.bin", "sub/dir/data.bin")]
+    [InlineData("a//b.txt", "a/b.txt")]              // collapses empty segments
+    [InlineData("dir\\file.txt", "dir/file.txt")]    // backslash normalised
+    public void ValidateDestRelativePath_AcceptsAndCanonicalises(string raw, string expected)
+    {
+        HeadlessConfigBuilder.ValidateDestRelativePath(raw).Should().Be(expected);
+    }
+
     private static Run SeedRun() => new()
     {
         Id = Guid.NewGuid(),

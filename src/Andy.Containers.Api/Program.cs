@@ -472,6 +472,17 @@ try
     // (no AndyDocs:ApiBaseUrl) the collector emits metadata-only.
     builder.Services.AddScoped<IOutputArtifactCollector, FilesystemOutputArtifactCollector>();
 
+    // EX.7 (rivoli-ai/andy-containers#328). Input-artifact stager: the
+    // inverse of the collector. Before andy-cli spawns, it downloads each
+    // declared input's andy-docs document and writes it under
+    // /workspace/.andy/inputs/ inside the container. Scoped for the same
+    // reason as the collector (request-scoped IContainerService + logger).
+    // The optional IAndyDocsClient is shared with the collector; when no
+    // andy-docs is configured a run that declares inputs fails the run
+    // start (staging is impossible) — but a run with no inputs is
+    // unaffected.
+    builder.Services.AddScoped<IInputArtifactStager, FilesystemInputArtifactStager>();
+
     // AP5 (rivoli-ai/andy-containers#107). Mode dispatcher: selects the
     // run's container, transitions Pending → Provisioning, and routes
     // headless runs to the runner above (terminal/desktop modes branch

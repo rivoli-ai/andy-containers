@@ -386,6 +386,31 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
             {
                 e.Property(r => r.OutputArtifacts).HasColumnType(jsonColumnType);
             }
+
+            // Inputs (EX.7, rivoli-ai/andy-containers#328). Same JSON-column
+            // posture as OutputArtifacts: the declared cross-container input
+            // handoff is an append-only-ish list set by the caller, so a
+            // single JSON column avoids a per-field migration as RunInput
+            // grows. Mirrors the converter + sequence-equality comparer
+            // above.
+            var inputsConverter = new Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<
+                IReadOnlyList<RunInput>?, string?>(
+                v => v == null ? null : JsonSerializer.Serialize(v, jsonOpts),
+                v => string.IsNullOrEmpty(v)
+                    ? null
+                    : JsonSerializer.Deserialize<List<RunInput>>(v, jsonOpts));
+            var inputsComparer = new ValueComparer<IReadOnlyList<RunInput>?>(
+                (a, b) => ReferenceEquals(a, b) || (a != null && b != null && a.SequenceEqual(b)),
+                v => v == null ? 0 : v.Aggregate(0, (h, x) => HashCode.Combine(h, x.GetHashCode())),
+                v => v == null ? null : v.ToList());
+            var inputsProp = e.Property(r => r.Inputs)
+                .HasConversion(inputsConverter)
+                .Metadata;
+            inputsProp.SetValueComparer(inputsComparer);
+            if (jsonColumnType != null)
+            {
+                e.Property(r => r.Inputs).HasColumnType(jsonColumnType);
+            }
         });
 
         // EnvironmentProfile — catalog of runtime shapes (X1, rivoli-ai/andy-containers#90).

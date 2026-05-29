@@ -288,4 +288,207 @@ public class AndyDocsHttpClientTests
             throw _exception;
         }
     }
+
+    // ----- EX.7 (rivoli-ai/andy-containers#328) DownloadAsync -----
+    //
+    // Download is a two-hop fetch against the REAL andy-docs wire shape:
+    //   GET /api/documents/{id}          -> DocumentDto { contentHash, ... }
+    //   GET /api/documents/{id}/at/{h}:blob -> raw bytes
+    // The router handler below impersonates both endpoints (including the
+    // 404 / non-JSON / oversized failure modes the real server emits) so
+    // the whole client chain is exercised, not just a mocked happy path.
+
+    private sealed class RouterHandler : HttpMessageHandler
+    {
+        public Func<HttpRequestMessage, HttpResponseMessage> Route { get; init; }
+            = _ => new HttpResponseMessage(HttpStatusCode.OK);
+        public List<string> Paths { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Paths.Add(request.RequestUri!.AbsolutePath);
+            return Task.FromResult(Route(request));
+        }
+    }
+
+    private static HttpResponseMessage MetaResponse(string contentHash) =>
+        new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new
+                {
+                    id = Guid.NewGuid(),
+                    parentFolderId = (Guid?)null,
+                    name = "prior.json",
+                    contentHash,
+                    title = "Prior output",
+                    content = (string?)null,
+                    createdAt = DateTime.UtcNow,
+                }),
+                Encoding.UTF8, "application/json"),
+        };
+
+    private static HttpResponseMessage BlobResponse(byte[] bytes, string mime = "text/plain", long? contentLength = null)
+    {
+        var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mime);
+        if (contentLength is { } len) content.Headers.ContentLength = len;
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+    }
+
+    [Fact]
+    public async Task DownloadAsync_HappyPath_ResolvesHashThenFetchesBlob()
+    {
+        var docId = Guid.NewGuid();
+        var hash = new string('f', 64);
+        var payload = Encoding.UTF8.GetBytes("prior task output");
+
+        var handler = new RouterHandler
+        {
+            Route = req => req.RequestUri!.AbsolutePath.EndsWith(":blob")
+                ? BlobResponse(payload, "application/json")
+                : MetaResponse(hash),
+        };
+        var client = MakeClient(handler);
+
+        var result = await client.DownloadAsync(docId, maxSizeBytes: 1024);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Content.ToArray().Should().BeEquivalentTo(payload);
+        result.MimeType.Should().Be("application/json");
+
+        // Two hops, in order, against the real andy-docs paths.
+        handler.Paths.Should().HaveCount(2);
+        handler.Paths[0].Should().Be($"/api/documents/{docId}");
+        handler.Paths[1].Should().Be($"/api/documents/{docId}/at/{hash}:blob");
+    }
+
+    [Fact]
+    public async Task DownloadAsync_DocumentNotFound_ReturnsNotFound_WithoutBlobFetch()
+    {
+        var docId = Guid.NewGuid();
+        var handler = new RouterHandler
+        {
+            Route = _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+        };
+        var client = MakeClient(handler);
+
+        var result = await client.DownloadAsync(docId, maxSizeBytes: 1024);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Failure.Should().Be(DocumentDownloadFailure.NotFound);
+        handler.Paths.Should().ContainSingle("the metadata 404 must short-circuit before the blob hop");
+    }
+
+    [Fact]
+    public async Task DownloadAsync_BlobNotFound_ReturnsNotFound()
+    {
+        var docId = Guid.NewGuid();
+        var hash = new string('a', 64);
+        var handler = new RouterHandler
+        {
+            Route = req => req.RequestUri!.AbsolutePath.EndsWith(":blob")
+                ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                : MetaResponse(hash),
+        };
+        var client = MakeClient(handler);
+
+        var result = await client.DownloadAsync(docId, maxSizeBytes: 1024);
+
+        result.Failure.Should().Be(DocumentDownloadFailure.NotFound);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_DeclaredContentLengthOverCap_ReturnsTooLarge()
+    {
+        var docId = Guid.NewGuid();
+        var hash = new string('a', 64);
+        var handler = new RouterHandler
+        {
+            Route = req => req.RequestUri!.AbsolutePath.EndsWith(":blob")
+                ? BlobResponse(new byte[] { 1, 2, 3 }, contentLength: 10_000)
+                : MetaResponse(hash),
+        };
+        var client = MakeClient(handler);
+
+        var result = await client.DownloadAsync(docId, maxSizeBytes: 100);
+
+        result.Failure.Should().Be(DocumentDownloadFailure.TooLarge);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_StreamedBytesExceedCap_ReturnsTooLarge()
+    {
+        // No Content-Length advertised (server lied / chunked) but the
+        // streamed body blows the cap — the capped reader must catch it.
+        var docId = Guid.NewGuid();
+        var hash = new string('a', 64);
+        var big = new byte[500];
+        var handler = new RouterHandler
+        {
+            Route = req => req.RequestUri!.AbsolutePath.EndsWith(":blob")
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(big) }
+                : MetaResponse(hash),
+        };
+        var client = MakeClient(handler);
+
+        var result = await client.DownloadAsync(docId, maxSizeBytes: 100);
+
+        result.Failure.Should().Be(DocumentDownloadFailure.TooLarge);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_MetadataMissingContentHash_ReturnsFetchFailed()
+    {
+        // Empty document (no head version) → no contentHash to fetch.
+        var docId = Guid.NewGuid();
+        var handler = new RouterHandler
+        {
+            Route = _ => MetaResponse(contentHash: ""),
+        };
+        var client = MakeClient(handler);
+
+        var result = await client.DownloadAsync(docId, maxSizeBytes: 1024);
+
+        result.Failure.Should().Be(DocumentDownloadFailure.FetchFailed);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task DownloadAsync_Metadata5xx_ReturnsFetchFailed(HttpStatusCode status)
+    {
+        var docId = Guid.NewGuid();
+        var handler = new RouterHandler
+        {
+            Route = _ => new HttpResponseMessage(status) { Content = new StringContent("boom") },
+        };
+        var client = MakeClient(handler);
+
+        var result = await client.DownloadAsync(docId, maxSizeBytes: 1024);
+
+        result.Failure.Should().Be(DocumentDownloadFailure.FetchFailed);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_TransportError_ReturnsFetchFailed()
+    {
+        var client = MakeClient(new ThrowingHandler(new HttpRequestException("connection refused")));
+
+        var result = await client.DownloadAsync(Guid.NewGuid(), maxSizeBytes: 1024);
+
+        result.Failure.Should().Be(DocumentDownloadFailure.FetchFailed);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_EmptyDocumentId_Throws()
+    {
+        var client = MakeClient(new RouterHandler());
+
+        var act = () => client.DownloadAsync(Guid.Empty, maxSizeBytes: 1024);
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
 }
