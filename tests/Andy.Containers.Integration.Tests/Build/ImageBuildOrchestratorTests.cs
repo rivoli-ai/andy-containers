@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 using Andy.Containers.Abstractions.Images;
+using Andy.Containers.Infrastructure.Audit;
 using Andy.Containers.Infrastructure.Build;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Registries;
@@ -393,6 +394,195 @@ public class ImageBuildOrchestratorTests : IAsyncLifetime
 
         captured.Should().NotBeNull();
         captured!.Files.Should().BeEmpty();
+    }
+
+    // rivoli-ai/andy-containers#320 (build-log companion). On a
+    // successful build the orchestrator captures the engine's stdout
+    // from the progress stream, persists it onto
+    // BuildArtifactEntity.BuildLog, uploads it to andy-docs, and
+    // stamps the returned DocsRef onto the row.
+    [Fact]
+    public async Task BuildAsync_WithAndyDocsClient_UploadsBuildLogAndStampsDocsRef()
+    {
+        SetupBackendBuildsWithLog("andy-build:tmp", "sha256:test-hash",
+            "Step 1/3 : FROM ubuntu:24.04", "Step 2/3 : RUN apt-get update", "Step 3/3 : done");
+        SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+        var docId = Guid.NewGuid();
+        var linkId = Guid.NewGuid();
+        UploadRequest? captured = null;
+        var docs = new Mock<IAndyDocsClient>();
+        docs.Setup(d => d.UploadAsync(It.IsAny<UploadRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<UploadRequest, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new DocsRef(docId, linkId));
+
+        var orchestrator = BuildOrchestratorWithDocs(docs.Object);
+
+        var result = await orchestrator.BuildAsync(
+            new ImageBuildRequest(_templateId, null, false, "user"),
+            new Progress<BuildProgressEvent>(_ => { }),
+            CancellationToken.None);
+
+        result.Status.Should().Be(BuildResultStatus.Succeeded);
+
+        var entity = await _db.BuildArtifacts.SingleAsync(b => b.Digest == "sha256:abc");
+        entity.BuildLog.Should().Contain("Step 2/3 : RUN apt-get update");
+        entity.BuildLogDocsRef.Should().NotBeNull();
+        entity.BuildLogDocsRef!.DocumentId.Should().Be(docId);
+        entity.BuildLogDocsRef.LinkId.Should().Be(linkId);
+
+        // Upload request shape: text log, BuildArtifact-scoped link.
+        captured.Should().NotBeNull();
+        captured!.MimeType.Should().StartWith("text/plain");
+        captured.Name.Should().Be("test.build.log");
+        captured.Links.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo(new DocumentLinkDescriptor(
+                "BuildArtifact", entity.Id.ToString(), "BuildLog"));
+    }
+
+    // Best-effort contract: a throwing andy-docs client must NOT fail
+    // the build. The log is still persisted inline; only the DocsRef
+    // is left null.
+    [Fact]
+    public async Task BuildAsync_AndyDocsClientThrows_BuildSucceedsWithBuildLogButNullDocsRef()
+    {
+        SetupBackendBuildsWithLog("andy-build:tmp", "sha256:test-hash", "building...");
+        SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+        var docs = new Mock<IAndyDocsClient>();
+        docs.Setup(d => d.UploadAsync(It.IsAny<UploadRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("andy-docs down"));
+
+        var orchestrator = BuildOrchestratorWithDocs(docs.Object);
+
+        var result = await orchestrator.BuildAsync(
+            new ImageBuildRequest(_templateId, null, false, "user"),
+            new Progress<BuildProgressEvent>(_ => { }),
+            CancellationToken.None);
+
+        result.Status.Should().Be(BuildResultStatus.Succeeded,
+            "andy-docs availability must never block a build (best-effort upload).");
+        var entity = await _db.BuildArtifacts.SingleAsync(b => b.Digest == "sha256:abc");
+        entity.BuildLog.Should().Contain("building...");
+        entity.BuildLogDocsRef.Should().BeNull();
+    }
+
+    // UploadAsync returns null (its own best-effort fallback for a 5xx
+    // / timeout / mis-shaped body) — same outcome: inline log, no ref.
+    [Fact]
+    public async Task BuildAsync_AndyDocsUploadReturnsNull_PersistsBuildLogWithNullDocsRef()
+    {
+        SetupBackendBuildsWithLog("andy-build:tmp", "sha256:test-hash", "building...");
+        SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+        var docs = new Mock<IAndyDocsClient>();
+        docs.Setup(d => d.UploadAsync(It.IsAny<UploadRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DocsRef?)null);
+
+        var orchestrator = BuildOrchestratorWithDocs(docs.Object);
+
+        await orchestrator.BuildAsync(
+            new ImageBuildRequest(_templateId, null, false, "user"),
+            new Progress<BuildProgressEvent>(_ => { }),
+            CancellationToken.None);
+
+        var entity = await _db.BuildArtifacts.SingleAsync(b => b.Digest == "sha256:abc");
+        entity.BuildLog.Should().Contain("building...");
+        entity.BuildLogDocsRef.Should().BeNull();
+    }
+
+    // No andy-docs client registered (dev / embedded mode): the
+    // orchestrator still captures + persists BuildLog from the progress
+    // stream, just without a DocsRef. Uses the default _orchestrator,
+    // which is constructed without an IAndyDocsClient.
+    [Fact]
+    public async Task BuildAsync_NoAndyDocsClient_PersistsBuildLogWithoutDocsRef()
+    {
+        SetupBackendBuildsWithLog("andy-build:tmp", "sha256:test-hash", "building without docs...");
+        SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+        await _orchestrator.BuildAsync(
+            new ImageBuildRequest(_templateId, null, false, "user"),
+            new Progress<BuildProgressEvent>(_ => { }),
+            CancellationToken.None);
+
+        var entity = await _db.BuildArtifacts.SingleAsync(b => b.Digest == "sha256:abc");
+        entity.BuildLog.Should().Contain("building without docs...");
+        entity.BuildLogDocsRef.Should().BeNull();
+    }
+
+    // The orchestrator must keep forwarding every progress event to the
+    // caller's IProgress unchanged while side-channeling stdout into the
+    // captured log (the SSE stream behaviour is unchanged by #320).
+    [Fact]
+    public async Task BuildAsync_TeesProgressEvents_ToCallerWhileCapturingLog()
+    {
+        SetupBackendBuildsWithLog("andy-build:tmp", "sha256:test-hash", "line-a", "line-b");
+        SetupAdapterPush("local-zot", "test", "sha256-test-hash", returnedDigest: "sha256:abc");
+
+        var seen = new List<BuildProgressEvent>();
+        await _orchestrator.BuildAsync(
+            new ImageBuildRequest(_templateId, null, false, "user"),
+            new Progress<BuildProgressEvent>(seen.Add),
+            CancellationToken.None);
+
+        // Progress<T> marshals callbacks via the sync context; give the
+        // posted callbacks a chance to drain before asserting.
+        await Task.Yield();
+        seen.OfType<BuildStepStdoutEvent>().Select(e => e.Line)
+            .Should().Contain(new[] { "line-a", "line-b" });
+    }
+
+    private ImageBuildOrchestrator BuildOrchestratorWithDocs(IAndyDocsClient docs)
+    {
+        var services = new ServiceCollection();
+        services.AddImageManagement();
+        services.Configure<RegistryConfigurationOptions>(opts =>
+        {
+            opts.PrimaryRegistryId = "local-zot";
+            opts.Registries.Add(new RegistryConfigEntry
+            {
+                Id = "local-zot",
+                Kind = "zot",
+                Url = "http://localhost:5050",
+                IsPrimary = true,
+            });
+        });
+        var registries = services.BuildServiceProvider().GetRequiredService<IRegistryConfiguration>();
+        return new ImageBuildOrchestrator(
+            _db, _store, registries, [_adapter.Object], _backend.Object,
+            NullLogger<ImageBuildOrchestrator>.Instance, docs);
+    }
+
+    // Like SetupBackendBuilds but also reports the given lines as
+    // BuildStepStdoutEvents through the progress arg, so the
+    // orchestrator's log-capture path has something to collect.
+    private void SetupBackendBuildsWithLog(string localTag, string specHash, params string[] stdoutLines)
+    {
+        _backend.Setup(b => b.BuildAsync(
+                It.IsAny<TemplateSpec>(),
+                It.IsAny<IBuildContext>(),
+                It.IsAny<IProgress<BuildProgressEvent>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<TemplateSpec, IBuildContext, IProgress<BuildProgressEvent>, CancellationToken>(
+                (_, _, progress, _) =>
+                {
+                    foreach (var line in stdoutLines)
+                    {
+                        progress.Report(new BuildStepStdoutEvent
+                        {
+                            Timestamp = DateTimeOffset.UtcNow,
+                            StepName = "build",
+                            Line = line,
+                        });
+                    }
+                })
+            .ReturnsAsync(new BuildArtifact(
+                Digest: string.Empty,
+                MediaType: "application/vnd.oci.image.manifest.v1+json",
+                SizeBytes: 1000,
+                SpecHash: specHash,
+                LocalReference: localTag));
     }
 
     private void SetupBackendBuilds(string localTag, string specHash)

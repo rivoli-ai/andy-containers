@@ -1,3 +1,5 @@
+using Andy.Containers.Models;
+
 namespace Andy.Containers.Models.ImageManagement;
 
 /// <summary>
@@ -76,12 +78,37 @@ public class BuildArtifactEntity
     public DateTime BuiltAt { get; set; }
 
     /// <summary>
-    /// Captured stdout/stderr from the build engine on failure.
-    /// Populated when <c>BuildArtifactEntity</c> is created for a
-    /// failed build (so the API can surface the log via 422). Null on
-    /// successful builds.
+    /// Captured stdout/stderr from the build engine. Populated by
+    /// <c>ImageBuildOrchestrator</c> from the build progress stream
+    /// (<c>BuildStepStdoutEvent</c> / <c>BuildStepErrorEvent</c>),
+    /// truncated to a bounded size. Null when the build produced no
+    /// log output (or for legacy rows persisted before #320's build-log
+    /// capture landed). The full, untruncated log is also uploaded to
+    /// andy-docs — see <see cref="BuildLogDocsRef"/>.
     /// </summary>
     public string? BuildLog { get; set; }
+
+    /// <summary>
+    /// rivoli-ai/andy-containers#320 (build-log companion to the
+    /// OutputArtifact byte-upload). Pointer into andy-docs for the
+    /// uploaded <see cref="BuildLog"/>, stamped by
+    /// <c>ImageBuildOrchestrator</c> after a successful
+    /// <c>POST /api/documents:put</c>. <c>null</c> when:
+    /// <list type="bullet">
+    ///   <item>The orchestrator ran with no <c>IAndyDocsClient</c>
+    ///   registered (no <c>AndyDocs:ApiBaseUrl</c> — dev / embedded
+    ///   mode; <see cref="BuildLog"/> is still persisted inline).</item>
+    ///   <item>The andy-docs upload failed (transient network error,
+    ///   5xx, timeout). The build still succeeds and
+    ///   <see cref="BuildLog"/> is persisted inline; consumers treat a
+    ///   null ref as "log not pinned in andy-docs".</item>
+    ///   <item>The build produced no log to upload.</item>
+    /// </list>
+    /// Mapped as an EF owned type onto two nullable columns
+    /// (<c>BuildLogDocsRefDocumentId</c> / <c>BuildLogDocsRefLinkId</c>);
+    /// best-effort, so andy-docs availability never blocks a build.
+    /// </summary>
+    public DocsRef? BuildLogDocsRef { get; set; }
 
     /// <summary>References pointing at this artifact across registries.</summary>
     public ICollection<RegistryReferenceEntity> References { get; set; } = [];
