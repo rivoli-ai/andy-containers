@@ -149,6 +149,16 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(b => b.SpecHash);
             e.HasIndex(b => new { b.TemplateId, b.SpecHash });
             e.HasOne(b => b.Template).WithMany().HasForeignKey(b => b.TemplateId);
+            // #320 build-log companion. DocsRef is an optional owned
+            // value (pointer into andy-docs for the uploaded BuildLog).
+            // Flattened onto two nullable columns; an all-null pair maps
+            // back to a null BuildLogDocsRef, matching the best-effort
+            // "log not pinned" case.
+            e.OwnsOne(b => b.BuildLogDocsRef, dr =>
+            {
+                dr.Property(d => d.DocumentId).HasColumnName("BuildLogDocsRefDocumentId");
+                dr.Property(d => d.LinkId).HasColumnName("BuildLogDocsRefLinkId");
+            });
         });
 
         // IM3 (#252). RegistryReferenceEntity — many references per

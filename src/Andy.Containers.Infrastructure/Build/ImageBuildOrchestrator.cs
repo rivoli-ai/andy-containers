@@ -1,4 +1,6 @@
+using System.Text;
 using Andy.Containers.Abstractions.Images;
+using Andy.Containers.Infrastructure.Audit;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Registries;
 using Andy.Containers.Models;
@@ -27,12 +29,23 @@ namespace Andy.Containers.Infrastructure.Build;
 /// </remarks>
 public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
 {
+    // rivoli-ai/andy-containers#320. Hard cap on the captured build
+    // log — bounds both the persisted BuildArtifactEntity.BuildLog
+    // column and the andy-docs upload payload. 256 KiB comfortably
+    // holds a verbose multi-step build's output while keeping the DB
+    // row and the in-memory buffer bounded. The legacy
+    // TemplateBuildService caps at 50 KiB; we're more generous here
+    // because the orchestrator path streams structured step events
+    // rather than raw daemon noise.
+    private const int MaxBuildLogBytes = 256 * 1024;
+
     private readonly ContainersDbContext _db;
     private readonly IBuildArtifactStore _store;
     private readonly IRegistryConfiguration _registries;
     private readonly IEnumerable<IRegistryAdapter> _adapters;
     private readonly IBuildBackend _backend;
     private readonly ILogger<ImageBuildOrchestrator> _logger;
+    private readonly IAndyDocsClient? _andyDocs;
 
     public ImageBuildOrchestrator(
         ContainersDbContext db,
@@ -40,7 +53,8 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
         IRegistryConfiguration registries,
         IEnumerable<IRegistryAdapter> adapters,
         IBuildBackend backend,
-        ILogger<ImageBuildOrchestrator> logger)
+        ILogger<ImageBuildOrchestrator> logger,
+        IAndyDocsClient? andyDocs = null)
     {
         _db = db;
         _store = store;
@@ -48,6 +62,12 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
         _adapters = adapters;
         _backend = backend;
         _logger = logger;
+        // rivoli-ai/andy-containers#320. Optional. When null (no
+        // AndyDocs:ApiBaseUrl registered — dev / embedded mode), the
+        // orchestrator still captures and persists BuildLog inline but
+        // leaves BuildLogDocsRef null. Mirrors the
+        // FilesystemOutputArtifactCollector posture for OutputArtifacts.
+        _andyDocs = andyDocs;
     }
 
     public async Task<BuildResult?> TryCacheHitAsync(
@@ -187,13 +207,24 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
             // `install-assistants.sh` to land in the build context.
             var context = StagedBuildContext.ForTemplate(contextDir, template.UploadedFilesPath, _logger);
 
+            // rivoli-ai/andy-containers#320. Tee the progress stream so
+            // we accumulate the build engine's stdout / step errors into
+            // a bounded buffer while still forwarding every event to the
+            // caller's SSE-backed IProgress unchanged. The captured log
+            // is persisted onto the BuildArtifactEntity and uploaded to
+            // andy-docs below.
+            var logCapture = new BuildLogCapture(MaxBuildLogBytes);
+            var teedProgress = new CapturingProgress(progress, logCapture);
+
             try
             {
-                var artifact = await _backend.BuildAsync(spec, context, progress, ct);
+                var artifact = await _backend.BuildAsync(spec, context, teedProgress, ct);
 
                 var repoPath = template.Code;
                 var tag = ToTagFromHash(template.SpecHash ?? artifact.SpecHash);
                 var reference = await adapter.PushAsync(artifact, repoPath, tag, ct);
+
+                var buildLog = logCapture.ToLogOrNull();
 
                 var entity = new BuildArtifactEntity
                 {
@@ -206,6 +237,10 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
                     BuildBackendId = _backend.BackendId,
                     BuiltBy = request.RequestedBy,
                     BuiltAt = DateTime.UtcNow,
+                    // Persist the captured log inline so consumers without
+                    // andy-docs (or when the upload below fails) still see
+                    // it. BuildLogDocsRef is stamped after the upload.
+                    BuildLog = buildLog,
                 };
                 await _store.AddAsync(entity, ct);
 
@@ -242,6 +277,14 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
                     };
                     await _store.AddReferenceAsync(entity.Id, refEntity, ct);
                 }
+
+                // rivoli-ai/andy-containers#320. Best-effort: push the
+                // captured build log to andy-docs and stamp the returned
+                // DocsRef onto the persisted entity. A null client (no
+                // AndyDocs:ApiBaseUrl), an empty log, or any upload
+                // failure leaves BuildLogDocsRef null — the build result
+                // is never affected.
+                await TryAttachBuildLogDocsRefAsync(entity, template, buildLog, ct);
 
                 return new BuildResult
                 {
@@ -287,9 +330,126 @@ public sealed class ImageBuildOrchestrator : IImageBuildOrchestrator
         }
     }
 
+    // rivoli-ai/andy-containers#320. Upload the captured build log to
+    // andy-docs and stamp the returned DocsRef onto the entity.
+    // Strictly best-effort — every failure mode collapses to "leave
+    // BuildLogDocsRef null + log a warning"; a build must never fail
+    // because andy-docs is unreachable. Cancellation is the one
+    // exception we let propagate so the caller can abort cleanly.
+    private async Task TryAttachBuildLogDocsRefAsync(
+        BuildArtifactEntity entity,
+        ContainerTemplate template,
+        string? buildLog,
+        CancellationToken ct)
+    {
+        // No client wired (dev / embedded mode) or nothing to upload.
+        if (_andyDocs is null || string.IsNullOrEmpty(buildLog))
+        {
+            return;
+        }
+
+        DocsRef? docsRef;
+        try
+        {
+            var request = new UploadRequest(
+                Content: Encoding.UTF8.GetBytes(buildLog),
+                MimeType: "text/plain; charset=utf-8",
+                Name: $"{template.Code}.build.log",
+                Digest: entity.Digest,
+                Links: new[]
+                {
+                    new DocumentLinkDescriptor(
+                        TargetType: "BuildArtifact",
+                        TargetId: entity.Id.ToString(),
+                        Role: "BuildLog"),
+                });
+            docsRef = await _andyDocs.UploadAsync(request, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to upload build log for artifact {Digest} (template {Code}) to andy-docs; leaving BuildLogDocsRef null.",
+                entity.Digest, template.Code);
+            return;
+        }
+
+        if (docsRef is null)
+        {
+            // UploadAsync already logged the specific failure; nothing
+            // more to do — the inline BuildLog remains the fallback.
+            return;
+        }
+
+        entity.BuildLogDocsRef = docsRef;
+        await _db.SaveChangesAsync(ct);
+    }
+
     private IRegistryAdapter? ResolveAdapter(string registryId)
         => _adapters.FirstOrDefault(a =>
             string.Equals(a.RegistryId, registryId, StringComparison.OrdinalIgnoreCase));
+
+    // rivoli-ai/andy-containers#320. Accumulates build-engine output
+    // from the progress stream into a UTF-8-bounded buffer. Once the
+    // byte cap is reached further lines are dropped (the head of the
+    // log is the most useful for diagnosing a build), with a single
+    // truncation marker appended. Not thread-safe by design: a single
+    // build's IProgress callbacks are marshalled sequentially.
+    private sealed class BuildLogCapture(int maxBytes)
+    {
+        private readonly StringBuilder _sb = new();
+        private int _bytes;
+        private bool _truncated;
+
+        public void Append(string line)
+        {
+            if (_truncated || string.IsNullOrEmpty(line))
+            {
+                return;
+            }
+            // +1 for the newline we add between lines. Approximate the
+            // byte cost with the UTF-8 length so multi-byte output is
+            // bounded too.
+            var cost = Encoding.UTF8.GetByteCount(line) + 1;
+            if (_bytes + cost > maxBytes)
+            {
+                _sb.Append("\n…[build log truncated]");
+                _truncated = true;
+                return;
+            }
+            if (_sb.Length > 0) _sb.Append('\n');
+            _sb.Append(line);
+            _bytes += cost;
+        }
+
+        public string? ToLogOrNull() => _sb.Length == 0 ? null : _sb.ToString();
+    }
+
+    // rivoli-ai/andy-containers#320. Decorator over the caller's
+    // IProgress that forwards every event unchanged while side-channeling
+    // stdout / step-error text into a BuildLogCapture. Keeps the SSE
+    // stream behaviour identical to the pre-#320 path.
+    private sealed class CapturingProgress(
+        IProgress<BuildProgressEvent> inner,
+        BuildLogCapture capture) : IProgress<BuildProgressEvent>
+    {
+        public void Report(BuildProgressEvent value)
+        {
+            switch (value)
+            {
+                case BuildStepStdoutEvent stdout:
+                    capture.Append(stdout.Line);
+                    break;
+                case BuildStepErrorEvent error:
+                    capture.Append(error.Message);
+                    break;
+            }
+            inner.Report(value);
+        }
+    }
 
     private static TemplateSpec MapToSpec(ContainerTemplate t)
     {
