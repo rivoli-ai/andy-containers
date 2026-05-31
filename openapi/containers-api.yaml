@@ -563,6 +563,55 @@ paths:
         '404':
           description: No run with that id
 
+  /api/runs/{id}/output:
+    get:
+      tags: [Runs]
+      summary: Stream MID-RUN agent stdout/stderr as Server-Sent Events
+      description: |
+        F4.1 (rivoli-ai/conductor#1934). A live feed of the headless
+        agent's stdout/stderr while the run is in flight — distinct from
+        `/events`, which only surfaces terminal lifecycle events. Each SSE
+        frame is:
+
+        ```
+        id: <sequence>
+        event: log
+        data: {"stream":"stdout","line":"...","timestamp":"2026-..."}
+        ```
+
+        `id:` is a monotonic per-run sequence number; reconnect via the
+        `Last-Event-ID` request header to resume after the last line seen
+        (no duplicates, no gaps; restarts from the oldest buffered line if
+        the id has aged out of the ring buffer). `stream` distinguishes
+        stdout from stderr. The stream closes after the run reaches a
+        terminal status and a final drain pass (matching the `/events`
+        terminal-stop contract). Run-scoped tokens (`ANDY_TOKEN`) are
+        redacted before any line reaches the wire. Gated on `run:read`;
+        returns 404 if the run is unknown.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Resume after this per-run sequence number.
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: SSE stream of run output lines (`text/event-stream`)
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  id: 1
+                  event: log
+                  data: {"stream":"stdout","line":"Iteration 1/4","timestamp":"2026-05-31T12:00:00Z"}
+        '404':
+          description: No run with that id
+
   # --- Images ---
   # --- IM5 (#254) — Template registration via YAML --------------
   # Multipart variant lands the spec + any uploaded files in one

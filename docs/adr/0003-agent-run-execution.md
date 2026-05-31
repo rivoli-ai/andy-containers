@@ -68,6 +68,17 @@ Collapsing them would force one of the three into the wrong scope and silently b
 
 Rejected — the subject must key on `Run.Id`, not `Container.Id`. A container can host multiple runs (sequential or — once per-container concurrency lands — parallel); subscribers need to correlate to the specific run. AP6 introduced `AppendAgentRunEvent` keyed on `Run.Id` while leaving the container-lifecycle helper (`AppendRunEvent`) keyed on `Container.Id`. Same outbox table, different correlation.
 
+## Amendment — F4.1 mid-run output stream (rivoli-ai/conductor#1934)
+
+The original AP9 event stream only surfaces **terminal** observations (`run.{id}.finished|failed|cancelled|timeout`). F4.1 adds a **mid-run** incremental stdout/stderr feed so an operator (or the TX Task Execution Cockpit) can watch a headless run's progress live, not just learn the outcome after it ends.
+
+Two shapes were considered:
+
+1. **Run-scoped output events** — a dedicated per-run live feed (`GET /api/runs/{id}/output`, SSE) carrying `andy-cli` stdout/stderr line-by-line with a monotonic sequence number, resumable via `Last-Event-ID`.
+2. **Container-logs SSE** — `GET /api/containers/{id}/logs?follow=1` over the run's container, framing the run feed as "logs of the container backing this run".
+
+**Decision: shape (1).** A run-scoped endpoint keeps the credential-redaction boundary and the `run:read` permission gate aligned with the existing `/api/runs/{id}/events`, and keeps the resumption cursor a clean per-run sequence rather than a container-log offset. The streaming plumbing is provider-agnostic: `IContainerService.ExecStreamingAsync` / `IInfrastructureProvider.ExecStreamingAsync` read the **same** `ExecCreate` + `StartAndAttach` surface incrementally (no new Docker-Engine verb — Conductor decision #17), Docker overrides for a true live tail, and every other provider inherits the interface-default buffered replay. Lines fan out through `IRunOutputBus` (`InMemoryRunOutputBus`), a direct sibling of IM9's `InMemoryBuildEventBus`: per-run ring buffer for late-subscriber catch-up, bounded per-subscriber channels that drop rather than backpressure the runner, and a terminal marker that drains then closes — the same terminal-stop contract as `RunEventStream`. `RunOutputRedactor` masks `ANDY_TOKEN` (literal + env-echo shapes) before any line reaches the wire. Shape (2) can still be layered on later as a thin alias over the same bus should a pure container-logs consumer need it; the bus contract is deliberately runtime-agnostic so that swap requires no runner change.
+
 ## Consequences
 
 ### Positive
@@ -95,6 +106,7 @@ Rejected — the subject must key on `Run.Id`, not `Container.Id`. A container c
 - **AP8 — MCP tools:** `src/Andy.Containers.Api/Mcp/RunsMcpTools.cs`.
 - **AP9 — CLI + NDJSON event stream:** `src/Andy.Containers.Cli/Commands/RunCommands.cs`, `src/Andy.Containers.Api/Services/RunEventStream.cs`.
 - **AP10 — secrets scope:** `src/Andy.Containers/Configurator/ITokenIssuer.cs`.
+- **F4.1 — mid-run output stream:** `src/Andy.Containers/Storage/IRunOutputBus.cs`, `src/Andy.Containers.Infrastructure/Runs/Events/InMemoryRunOutputBus.cs`, `src/Andy.Containers.Api/Services/RunOutputSse.cs`, `src/Andy.Containers.Api/Services/RunOutputRedactor.cs`. Endpoint: `GET /api/runs/{id}/output`. See `docs/runs.md` "Mid-run output stream".
 - **AP11 — OpenAPI:** `openapi/containers-api.yaml` (`/api/runs*` paths and schemas).
 - **AP12 — golden-file conformance:** `tests/Andy.Containers.Api.Tests/Configurator/HeadlessConfigBuilderGoldenFileTests.cs`.
 - **AQ1 (andy-cli) — headless config schema:** see the `andy-cli` repo for the JSON schema andy-containers writes against.

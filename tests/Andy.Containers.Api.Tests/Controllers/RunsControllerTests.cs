@@ -4,6 +4,7 @@ using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Infrastructure.Runs.Events;
 using Andy.Containers.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
@@ -57,6 +58,7 @@ public class RunsControllerTests : IDisposable
         _cancellation = new RunCancellationRegistry();
         _controller = new RunsController(
             _db, _configurator.Object, _dispatcher.Object, _cancellation,
+            new InMemoryRunOutputBus(),
             NullLogger<RunsController>.Instance);
     }
 
@@ -375,6 +377,7 @@ public class RunsControllerTests : IDisposable
 
         var controller = new RunsController(
             _db, _configurator.Object, _dispatcher.Object, registry.Object,
+            new InMemoryRunOutputBus(),
             NullLogger<RunsController>.Instance);
 
         var result = await controller.Cancel(run.Id, CancellationToken.None);

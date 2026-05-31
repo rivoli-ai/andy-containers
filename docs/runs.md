@@ -150,12 +150,36 @@ For HTTP / MCP / CLI consumers that want a per-run filtered view of the same str
 
 The shared implementation lives in `RunEventStream.AsyncEnumerate` so all three surfaces have one polling loop and one terminal-stop policy.
 
+### Mid-run output stream (F4.1, rivoli-ai/conductor#1934)
+
+The lifecycle event stream above only surfaces **terminal** observations — nothing arrives until the run is over. For a **live** view of the agent's progress while a headless run is in flight, andy-containers also exposes the agent's stdout/stderr line-by-line as it is produced:
+
+```
+GET /api/runs/{id}/output      (text/event-stream, run:read)
+```
+
+Wire format (SSE), one frame per output line, mirroring the build-progress SSE bus (IM9 / `InMemoryBuildEventBus`):
+
+```
+id: <sequence>
+event: log
+data: {"stream":"stdout","line":"Iteration 2/4","timestamp":"2026-..."}
+
+```
+
+- `id:` is a monotonic per-run sequence number. A reconnecting client sends the last id it saw in the `Last-Event-ID` request header; the server replays buffered lines **after** that id (no duplicates, no gaps). If the requested id has aged out of the bounded ring buffer, the stream restarts from the oldest buffered line and the client reconciles via the run status snapshot.
+- `stream` distinguishes `stdout` from `stderr`.
+- The stream **closes** once the run reaches a terminal status and the buffer is drained — same terminal-stop contract as `RunEventStream`. A subscriber attaching after the run is already terminal replays the buffer then closes immediately (never hangs). Unknown run id → `404`.
+- Run-scoped tokens (`ANDY_TOKEN`, see *Run-scoped credentials* below) are **redacted** (`RunOutputRedactor`) before any line reaches the wire — both the literal bearer (known to the runner via the idempotent `ITokenIssuer.MintAsync`) and the defensive `ANDY_TOKEN=<value>` / `export` / JSON env-echo shapes.
+
+Mechanics: `HeadlessRunner` drives the container's **streaming** exec (`IContainerService.ExecStreamingAsync` → `IInfrastructureProvider.ExecStreamingAsync`) instead of the buffered overload when an `IRunOutputBus` is wired. The Docker provider reads the multiplexed exec stream chunk-by-chunk and emits each complete line; providers that can't stream incrementally (Apple, cloud) fall back to the interface-default which replays the final buffered output line-by-line. Either way no new Docker-Engine verb is introduced (decision #17 — the same `ExecCreate` + `StartAndAttach` surface). Each line is published, redacted, to `IRunOutputBus` (`InMemoryRunOutputBus` — a per-run ring buffer + multicast fan-out, a direct sibling of `InMemoryBuildEventBus`); the runner marks the stream terminal on every exit path. The SSE serialisation lives in `RunOutputSse` so the wire format, `Last-Event-ID` resumption and terminal-stop are defined once. See ADR 0003.
+
 ## Permissions
 
 | Scope | Granted to | Used by |
 |---|---|---|
 | `run:write` | Admin, Editor | `POST /api/runs`, `run.create`, `runs create` |
-| `run:read` | Admin, Editor, Viewer | `GET /api/runs/{id}`, `GET /api/runs/{id}/events`, `run.get`, `run.events`, `runs get`, `runs events` |
+| `run:read` | Admin, Editor, Viewer | `GET /api/runs/{id}`, `GET /api/runs/{id}/events`, `GET /api/runs/{id}/output`, `run.get`, `run.events`, `runs get`, `runs events` |
 | `run:execute` | Admin, Editor | `POST /api/runs/{id}/cancel`, `run.cancel`, `runs cancel` |
 
 Catalog source of truth: `src/Andy.Containers/Models/Permissions.cs` (AP8 added the run scopes).
