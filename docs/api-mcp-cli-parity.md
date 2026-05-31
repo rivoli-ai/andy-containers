@@ -42,6 +42,7 @@ Numbers exclude health checks, Swagger, and WebSocket attach surfaces (which don
 | `GET /api/containers/{id}/repositories` | `ListContainerRepositories` ✅ | ❌ |
 | `POST /api/containers/{id}/repositories` | `CloneRepository` ✅ | ❌ |
 | `POST /api/containers/{id}/repositories/{repoId}/pull` | `PullRepository` ✅ | ❌ |
+| `GET /api/containers/{id}/git/diff` | `GetContainerGitDiff` ✅ | ❌ |
 | `WS /api/containers/{id}/terminal` | — | `andy-containers-cli connect {id}` ✅ |
 
 ### Runs (Epic AP)

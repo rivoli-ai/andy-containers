@@ -21,6 +21,7 @@ public class ContainersController : ControllerBase
     private readonly IGitCredentialService _credentialService;
     private readonly IGitRepositoryProbeService _probeService;
     private readonly IOrganizationMembershipService _orgMembership;
+    private readonly IGitDiffService _gitDiffService;
 
     public ContainersController(
         IContainerService containerService,
@@ -29,7 +30,8 @@ public class ContainersController : ControllerBase
         IGitCloneService gitCloneService,
         IGitCredentialService credentialService,
         IGitRepositoryProbeService probeService,
-        IOrganizationMembershipService orgMembership)
+        IOrganizationMembershipService orgMembership,
+        IGitDiffService gitDiffService)
     {
         _containerService = containerService;
         _currentUser = currentUser;
@@ -38,6 +40,7 @@ public class ContainersController : ControllerBase
         _credentialService = credentialService;
         _probeService = probeService;
         _orgMembership = orgMembership;
+        _gitDiffService = gitDiffService;
     }
 
     [HttpGet]
@@ -597,6 +600,33 @@ public class ContainersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// F6.1 (rivoli-ai/conductor#1940). Read-only unified git diff of the
+    /// container's run branch vs its base. Implemented via
+    /// <c>git diff</c> through the provider exec surface (ARCHITECTURE §16.3) —
+    /// NOT a Docker-Engine verb (decision #17). Conductor reaches this through
+    /// the UnifiedProxy localhost surface like every other /api/containers/*
+    /// call. A clean tree / no-git-repo / detached HEAD returns 200 with an
+    /// empty file list, not an error. Optional <paramref name="repoId"/>
+    /// scopes the diff to one repo in a multi-repo container.
+    /// </summary>
+    [HttpGet("{id:guid}/git/diff")]
+    [RequirePermission("container:read")]
+    public async Task<IActionResult> GetGitDiff(Guid id, [FromQuery] Guid? repoId, CancellationToken ct)
+    {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        var diff = await _gitDiffService.GetDiffAsync(id, repoId, ct);
+
+        return Ok(new GitDiffDto(
+            diff.BaseBranch,
+            diff.RunBranch,
+            diff.Files.Select(f => new GitDiffFileDto(
+                f.Path, f.ChangeType, f.Additions, f.Deletions, f.Patch, f.Truncated)).ToList(),
+            diff.RawPatch));
+    }
+
     private bool CanAccess(Container container)
     {
         if (_currentUser.IsAdmin()) return true;
@@ -608,6 +638,25 @@ public record ContainerGitRepositoryDto(
     Guid Id, string Url, string? Branch, string TargetPath, int? CloneDepth, bool Submodules,
     bool IsFromTemplate, string CloneStatus, string? CloneError,
     DateTime? CloneStartedAt, DateTime? CloneCompletedAt);
+
+/// <summary>
+/// Wire shape for <c>GET /api/containers/{id}/git/diff</c> (F6.1,
+/// rivoli-ai/conductor#1940). Conductor renders structured per-file diffs or
+/// falls back to <see cref="RawPatch"/>.
+/// </summary>
+public record GitDiffDto(
+    string? BaseBranch,
+    string? RunBranch,
+    IReadOnlyList<GitDiffFileDto> Files,
+    string RawPatch);
+
+public record GitDiffFileDto(
+    string Path,
+    string ChangeType,
+    int? Additions,
+    int? Deletions,
+    string Patch,
+    bool Truncated);
 
 public record AddRepositoryDto
 {

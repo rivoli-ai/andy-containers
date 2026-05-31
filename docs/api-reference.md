@@ -23,6 +23,54 @@ All endpoints require authentication (JWT Bearer token) and RBAC permissions via
 | GET | `/containers/{id}/repositories` | container:read | List cloned git repos |
 | POST | `/containers/{id}/repositories` | container:write | Clone a new repository |
 | POST | `/containers/{id}/repositories/{repoId}/pull` | container:execute | Pull latest changes |
+| GET | `/containers/{id}/git/diff` | container:read | Unified git diff of the run branch vs base |
+
+### `GET /api/containers/{id}/git/diff`
+
+Returns the unified git diff of the container's per-run branch
+(`andy/run/{runId}`, see [runs.md](runs.md)) versus its base branch, computed
+by running `git diff` through the infrastructure provider's exec surface
+(ARCHITECTURE §16) — **not** a Docker-Engine verb (decision #17). Conductor
+reaches this through the `UnifiedProxy` localhost surface like every other
+`/api/containers/*` call.
+
+**Query params:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `repoId` | GUID (optional) | Scope to one repo in a multi-repo container. Omit to aggregate all repos; aggregated file paths are prefixed with the repo's target path. |
+
+**RBAC:** `container:read`. A non-owner / non-admin gets `403`.
+
+**Behaviour:** a clean working tree, a path that isn't a git checkout, or a
+detached HEAD returns `200` with an empty `files` array — never an error. Each
+file's `patch` is capped at **64 KiB** (`truncated: true` when clipped) to
+avoid streaming large blobs through the proxy.
+
+**Response (`200`):**
+
+```json
+{
+  "baseBranch": "main",
+  "runBranch": "andy/run/8f3c…",
+  "files": [
+    {
+      "path": "src/Foo.cs",
+      "changeType": "modified",
+      "additions": 12,
+      "deletions": 3,
+      "patch": "diff --git a/src/Foo.cs b/src/Foo.cs\n@@ …",
+      "truncated": false
+    }
+  ],
+  "rawPatch": "diff --git a/src/Foo.cs b/src/Foo.cs\n@@ …"
+}
+```
+
+`changeType` is one of `added`, `modified`, `deleted`, `renamed`.
+`additions`/`deletions` are `null` for binary files. `rawPatch` concatenates
+every included file's patch so callers can render structured *or* fall back to
+the raw text. Parity: MCP tool `GetContainerGitDiff`, gRPC `GetContainerGitDiff`.
 
 ## Templates
 

@@ -11,6 +11,7 @@ public class ContainerGrpcService : Grpc.ContainerService.ContainerServiceBase
     private readonly ContainersDbContext _db;
     private readonly IGitCloneService _gitCloneService;
     private readonly IImageManifestService _manifestService;
+    private readonly IGitDiffService _gitDiffService;
     private readonly ICurrentUserService _currentUser;
     private readonly IOrganizationMembershipService _orgMembership;
 
@@ -18,12 +19,14 @@ public class ContainerGrpcService : Grpc.ContainerService.ContainerServiceBase
         ContainersDbContext db,
         IGitCloneService gitCloneService,
         IImageManifestService manifestService,
+        IGitDiffService gitDiffService,
         ICurrentUserService currentUser,
         IOrganizationMembershipService orgMembership)
     {
         _db = db;
         _gitCloneService = gitCloneService;
         _manifestService = manifestService;
+        _gitDiffService = gitDiffService;
         _currentUser = currentUser;
         _orgMembership = orgMembership;
     }
@@ -77,6 +80,34 @@ public class ContainerGrpcService : Grpc.ContainerService.ContainerServiceBase
 
         var repo = await _gitCloneService.PullRepositoryAsync(containerId, repoId, context.CancellationToken);
         return MapToGrpc(repo);
+    }
+
+    // F6.1 (rivoli-ai/conductor#1940): per-run branch git diff.
+    public override async Task<GitDiffResponse> GetContainerGitDiff(
+        GetContainerGitDiffRequest request, ServerCallContext context)
+    {
+        if (!Guid.TryParse(request.ContainerId, out var containerId))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "Invalid container ID"));
+
+        Guid? repoId = Guid.TryParse(request.RepositoryId, out var rId) ? rId : null;
+
+        var diff = await _gitDiffService.GetDiffAsync(containerId, repoId, context.CancellationToken);
+        var response = new GitDiffResponse
+        {
+            BaseBranch = diff.BaseBranch ?? "",
+            RunBranch = diff.RunBranch ?? "",
+            RawPatch = diff.RawPatch,
+        };
+        response.Files.AddRange(diff.Files.Select(f => new Grpc.GitDiffFile
+        {
+            Path = f.Path,
+            ChangeType = f.ChangeType,
+            Additions = f.Additions ?? -1,
+            Deletions = f.Deletions ?? -1,
+            Patch = f.Patch,
+            Truncated = f.Truncated,
+        }));
+        return response;
     }
 
     public override async Task<ImageManifestResponse> GetImageManifest(

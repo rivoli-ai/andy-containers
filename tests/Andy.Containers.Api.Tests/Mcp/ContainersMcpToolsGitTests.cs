@@ -15,6 +15,7 @@ public class ContainersMcpToolsGitTests : IDisposable
     private readonly ContainersDbContext _db;
     private readonly Mock<IGitCloneService> _mockGitCloneService;
     private readonly Mock<IGitCredentialService> _mockCredentialService;
+    private readonly Mock<IContainerService> _mockContainerService;
     private readonly ContainersMcpTools _tools;
 
     public ContainersMcpToolsGitTests()
@@ -22,6 +23,7 @@ public class ContainersMcpToolsGitTests : IDisposable
         _db = InMemoryDbHelper.CreateContext();
         _mockGitCloneService = new Mock<IGitCloneService>();
         _mockCredentialService = new Mock<IGitCredentialService>();
+        _mockContainerService = new Mock<IContainerService>();
         var mockCurrentUser = new Mock<ICurrentUserService>();
         mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
         mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
@@ -31,7 +33,8 @@ public class ContainersMcpToolsGitTests : IDisposable
         var mockProbeService = new Mock<IGitRepositoryProbeService>();
         mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string>());
-        _tools = new ContainersMcpTools(_db, new Mock<IContainerService>().Object, _mockGitCloneService.Object, _mockCredentialService.Object, mockProbeService.Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, mockCurrentUser.Object, mockOrgMembership.Object);
+        var gitDiffService = new GitDiffService(_db, _mockContainerService.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<GitDiffService>.Instance);
+        _tools = new ContainersMcpTools(_db, _mockContainerService.Object, _mockGitCloneService.Object, _mockCredentialService.Object, mockProbeService.Object, new Mock<IImageManifestService>().Object, new Mock<IImageDiffService>().Object, gitDiffService, mockCurrentUser.Object, mockOrgMembership.Object);
     }
 
     public void Dispose()
@@ -241,5 +244,43 @@ public class ContainersMcpToolsGitTests : IDisposable
         result!.Id.Should().Be(id);
         result.Label.Should().Be("my-pat");
         result.GitHost.Should().Be("github.com");
+    }
+
+    // F6.1 (rivoli-ai/conductor#1940): MCP parity for the git-diff endpoint.
+    [Fact]
+    public async Task GetContainerGitDiff_ReturnsParsedDiff()
+    {
+        var containerId = Guid.NewGuid();
+        _db.Containers.Add(new Container { Id = containerId, Name = "test", OwnerId = "test-user", Status = ContainerStatus.Running });
+        _db.ContainerGitRepositories.Add(new ContainerGitRepository
+        {
+            Id = Guid.NewGuid(), ContainerId = containerId,
+            Url = "https://github.com/owner/repo.git", Branch = "main",
+            TargetPath = "/workspace", CloneStatus = GitCloneStatus.Cloned,
+        });
+        await _db.SaveChangesAsync();
+
+        _mockContainerService
+            .Setup(s => s.ExecAsync(containerId, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult
+            {
+                ExitCode = 0,
+                StdOut = "---NUMSTAT---\n1\t0\tFoo.cs\n---PATCH---\ndiff --git a/Foo.cs b/Foo.cs\n+added\n"
+            });
+
+        var result = await _tools.GetContainerGitDiff(containerId.ToString());
+
+        result.Should().NotBeNull();
+        result!.Files.Should().ContainSingle();
+        result.Files[0].Path.Should().Be("Foo.cs");
+        result.Files[0].Additions.Should().Be(1);
+        result.RawPatch.Should().Contain("+added");
+    }
+
+    [Fact]
+    public async Task GetContainerGitDiff_InvalidContainerId_ReturnsNull()
+    {
+        var result = await _tools.GetContainerGitDiff("not-a-guid");
+        result.Should().BeNull();
     }
 }

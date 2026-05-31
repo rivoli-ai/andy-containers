@@ -16,6 +16,7 @@ public class ContainersControllerGitTests : IDisposable
     private readonly Mock<IContainerService> _mockService;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly Mock<IGitCloneService> _mockGitCloneService;
+    private readonly Mock<IGitDiffService> _mockGitDiffService;
     private readonly ContainersDbContext _db;
     private readonly ContainersController _controller;
 
@@ -34,7 +35,8 @@ public class ContainersControllerGitTests : IDisposable
         var mockProbeService = new Mock<IGitRepositoryProbeService>();
         mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string>());
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object);
+        _mockGitDiffService = new Mock<IGitDiffService>();
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, _mockGitDiffService.Object);
     }
 
     public void Dispose()
@@ -354,5 +356,97 @@ public class ContainersControllerGitTests : IDisposable
         var repos = ok.Value.Should().BeAssignableTo<IEnumerable<ContainerGitRepositoryDto>>().Subject.ToList();
         repos.Should().HaveCount(1);
         repos[0].Url.Should().Be("https://github.com/owner/mine.git");
+    }
+
+    // ---- F6.1 (rivoli-ai/conductor#1940): GET /api/containers/{id}/git/diff ----
+
+    [Fact]
+    public async Task GetGitDiff_ReturnsTypedDto_WithBranchesAndFiles()
+    {
+        var container = CreateTestContainer();
+        _mockService.Setup(s => s.GetContainerAsync(container.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockGitDiffService.Setup(s => s.GetDiffAsync(container.Id, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GitDiffResult
+            {
+                BaseBranch = "main",
+                RunBranch = "andy/run/abc",
+                RawPatch = "diff --git a/Foo.cs b/Foo.cs\n+added",
+                Files = new List<GitDiffFile>
+                {
+                    new() { Path = "Foo.cs", ChangeType = "modified", Additions = 1, Deletions = 0, Patch = "@@ +added" }
+                }
+            });
+
+        var result = await _controller.GetGitDiff(container.Id, null, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<GitDiffDto>().Subject;
+        dto.BaseBranch.Should().Be("main");
+        dto.RunBranch.Should().Be("andy/run/abc");
+        dto.Files.Should().ContainSingle();
+        dto.Files[0].Path.Should().Be("Foo.cs");
+        dto.Files[0].Additions.Should().Be(1);
+        dto.RawPatch.Should().Contain("+added");
+    }
+
+    [Fact]
+    public async Task GetGitDiff_PassesRepoIdScope_ToService()
+    {
+        var container = CreateTestContainer();
+        var repoId = Guid.NewGuid();
+        _mockService.Setup(s => s.GetContainerAsync(container.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockGitDiffService.Setup(s => s.GetDiffAsync(container.Id, repoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GitDiffResult());
+
+        await _controller.GetGitDiff(container.Id, repoId, CancellationToken.None);
+
+        _mockGitDiffService.Verify(s => s.GetDiffAsync(container.Id, repoId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetGitDiff_CleanTree_Returns200WithEmptyFiles()
+    {
+        var container = CreateTestContainer();
+        _mockService.Setup(s => s.GetContainerAsync(container.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockGitDiffService.Setup(s => s.GetDiffAsync(container.Id, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GitDiffResult { BaseBranch = "main", RunBranch = "andy/run/abc" });
+
+        var result = await _controller.GetGitDiff(container.Id, null, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<GitDiffDto>().Subject;
+        dto.Files.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetGitDiff_NonOwner_NonAdmin_Forbids()
+    {
+        // container:read scoping: a non-admin requesting someone else's container is forbidden.
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("attacker");
+        var container = CreateTestContainer(ownerId: "victim");
+        _mockService.Setup(s => s.GetContainerAsync(container.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+
+        var result = await _controller.GetGitDiff(container.Id, null, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        _mockGitDiffService.Verify(s => s.GetDiffAsync(It.IsAny<Guid>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Contract test: the documented DTO shape (F6.1 docs) — base/run branch +
+    // per-file { path, changeType, additions, deletions, patch, truncated } +
+    // rawPatch — is exactly what the typed records expose.
+    [Fact]
+    public void GitDiffDto_Contract_MatchesDocumentedSchema()
+    {
+        var props = typeof(GitDiffDto).GetProperties().Select(p => p.Name).ToList();
+        props.Should().BeEquivalentTo(new[] { "BaseBranch", "RunBranch", "Files", "RawPatch" });
+
+        var fileProps = typeof(GitDiffFileDto).GetProperties().Select(p => p.Name).ToList();
+        fileProps.Should().BeEquivalentTo(new[] { "Path", "ChangeType", "Additions", "Deletions", "Patch", "Truncated" });
     }
 }

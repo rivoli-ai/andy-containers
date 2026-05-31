@@ -28,6 +28,9 @@ public enum ContainerEventType
     GitCloned,
     GitCloneFailed,
     GitPulled,
+    // F6.1 (rivoli-ai/conductor#1940): a per-run branch andy/run/{runId} was
+    // checked out in a cloned repo at run-dispatch time.
+    RunBranchCheckedOut,
     ExpiredAutoStopped,
     ExpiredAutoDestroyed
 }

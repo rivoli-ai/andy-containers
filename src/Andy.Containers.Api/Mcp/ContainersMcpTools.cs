@@ -18,6 +18,7 @@ public class ContainersMcpTools
     private readonly IGitRepositoryProbeService _probeService;
     private readonly IImageManifestService _manifestService;
     private readonly IImageDiffService _diffService;
+    private readonly IGitDiffService _gitDiffService;
     private readonly ICurrentUserService _currentUser;
     private readonly IOrganizationMembershipService _orgMembership;
 
@@ -29,6 +30,7 @@ public class ContainersMcpTools
         IGitRepositoryProbeService probeService,
         IImageManifestService manifestService,
         IImageDiffService diffService,
+        IGitDiffService gitDiffService,
         ICurrentUserService currentUser,
         IOrganizationMembershipService orgMembership)
     {
@@ -39,6 +41,7 @@ public class ContainersMcpTools
         _probeService = probeService;
         _manifestService = manifestService;
         _diffService = diffService;
+        _gitDiffService = gitDiffService;
         _currentUser = currentUser;
         _orgMembership = orgMembership;
     }
@@ -345,6 +348,23 @@ public class ContainersMcpTools
         return new McpGitRepositoryInfo(repo.Id, repo.Url, repo.Branch ?? "", repo.TargetPath, repo.CloneStatus.ToString(), repo.CloneError ?? "", repo.IsFromTemplate, repo.CloneStartedAt, repo.CloneCompletedAt);
     }
 
+    [McpServerTool, Description("Get the unified git diff of a container's per-run branch versus its base (F6.1). Optionally scope to one repo. Clean tree returns an empty file list.")]
+    public async Task<McpGitDiffInfo?> GetContainerGitDiff(
+        [Description("Container ID (GUID)")] string containerId,
+        [Description("Optional repository ID (GUID) to scope the diff to one repo")] string? repositoryId = null)
+    {
+        if (!Guid.TryParse(containerId, out var cId)) return null;
+        Guid? rId = Guid.TryParse(repositoryId, out var parsed) ? parsed : null;
+
+        var diff = await _gitDiffService.GetDiffAsync(cId, rId);
+        return new McpGitDiffInfo(
+            diff.BaseBranch ?? "",
+            diff.RunBranch ?? "",
+            diff.Files.Select(f => new McpGitDiffFile(
+                f.Path, f.ChangeType, f.Additions, f.Deletions, f.Patch, f.Truncated)).ToList(),
+            diff.RawPatch);
+    }
+
     [McpServerTool, Description("List stored git credentials (tokens are never returned)")]
     public async Task<IReadOnlyList<McpGitCredentialInfo>> ListGitCredentials(
         [Description("Owner ID to list credentials for")] string ownerId)
@@ -625,6 +645,8 @@ public class ContainersMcpTools
 }
 
 public record McpGitRepositoryInfo(Guid Id, string Url, string Branch, string TargetPath, string CloneStatus, string CloneError, bool IsFromTemplate, DateTime? CloneStartedAt, DateTime? CloneCompletedAt);
+public record McpGitDiffInfo(string BaseBranch, string RunBranch, List<McpGitDiffFile> Files, string RawPatch);
+public record McpGitDiffFile(string Path, string ChangeType, int? Additions, int? Deletions, string Patch, bool Truncated);
 public record McpGitCredentialInfo(Guid Id, string Label, string GitHost, string CredentialType, DateTime CreatedAt, DateTime? LastUsedAt);
 public record McpContainerInfo(Guid Id, string Name, string Template, string Provider, string Status, string? IdeEndpoint, string? VncEndpoint, DateTime CreatedAt);
 public record McpContainerDetail(Guid Id, string Name, string TemplateName, string TemplateCode, string ProviderName, string ProviderType, string Status, string OwnerId, string? IdeEndpoint, string? VncEndpoint, string? ExternalId, DateTime CreatedAt, DateTime? StartedAt, DateTime? StoppedAt, DateTime? ExpiresAt);

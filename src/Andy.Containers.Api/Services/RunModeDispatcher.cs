@@ -10,15 +10,18 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
 {
     private readonly ContainersDbContext _db;
     private readonly IHeadlessRunner _runner;
+    private readonly IRunBranchService _runBranch;
     private readonly ILogger<RunModeDispatcher> _logger;
 
     public RunModeDispatcher(
         ContainersDbContext db,
         IHeadlessRunner runner,
+        IRunBranchService runBranch,
         ILogger<RunModeDispatcher> logger)
     {
         _db = db;
         _runner = runner;
+        _runBranch = runBranch;
         _logger = logger;
     }
 
@@ -72,6 +75,23 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
         }
 
         await _db.SaveChangesAsync(ct);
+
+        // F6.1 (rivoli-ai/conductor#1940): give the run an isolated git branch
+        // `andy/run/{runId}` in every cloned repo of the selected container,
+        // off the workspace base, and persist it into Run.WorkspaceRef.Branch.
+        // Best-effort — a branch failure never aborts the dispatch (mirrors
+        // GitCloneService's "a failed repo doesn't fail the container").
+        try
+        {
+            await _runBranch.EnsureRunBranchAsync(run, containerId, ct);
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Run {RunId}: per-run branch preparation failed for container {ContainerId}; continuing dispatch.",
+                run.Id, containerId);
+        }
 
         return run.Mode switch
         {
