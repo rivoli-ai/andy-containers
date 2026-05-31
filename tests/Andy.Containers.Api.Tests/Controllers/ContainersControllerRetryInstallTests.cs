@@ -44,7 +44,8 @@ public class ContainersControllerRetryInstallTests : IDisposable
             _mockGitClone.Object,
             _mockCredentials.Object,
             _mockProbe.Object,
-            _mockOrgMembership.Object);
+            _mockOrgMembership.Object,
+            new Mock<IGitDiffService>().Object);
     }
 
     public void Dispose() => _db.Dispose();

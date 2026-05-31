@@ -19,16 +19,51 @@ public class RunModeDispatcherTests : IDisposable
 {
     private readonly ContainersDbContext _db;
     private readonly Mock<IHeadlessRunner> _runner = new();
+    private readonly Mock<IRunBranchService> _runBranch = new();
     private readonly RunModeDispatcher _dispatcher;
     private const string ConfigPath = "/tmp/runs/x/config.json";
 
     public RunModeDispatcherTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _dispatcher = new RunModeDispatcher(_db, _runner.Object, NullLogger<RunModeDispatcher>.Instance);
+        _dispatcher = new RunModeDispatcher(_db, _runner.Object, _runBranch.Object, NullLogger<RunModeDispatcher>.Instance);
     }
 
     public void Dispose() => _db.Dispose();
+
+    // F6.1 (rivoli-ai/conductor#1940): the dispatcher prepares the per-run
+    // branch on the selected container before handing off to the runner.
+    [Fact]
+    public async Task Dispatch_Headless_EnsuresRunBranchOnSelectedContainer()
+    {
+        var (run, workspace) = SeedRunAndWorkspace(RunMode.Headless);
+        _runner
+            .Setup(r => r.StartAsync(It.IsAny<Run>(), ConfigPath, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HeadlessRunOutcome { Kind = RunEventKind.Finished, Status = RunStatus.Succeeded });
+
+        await _dispatcher.DispatchAsync(run, ConfigPath);
+
+        _runBranch.Verify(b => b.EnsureRunBranchAsync(
+            It.Is<Run>(rn => rn.Id == run.Id),
+            workspace.DefaultContainerId!.Value,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Dispatch_Headless_RunBranchFailure_DoesNotAbortDispatch()
+    {
+        var (run, _) = SeedRunAndWorkspace(RunMode.Headless);
+        _runBranch
+            .Setup(b => b.EnsureRunBranchAsync(It.IsAny<Run>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("branch boom"));
+        _runner
+            .Setup(r => r.StartAsync(It.IsAny<Run>(), ConfigPath, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HeadlessRunOutcome { Kind = RunEventKind.Finished, Status = RunStatus.Succeeded });
+
+        var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
+
+        outcome.Kind.Should().Be(RunDispatchKind.Started);
+    }
 
     [Fact]
     public async Task Dispatch_HeadlessHappyPath_AssignsContainer_TransitionsProvisioning_InvokesRunner()

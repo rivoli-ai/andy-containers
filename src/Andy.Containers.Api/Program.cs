@@ -165,6 +165,9 @@ try
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
     builder.Services.AddScoped<IGitCloneService, GitCloneService>();
     builder.Services.AddScoped<IGitRepositoryProbeService, GitRepositoryProbeService>();
+    // F6.1 (rivoli-ai/conductor#1940): per-run branch + git-diff endpoint.
+    builder.Services.AddScoped<IRunBranchService, RunBranchService>();
+    builder.Services.AddScoped<IGitDiffService, GitDiffService>();
     builder.Services.AddSingleton<ICodeAssistantInstallService, CodeAssistantInstallService>();
     // rivoli-ai/conductor#945 (M1.5.3). Scoped so it pulls a fresh
     // IContainerService per call (which is itself scoped because it

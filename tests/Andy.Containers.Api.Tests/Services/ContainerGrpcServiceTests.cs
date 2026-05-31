@@ -15,6 +15,7 @@ public class ContainerGrpcServiceTests : IDisposable
     private readonly ContainersDbContext _db;
     private readonly Mock<IGitCloneService> _mockGitCloneService;
     private readonly Mock<IImageManifestService> _mockManifestService;
+    private readonly Mock<IGitDiffService> _mockGitDiffService;
     private readonly ContainerGrpcService _service;
     private readonly ServerCallContext _context;
 
@@ -23,6 +24,7 @@ public class ContainerGrpcServiceTests : IDisposable
         _db = InMemoryDbHelper.CreateContext();
         _mockGitCloneService = new Mock<IGitCloneService>();
         _mockManifestService = new Mock<IImageManifestService>();
+        _mockGitDiffService = new Mock<IGitDiffService>();
         var mockCurrentUser = new Mock<ICurrentUserService>();
         mockCurrentUser.Setup(u => u.GetUserId()).Returns("test-user");
         mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
@@ -30,7 +32,7 @@ public class ContainerGrpcServiceTests : IDisposable
         var mockOrgMembership = new Mock<IOrganizationMembershipService>();
         mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        _service = new ContainerGrpcService(_db, _mockGitCloneService.Object, _mockManifestService.Object, mockCurrentUser.Object, mockOrgMembership.Object);
+        _service = new ContainerGrpcService(_db, _mockGitCloneService.Object, _mockManifestService.Object, _mockGitDiffService.Object, mockCurrentUser.Object, mockOrgMembership.Object);
         _context = CreateMockContext();
     }
 
@@ -381,5 +383,42 @@ public class ContainerGrpcServiceTests : IDisposable
         result.CloneError.Should().BeEmpty();
         result.CloneStartedAt.Should().NotBeEmpty();
         result.CloneCompletedAt.Should().NotBeEmpty();
+    }
+
+    // F6.1 (rivoli-ai/conductor#1940): gRPC parity for git-diff.
+    [Fact]
+    public async Task GetContainerGitDiff_MapsResultToGrpc()
+    {
+        var containerId = Guid.NewGuid();
+        _mockGitDiffService
+            .Setup(s => s.GetDiffAsync(containerId, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Andy.Containers.Models.GitDiffResult
+            {
+                BaseBranch = "main",
+                RunBranch = "andy/run/abc",
+                RawPatch = "raw",
+                Files = new List<Andy.Containers.Models.GitDiffFile>
+                {
+                    new() { Path = "Foo.cs", ChangeType = "modified", Additions = 3, Deletions = 1, Patch = "patch", Truncated = false },
+                    new() { Path = "bin.dat", ChangeType = "added", Additions = null, Deletions = null, Patch = "p2", Truncated = true },
+                }
+            });
+
+        var result = await _service.GetContainerGitDiff(new GetContainerGitDiffRequest { ContainerId = containerId.ToString() }, _context);
+
+        result.BaseBranch.Should().Be("main");
+        result.RunBranch.Should().Be("andy/run/abc");
+        result.RawPatch.Should().Be("raw");
+        result.Files.Should().HaveCount(2);
+        result.Files[0].Additions.Should().Be(3);
+        result.Files[1].Additions.Should().Be(-1); // null → -1 sentinel
+        result.Files[1].Truncated.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetContainerGitDiff_InvalidContainerId_Throws()
+    {
+        var act = async () => await _service.GetContainerGitDiff(new GetContainerGitDiffRequest { ContainerId = "bad" }, _context);
+        await act.Should().ThrowAsync<RpcException>();
     }
 }

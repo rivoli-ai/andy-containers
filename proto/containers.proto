@@ -45,6 +45,8 @@ service ContainerService {
   rpc ListContainerRepositories (ContainerIdRequest) returns (ListContainerRepositoriesResponse);
   rpc CloneRepository (CloneRepositoryRequest) returns (GitRepositoryStatusResponse);
   rpc PullRepository (PullRepositoryRequest) returns (GitRepositoryStatusResponse);
+  // F6.1 (rivoli-ai/conductor#1940): per-run branch git diff.
+  rpc GetContainerGitDiff (GetContainerGitDiffRequest) returns (GitDiffResponse);
 
   // Organization-scoped operations
   rpc ListOrganizationImages (ListOrgImagesRequest) returns (ListOrgImagesResponse);
@@ -373,6 +375,28 @@ message CloneRepositoryRequest {
 message PullRepositoryRequest {
   string container_id = 1;
   string repository_id = 2;
+}
+
+// F6.1 (rivoli-ai/conductor#1940): per-run branch git diff.
+message GetContainerGitDiffRequest {
+  string container_id = 1;
+  string repository_id = 2; // optional; empty = aggregate all repos
+}
+
+message GitDiffResponse {
+  string base_branch = 1;
+  string run_branch = 2;
+  repeated GitDiffFile files = 3;
+  string raw_patch = 4;
+}
+
+message GitDiffFile {
+  string path = 1;
+  string change_type = 2;
+  int32 additions = 3;       // -1 when unknown / binary
+  int32 deletions = 4;       // -1 when unknown / binary
+  string patch = 5;
+  bool truncated = 6;
 }
 
 // --- Organization Messages ---

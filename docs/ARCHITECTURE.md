@@ -1032,6 +1032,31 @@ Private repository access is handled via `GitCredential` entities:
 4. Update clone status and timestamps
 5. Failed clones do NOT fail the container -- the container stays Running
 
+### 16.4 Per-Run Branch + Git Diff (F6.1)
+
+Every agent run gets an isolated git branch so its changes can be reviewed in
+isolation:
+
+1. **Branch lifecycle.** At dispatch, after the container is selected and repos
+   are cloned, `RunBranchService` runs `git checkout -B andy/run/{runId}` in
+   each *cloned* repo (off the workspace's `GitBranch` base) via
+   `IInfrastructureProvider.ExecAsync` -- the same exec surface §16.3 uses. The
+   branch name is persisted to `Run.WorkspaceRef.Branch` (no schema migration --
+   the field already exists). Best-effort per repo; a `RunBranchCheckedOut`
+   event is emitted per successful checkout.
+2. **Diff retrieval.** `GET /api/containers/{id}/git/diff` (`container:read`)
+   returns the unified diff of the run branch vs base via `git diff` through
+   `ExecAsync`, parsed into per-file structured entries (`changeType`,
+   `additions`/`deletions`, `patch`) plus a `rawPatch` fallback. Multi-repo
+   containers aggregate (with per-repo path prefixes) or scope to one repo via
+   `repoId`. Per-file patches are capped at 64 KiB. Clean tree / non-git /
+   detached HEAD returns 200-empty, not an error.
+
+This is an **app-level read on andy-containers**, reached through the
+`UnifiedProxy` localhost surface like every other `/api/containers/*` call. It
+is **not** a new Docker-Engine verb and does not change the IDE-attach
+Docker-API allow-list (decision #17 / `docs/architecture/docker-api-surface-spec.md`).
+
 ## 17. Container Resource Management
 
 ### 17.1 Resource Specification

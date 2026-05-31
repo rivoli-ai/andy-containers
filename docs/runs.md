@@ -79,6 +79,28 @@ andy-containers-cli runs create triage-agent \
 
 Modes pair with `EnvironmentProfile.Kind` via Epic X. A `HeadlessContainer` profile only backs `RunMode.Headless` runs; the pairing is enforced at workspace-create time (X5).
 
+## Per-run git branch (F6.1)
+
+After the dispatcher selects the container (the `Run.ContainerId` assignment
+point, post-clone), `RunBranchService` checks out a deterministic per-run
+branch **`andy/run/{runId}`** in every *cloned* repo of the container, off the
+workspace's `GitBranch` base, via `git checkout -B` through
+`IInfrastructureProvider.ExecAsync` (the same exec surface `GitCloneService`
+uses — ARCHITECTURE §16, **not** a Docker-Engine verb, decision #17). The
+chosen name is persisted into `Run.WorkspaceRef.Branch` so it survives
+container teardown and late subscribers can resolve it; no schema migration is
+needed (`WorkspaceRef.Branch` already exists on the model).
+
+Branch creation is **best-effort per repo**: a repo that isn't a git checkout
+(or whose checkout fails) is logged and skipped — it never aborts the dispatch
+(mirrors GitCloneService's "a failed clone doesn't fail the container"). Each
+successful checkout emits a `RunBranchCheckedOut` container event.
+
+The run's changes are then retrievable as a unified patch via
+[`GET /api/containers/{id}/git/diff`](api-reference.md#get-apicontainersidgitdiff)
+(`git diff <base>` of the run branch + working tree), aggregated across repos or
+scoped to one via `repoId`.
+
 ## Cancellation
 
 ```

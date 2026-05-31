@@ -36,6 +36,7 @@ public class ContainersMcpToolsImageTests : IDisposable
             new Mock<IGitRepositoryProbeService>().Object,
             _mockManifestService.Object,
             _mockDiffService.Object,
+            new Mock<IGitDiffService>().Object,
             mockCurrentUser.Object,
             mockOrgMembership.Object);
     }
