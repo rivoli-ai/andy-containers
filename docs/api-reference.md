@@ -128,6 +128,18 @@ the raw text. Parity: MCP tool `GetContainerGitDiff`, gRPC `GetContainerGitDiff`
 | POST | `/git-credentials` | settings:write | Store credential |
 | DELETE | `/git-credentials/{id}` | settings:write | Delete credential |
 
+## Runs (Epic AP)
+
+Agent run submission, status, cancellation and streaming. Full lifecycle, payload shapes and failure modes are in [runs.md](runs.md).
+
+| Method | Endpoint | Permission | Description |
+|--------|----------|------------|-------------|
+| POST | `/runs` | run:write | Submit a run |
+| GET | `/runs/{id}` | run:read | Run status snapshot |
+| POST | `/runs/{id}/cancel` | run:execute | Cancel a run |
+| GET | `/runs/{id}/events` | run:read | NDJSON stream of terminal lifecycle events (closes at terminal). |
+| GET | `/runs/{id}/output` | run:read | SSE stream of **mid-run** agent stdout/stderr (F4.1, `#1934`). `id:`=per-run sequence; resumable via `Last-Event-ID`; `stream` tags stdout/stderr; closes at terminal after a final drain; `ANDY_TOKEN` redacted. |
+
 ## Images
 
 ### Legacy (template-build-centric)

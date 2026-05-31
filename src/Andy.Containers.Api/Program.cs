@@ -210,6 +210,12 @@ try
     builder.Services.AddSingleton<Andy.Containers.Storage.IBuildExecutionRegistry, Andy.Containers.Infrastructure.Build.Events.InMemoryBuildExecutionRegistry>();
     builder.Services.AddSingleton<Andy.Containers.Storage.IAsyncBuildExecutor, Andy.Containers.Infrastructure.Build.Events.AsyncBuildExecutor>();
 
+    // F4.1 (rivoli-ai/conductor#1934). Mid-run agent output bus. Singleton —
+    // process-local in-memory per-run ring buffers, shared across the AP6
+    // runner (publisher) and the run-output / container-logs SSE endpoints
+    // (subscribers), which live in different request scopes.
+    builder.Services.AddSingleton<Andy.Containers.Storage.IRunOutputBus, Andy.Containers.Infrastructure.Runs.Events.InMemoryRunOutputBus>();
+
     // Current user service for RBAC
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();

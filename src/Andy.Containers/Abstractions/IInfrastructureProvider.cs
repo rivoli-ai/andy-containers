@@ -35,6 +35,38 @@ public interface IInfrastructureProvider
     Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct = default);
 
     /// <summary>
+    /// F4.1 (rivoli-ai/conductor#1934). Streaming exec: same exec/attach
+    /// surface as <see cref="ExecAsync(string, string, TimeSpan, CancellationToken)"/>
+    /// (decision #17 — no new Docker-Engine verb), but each stdout/stderr
+    /// line is delivered to <paramref name="onLine"/> as produced. The
+    /// default delegates to the buffered overload and replays the final
+    /// output line-by-line — correct for providers that can't stream
+    /// incrementally; Docker overrides for a true live tail.
+    /// </summary>
+    async Task<ExecResult> ExecStreamingAsync(
+        string externalId,
+        string command,
+        TimeSpan timeout,
+        Action<ExecOutputChunk> onLine,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+        var result = await ExecAsync(externalId, command, timeout, ct);
+        Replay(result.StdOut, ExecStreamKind.Stdout, onLine);
+        Replay(result.StdErr, ExecStreamKind.Stderr, onLine);
+        return result;
+
+        static void Replay(string? text, ExecStreamKind kind, Action<ExecOutputChunk> sink)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                if (line.Length > 0) sink(new ExecOutputChunk(kind, line));
+            }
+        }
+    }
+
+    /// <summary>
     /// Returns the set of container externalIds currently known to the
     /// provider, or <c>null</c> if this provider does not support bulk
     /// enumeration. Used by the startup reconciler (conductor #840) to
@@ -203,6 +235,19 @@ public class ExecResult
     public string? StdOut { get; set; }
     public string? StdErr { get; set; }
 }
+
+/// <summary>Which stream a streamed exec chunk came from. F4.1 (#1934).</summary>
+public enum ExecStreamKind
+{
+    Stdout,
+    Stderr,
+}
+
+/// <summary>
+/// One incremental line of exec output surfaced by
+/// <see cref="IContainerService.ExecStreamingAsync"/>. F4.1 (#1934).
+/// </summary>
+public readonly record struct ExecOutputChunk(ExecStreamKind Stream, string Line);
 
 public class ContainerStats
 {

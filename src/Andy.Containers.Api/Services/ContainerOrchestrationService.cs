@@ -925,6 +925,30 @@ public class ContainerOrchestrationService : IContainerService
         return await infra.ExecAsync(container.ExternalId!, command, timeout, ct);
     }
 
+    // F4.1 (rivoli-ai/conductor#1934). Mid-run streaming exec. Resolves
+    // the container + provider exactly like the buffered overload, then
+    // delegates to the provider's streaming exec so the runner sees each
+    // andy-cli line as it lands. Providers that can't stream fall back to
+    // the interface default (buffered, replayed at end).
+    public async Task<ExecResult> ExecStreamingAsync(
+        Guid containerId, string command, TimeSpan timeout,
+        Action<ExecOutputChunk> onLine, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+        using var activity = ActivitySources.Provisioning.StartActivity("ExecCommandStreaming");
+        activity?.SetTag("andy.containers.id", containerId.ToString());
+        activity?.SetTag("andy.containers.timeout_seconds", timeout.TotalSeconds);
+
+        var container = await GetContainerAsync(containerId, ct);
+        if (container.Status is not (ContainerStatus.Running or ContainerStatus.Creating))
+            throw new InvalidOperationException($"Container is {container.Status}, cannot exec");
+        if (string.IsNullOrEmpty(container.ExternalId))
+            throw new InvalidOperationException("Container has no external ID yet");
+
+        var infra = _providerFactory.GetProvider(container.Provider!);
+        return await infra.ExecStreamingAsync(container.ExternalId!, command, timeout, onLine, ct);
+    }
+
     public async Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct)
     {
         var container = await GetContainerAsync(containerId, ct);

@@ -439,6 +439,114 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     }
 
     /// <summary>
+    /// F4.1 (rivoli-ai/conductor#1934). True streaming exec for Docker:
+    /// the same <c>ExecCreate</c> + <c>StartAndAttach</c> surface as the
+    /// buffered overload (decision #17 — no new Docker-Engine verb), but
+    /// we drain the multiplexed stream chunk-by-chunk, split on newlines,
+    /// and hand each complete line to <paramref name="onLine"/> tagged
+    /// with its stream kind. The full stdout/stderr is also accumulated so
+    /// the returned <see cref="ExecResult"/> matches the buffered shape.
+    /// </summary>
+    public async Task<ExecResult> ExecStreamingAsync(
+        string externalId, string command, TimeSpan timeout,
+        Action<ExecOutputChunk> onLine, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        var token = linked.Token;
+
+        var exec = await _client.Exec.ExecCreateContainerAsync(externalId, new ContainerExecCreateParameters
+        {
+            Cmd = ["sh", "-c", command],
+            AttachStdout = true,
+            AttachStderr = true,
+        }, token);
+
+        using var stream = await _client.Exec.StartAndAttachContainerExecAsync(exec.ID, false, token);
+
+        var stdoutAll = new System.Text.StringBuilder();
+        var stderrAll = new System.Text.StringBuilder();
+        // Per-stream carry buffers: a chunk may split a line across reads,
+        // so we hold the unterminated tail until the next newline arrives.
+        var stdoutCarry = new System.Text.StringBuilder();
+        var stderrCarry = new System.Text.StringBuilder();
+        var buffer = new byte[8192];
+
+        while (true)
+        {
+            var read = await stream.ReadOutputAsync(buffer, 0, buffer.Length, token);
+            if (read.EOF || read.Count == 0)
+            {
+                break;
+            }
+
+            var text = System.Text.Encoding.UTF8.GetString(buffer, 0, read.Count);
+            if (read.Target == MultiplexedStream.TargetStream.StandardError)
+            {
+                stderrAll.Append(text);
+                EmitLines(stderrCarry, text, ExecStreamKind.Stderr, onLine);
+            }
+            else
+            {
+                stdoutAll.Append(text);
+                EmitLines(stdoutCarry, text, ExecStreamKind.Stdout, onLine);
+            }
+        }
+
+        // Flush any unterminated trailing line (output that never ended in
+        // a newline still reaches the live stream).
+        FlushCarry(stdoutCarry, ExecStreamKind.Stdout, onLine);
+        FlushCarry(stderrCarry, ExecStreamKind.Stderr, onLine);
+
+        var inspect = await _client.Exec.InspectContainerExecAsync(exec.ID, ct);
+        return new ExecResult
+        {
+            ExitCode = (int)inspect.ExitCode,
+            StdOut = stdoutAll.ToString(),
+            StdErr = stderrAll.ToString(),
+        };
+    }
+
+    // Append `text` to the carry buffer, then emit one callback per
+    // complete (newline-terminated) line, leaving any partial tail in the
+    // carry for the next read.
+    private static void EmitLines(
+        System.Text.StringBuilder carry, string text,
+        ExecStreamKind kind, Action<ExecOutputChunk> onLine)
+    {
+        carry.Append(text);
+        var combined = carry.ToString();
+        var normalized = combined.Replace("\r\n", "\n");
+
+        int start = 0;
+        int idx;
+        while ((idx = normalized.IndexOf('\n', start)) >= 0)
+        {
+            var line = normalized.Substring(start, idx - start);
+            onLine(new ExecOutputChunk(kind, line));
+            start = idx + 1;
+        }
+
+        carry.Clear();
+        if (start < normalized.Length)
+        {
+            carry.Append(normalized, start, normalized.Length - start);
+        }
+    }
+
+    private static void FlushCarry(
+        System.Text.StringBuilder carry, ExecStreamKind kind, Action<ExecOutputChunk> onLine)
+    {
+        if (carry.Length > 0)
+        {
+            onLine(new ExecOutputChunk(kind, carry.ToString()));
+            carry.Clear();
+        }
+    }
+
+    /// <summary>
     /// Opens a PTY-backed exec session via Docker's exec API with
     /// <c>Tty=true</c>. The Docker daemon allocates the PTY inside
     /// the container; we own the wire (the multiplexed stream) and

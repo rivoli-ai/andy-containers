@@ -16,6 +16,63 @@ public interface IContainerService
     Task DestroyContainerAsync(Guid containerId, CancellationToken ct = default);
     Task<ExecResult> ExecAsync(Guid containerId, string command, CancellationToken ct = default);
     Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct = default);
+
+    /// <summary>
+    /// F4.1 (rivoli-ai/conductor#1934). Streaming variant of
+    /// <see cref="ExecAsync(Guid, string, TimeSpan, CancellationToken)"/>:
+    /// the same exec, but each stdout/stderr line is surfaced to
+    /// <paramref name="onLine"/> as it is produced rather than buffered
+    /// until the process exits. Returns the same terminal
+    /// <see cref="ExecResult"/> (with the full buffered stdout/stderr)
+    /// so existing callers keep their exit-code + final-output contract.
+    /// </summary>
+    /// <remarks>
+    /// Honours decision #17 (no new Docker-Engine verb beyond the
+    /// existing exec/attach surface) — this is the same
+    /// <c>ExecCreate</c> + <c>StartAndAttach</c> path, read incrementally.
+    /// The default implementation delegates to the buffered overload and
+    /// then replays the final stdout/stderr as line callbacks, so
+    /// providers that can't stream (Apple, cloud) still deliver every
+    /// line — just all at once at the end rather than mid-run. Docker
+    /// overrides this to deliver lines live.
+    /// </remarks>
+    async Task<ExecResult> ExecStreamingAsync(
+        Guid containerId,
+        string command,
+        TimeSpan timeout,
+        Action<ExecOutputChunk> onLine,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+        var result = await ExecAsync(containerId, command, timeout, ct);
+        foreach (var line in SplitLines(result.StdOut))
+        {
+            onLine(new ExecOutputChunk(ExecStreamKind.Stdout, line));
+        }
+        foreach (var line in SplitLines(result.StdErr))
+        {
+            onLine(new ExecOutputChunk(ExecStreamKind.Stderr, line));
+        }
+        return result;
+    }
+
+    private static IEnumerable<string> SplitLines(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            yield break;
+        }
+        foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            // Skip a trailing empty fragment from a final newline so we
+            // don't emit a spurious blank line at end-of-output.
+            if (line.Length > 0)
+            {
+                yield return line;
+            }
+        }
+    }
+
     Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct = default);
     Task<ContainerStats> GetContainerStatsAsync(Guid containerId, CancellationToken ct = default);
     Task ResizeContainerAsync(Guid containerId, ResourceSpec resources, CancellationToken ct = default);

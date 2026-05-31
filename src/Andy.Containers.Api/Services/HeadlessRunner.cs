@@ -6,6 +6,7 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
+using Andy.Containers.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Andy.Containers.Api.Services;
@@ -27,6 +28,12 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // surfaces — so we only need null-tolerance here for the no-inputs
     // common case.
     private readonly IInputArtifactStager? _inputStager;
+    // F4.1 (rivoli-ai/conductor#1934). Optional mid-run output bus. When
+    // null, the spawn path is the pre-F4.1 buffered exec — no live feed,
+    // identical terminal behaviour. When wired, each andy-cli stdout/
+    // stderr line is published (token-redacted) as it lands, and the
+    // run's output stream is marked terminal on every exit path.
+    private readonly IRunOutputBus? _outputBus;
 
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
     // and exits with code 4 (→ RunEventKind.Timeout) when its CTS fires.
@@ -48,7 +55,8 @@ public sealed class HeadlessRunner : IHeadlessRunner
         ITokenIssuer tokens,
         ILogger<HeadlessRunner> logger,
         IOutputArtifactCollector? artifactCollector = null,
-        IInputArtifactStager? inputStager = null)
+        IInputArtifactStager? inputStager = null,
+        IRunOutputBus? outputBus = null)
     {
         _containers = containers;
         _db = db;
@@ -57,6 +65,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
         _logger = logger;
         _artifactCollector = artifactCollector;
         _inputStager = inputStager;
+        _outputBus = outputBus;
     }
 
     public async Task<HeadlessRunOutcome> StartAsync(Run run, string configPath, CancellationToken ct = default)
@@ -117,6 +126,15 @@ public sealed class HeadlessRunner : IHeadlessRunner
 
         var command = $"andy-cli run --headless --config {ShellEscape(configPath)}";
         var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
+
+        // F4.1 (#1934). Resolve the literal run-scoped token so the
+        // output redactor can mask it from any echoed line. MintAsync is
+        // idempotent — for a run that already minted (the common path,
+        // via the configurator) this returns the SAME token rather than
+        // a new one. A failure here must never block the run, so we fall
+        // back to redactor's defensive ANDY_TOKEN=<value> regex.
+        var knownToken = await ResolveKnownTokenAsync(run.Id, execToken);
+
         ExecResult result;
         try
         {
@@ -124,7 +142,19 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 "Spawning headless agent for Run {RunId} in container {ContainerId} with config {ConfigPath} (outer timeout {Seconds}s)",
                 run.Id, containerId, configPath, (int)execTimeout.TotalSeconds);
 
-            result = await _containers.ExecAsync(containerId, command, execTimeout, execToken);
+            if (_outputBus is not null)
+            {
+                // Mid-run live feed: publish each line as it lands,
+                // redacted, tagged with its stream kind.
+                result = await _containers.ExecStreamingAsync(
+                    containerId, command, execTimeout,
+                    chunk => PublishOutputLine(run.Id, chunk, knownToken),
+                    execToken);
+            }
+            else
+            {
+                result = await _containers.ExecAsync(containerId, command, execTimeout, execToken);
+            }
         }
         catch (OperationCanceledException) when (execToken.IsCancellationRequested)
         {
@@ -271,6 +301,23 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 run.Id, ex.Message);
         }
 
+        // F4.1 (#1934). Mark the mid-run output stream terminal so any
+        // attached SSE subscriber drains its buffer and disconnects
+        // cleanly. Idempotent; safe even when no line was ever published
+        // (e.g. a no-container Failed path) — late subscribers just see
+        // an empty, immediately-closed stream. Best-effort: a bus failure
+        // must not mask the terminal outcome.
+        try
+        {
+            _outputBus?.Complete(run.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to mark run-output stream terminal for Run {RunId}: {Message}",
+                run.Id, ex.Message);
+        }
+
         return new HeadlessRunOutcome
         {
             Kind = kind,
@@ -297,6 +344,56 @@ public sealed class HeadlessRunner : IHeadlessRunner
             _logger.LogWarning(ex,
                 "Run {RunId} could not transition {From} → {To}: {Message}",
                 run.Id, run.Status, next, ex.Message);
+        }
+    }
+
+    // F4.1 (#1934). Best-effort resolution of the literal run-scoped
+    // token for redaction. MintAsync is idempotent, so for an already-
+    // minted run this hands back the existing token without creating a
+    // new one. Any failure (issuer down, swallowed) returns null and the
+    // redactor falls back to its ANDY_TOKEN=<value> env-echo regex.
+    private async Task<string?> ResolveKnownTokenAsync(Guid runId, CancellationToken ct)
+    {
+        if (_outputBus is null)
+        {
+            return null;
+        }
+        try
+        {
+            var token = await _tokens.MintAsync(runId, ct);
+            return token.Token;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "F4.1: could not resolve run-scoped token for Run {RunId} redaction; relying on env-echo regex.",
+                runId);
+            return null;
+        }
+    }
+
+    // F4.1 (#1934). Publish one streamed exec line to the run-output bus,
+    // redacted. Never throws — a publish failure must not interrupt the
+    // exec drain loop.
+    private void PublishOutputLine(Guid runId, ExecOutputChunk chunk, string? knownToken)
+    {
+        try
+        {
+            var redacted = RunOutputRedactor.Redact(chunk.Line, knownToken);
+            var stream = chunk.Stream == ExecStreamKind.Stderr
+                ? RunOutputStream.Stderr
+                : RunOutputStream.Stdout;
+            _outputBus!.Publish(runId, new RunOutputLine(stream, redacted, DateTimeOffset.UtcNow));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "F4.1: failed to publish run-output line for Run {RunId}: {Message}",
+                runId, ex.Message);
         }
     }
 

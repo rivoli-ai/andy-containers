@@ -6,6 +6,7 @@ using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
+using Andy.Containers.Storage;
 using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -36,6 +37,7 @@ public class RunsController : ControllerBase
     private readonly IRunConfigurator _configurator;
     private readonly IRunModeDispatcher _dispatcher;
     private readonly IRunCancellationRegistry _cancellation;
+    private readonly IRunOutputBus _outputBus;
     private readonly ILogger<RunsController> _logger;
 
     public RunsController(
@@ -43,12 +45,14 @@ public class RunsController : ControllerBase
         IRunConfigurator configurator,
         IRunModeDispatcher dispatcher,
         IRunCancellationRegistry cancellation,
+        IRunOutputBus outputBus,
         ILogger<RunsController> logger)
     {
         _db = db;
         _configurator = configurator;
         _dispatcher = dispatcher;
         _cancellation = cancellation;
+        _outputBus = outputBus;
         _logger = logger;
     }
 
@@ -270,5 +274,34 @@ public class RunsController : ControllerBase
             await Response.WriteAsync("\n", ct);
             await Response.Body.FlushAsync(ct);
         }
+    }
+
+    /// <summary>
+    /// F4.1 (rivoli-ai/conductor#1934). Server-Sent Events stream of the
+    /// run's MID-RUN agent output. Each <c>event: log</c> frame carries a
+    /// <c>{stream, line, timestamp}</c> JSON payload; the <c>id:</c> line
+    /// is the per-run sequence number so a reconnecting client resumes via
+    /// <c>Last-Event-ID</c> with no duplicates and no gaps. The stream
+    /// closes after the run reaches a terminal status and the buffer is
+    /// drained (matching <see cref="RunEventStream"/> semantics). Run-scoped
+    /// tokens are redacted upstream by the runner before publish.
+    /// </summary>
+    /// <remarks>
+    /// Returns 404 if the run is unknown so callers don't sit on an empty
+    /// stream forever. Gated on <c>run:read</c> (consistent with
+    /// <see cref="Events"/>).
+    /// </remarks>
+    [HttpGet("{id:guid}/output")]
+    [RequirePermission("run:read")]
+    public async Task Output(Guid id, CancellationToken ct)
+    {
+        var exists = await _db.Runs.AsNoTracking().AnyAsync(r => r.Id == id, ct);
+        if (!exists)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        await RunOutputSse.StreamAsync(Response, Request, _outputBus, id, ct);
     }
 }
