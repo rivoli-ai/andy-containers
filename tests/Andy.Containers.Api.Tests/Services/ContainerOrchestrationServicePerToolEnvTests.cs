@@ -213,6 +213,82 @@ public class ContainerOrchestrationServicePerToolEnvTests : IDisposable
             "the per-container token still lands — it's useful for scripts that read it directly.");
     }
 
+    // rivoli-ai/conductor#1947. Per-run token attribution. The run/task/
+    // agent identity must be injected as ANDY_RUN_ID / ANDY_TASK_ID /
+    // ANDY_AGENT_ID so the in-container agent forwards them as
+    // X-Andy-* headers to andy-models — that's the prerequisite for the
+    // per-run usage query (#1948) and per-run cost slicing (#1949).
+    [Fact]
+    public async Task CreateContainer_WithRunAttribution_InjectsAndyRunTaskAgentEnvVars()
+    {
+        var (template, provider) = await SeedAsync();
+        var proxy = StubMintingToken("claude.jwt");
+        var service = MakeService(proxy);
+
+        await service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "headless-run",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            OwnerId = "user-1",
+            CodeAssistant = new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode },
+            RunId = "run-123",
+            TaskId = "task-456",
+            AttributionAgentId = "agent-789",
+        }, CancellationToken.None);
+
+        var env = (await ReadEnqueuedJobAsync()).EnvironmentVariables;
+        env.Should().NotBeNull();
+        env!["ANDY_RUN_ID"].Should().Be("run-123");
+        env["ANDY_TASK_ID"].Should().Be("task-456");
+        env["ANDY_AGENT_ID"].Should().Be("agent-789");
+    }
+
+    [Fact]
+    public async Task CreateContainer_WithoutRunAttribution_OmitsAndyRunTaskAgentEnvVars()
+    {
+        var (template, provider) = await SeedAsync();
+        var proxy = StubMintingToken("claude.jwt");
+        var service = MakeService(proxy);
+
+        await service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "no-run-context",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            OwnerId = "user-1",
+            CodeAssistant = new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode },
+        }, CancellationToken.None);
+
+        var env = (await ReadEnqueuedJobAsync()).EnvironmentVariables ?? new Dictionary<string, string>();
+        env.Should().NotContainKey("ANDY_RUN_ID");
+        env.Should().NotContainKey("ANDY_TASK_ID");
+        env.Should().NotContainKey("ANDY_AGENT_ID");
+    }
+
+    [Fact]
+    public async Task CreateContainer_RunAttribution_DoesNotOverrideCallerSuppliedEnvVar()
+    {
+        var (template, provider) = await SeedAsync();
+        var proxy = StubMintingToken("claude.jwt");
+        var service = MakeService(proxy);
+
+        await service.CreateContainerAsync(new CreateContainerRequest
+        {
+            Name = "explicit-run-env",
+            TemplateId = template.Id,
+            ProviderId = provider.Id,
+            OwnerId = "user-1",
+            CodeAssistant = new CodeAssistantConfig { Tool = CodeAssistantType.ClaudeCode },
+            RunId = "run-from-field",
+            EnvironmentVariables = new Dictionary<string, string> { ["ANDY_RUN_ID"] = "run-from-env" },
+        }, CancellationToken.None);
+
+        var env = (await ReadEnqueuedJobAsync()).EnvironmentVariables;
+        env!["ANDY_RUN_ID"].Should().Be("run-from-env",
+            "a caller-supplied env var must win over the request field — we never clobber an explicit value.");
+    }
+
     // -----------------------------------------------------------------
     // Helpers (mirror the proxy-token test file's setup)
     // -----------------------------------------------------------------
