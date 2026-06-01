@@ -119,6 +119,18 @@ public class CreateContainerRequest
     // the caller (e.g. andy-issues) can tie the run back to a UserStory.
     public Guid? StoryId { get; set; }
 
+    // rivoli-ai/conductor#1947. Per-run token attribution for headless
+    // agent runs. When set, these are injected into the container env as
+    // ANDY_RUN_ID / ANDY_TASK_ID / ANDY_AGENT_ID. The in-container agent
+    // forwards them as X-Andy-Run-Id / X-Andy-Task-Id / X-Andy-Agent-Id
+    // on every andy-models proxy call, so the resulting UsageEvent ledger
+    // rows and gen_ai.client.* metric records are attributable to this
+    // run/task/agent. All nullable — non-headless / non-run containers
+    // leave them unset and the env vars are simply omitted.
+    public string? RunId { get; set; }
+    public string? TaskId { get; set; }
+    public string? AttributionAgentId { get; set; }
+
     /// <summary>
     /// X4 (rivoli-ai/andy-containers#93). When set, the bound
     /// <c>EnvironmentProfile</c> overrides the template's base image

@@ -473,6 +473,19 @@ public class ContainerOrchestrationService : IContainerService
                 envVars[kv.Key] = kv.Value;
         }
 
+        // rivoli-ai/conductor#1947. Per-run token attribution. Inject the
+        // run/task/agent identity this container is executing so the
+        // in-container agent can forward them as X-Andy-Run-Id /
+        // X-Andy-Task-Id / X-Andy-Agent-Id on every andy-models proxy
+        // call — that's what makes a single headless run's token+cost
+        // usage queryable per run/task in the andy-models ledger and on
+        // the gen_ai metric stream. Nullable: a container with no run
+        // context leaves them unset and the env vars are omitted. We
+        // don't overwrite a value a caller already supplied explicitly.
+        InjectAttributionEnv(ref envVars, "ANDY_RUN_ID", request.RunId);
+        InjectAttributionEnv(ref envVars, "ANDY_TASK_ID", request.TaskId);
+        InjectAttributionEnv(ref envVars, "ANDY_AGENT_ID", request.AttributionAgentId);
+
         // #944. Inject the proxy URL + service token so a code
         // assistant installed inside the container can authenticate
         // against andy-models without the user supplying a token.
@@ -1007,4 +1020,18 @@ public class ContainerOrchestrationService : IContainerService
         CodeAssistantType.CodexCli => "OPENAI_MODEL",
         _ => "LLM_MODEL"
     };
+
+    // rivoli-ai/conductor#1947. Set a per-run attribution env var when a
+    // value is present, never overwriting one a caller already supplied.
+    // Blank/whitespace values are treated as "unset" so the env var is
+    // omitted rather than emitting an empty header downstream.
+    private static void InjectAttributionEnv(ref Dictionary<string, string>? envVars, string envVarName, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        envVars ??= new Dictionary<string, string>();
+        if (!envVars.ContainsKey(envVarName))
+        {
+            envVars[envVarName] = value.Trim();
+        }
+    }
 }
