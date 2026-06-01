@@ -50,7 +50,7 @@ public sealed class RunConfigurator : IRunConfigurator
         // half-configured deployment surfaces as a missing var rather
         // than a misleading value.
         var token = await _tokens.MintAsync(run.Id, ct);
-        spec = spec with { EnvVars = MergeRunSecrets(spec.EnvVars, token, _secrets.Value) };
+        spec = spec with { EnvVars = MergeRunSecrets(spec.EnvVars, token, _secrets.Value, run) };
 
         HeadlessRunConfig config;
         try
@@ -94,7 +94,7 @@ public sealed class RunConfigurator : IRunConfigurator
     // double) should not be silently overridden by the issuer; the
     // collision is intentional, not the platform's call to break.
     private static IReadOnlyDictionary<string, string> MergeRunSecrets(
-        IReadOnlyDictionary<string, string>? agentEnv, RunToken token, SecretsOptions secrets)
+        IReadOnlyDictionary<string, string>? agentEnv, RunToken token, SecretsOptions secrets, Run run)
     {
         var merged = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -102,6 +102,23 @@ public sealed class RunConfigurator : IRunConfigurator
         };
         if (!string.IsNullOrEmpty(secrets.ProxyUrl)) merged[EnvVarNames.AndyProxyUrl] = secrets.ProxyUrl;
         if (!string.IsNullOrEmpty(secrets.McpUrl)) merged[EnvVarNames.AndyMcpUrl] = secrets.McpUrl;
+
+        // Per-run token attribution (rivoli-ai/conductor#1947). The runner
+        // owns the run/task/agent identity; surface it to the agent as env
+        // vars so andy-cli stamps X-Andy-Run-Id / X-Andy-Task-Id /
+        // X-Andy-Agent-Id on every andy-models call. Run id and agent id
+        // are always present; task id is the run's correlation id (the
+        // andy-tasks task/goal it belongs to) — omitted when the run
+        // carries none, so non-plan runs leave the dimension null.
+        merged[EnvVarNames.AndyRunId] = run.Id.ToString();
+        if (!string.IsNullOrWhiteSpace(run.AgentId))
+        {
+            merged[EnvVarNames.AndyAgentId] = run.AgentId;
+        }
+        if (run.CorrelationId != Guid.Empty)
+        {
+            merged[EnvVarNames.AndyTaskId] = run.CorrelationId.ToString();
+        }
 
         if (agentEnv is { Count: > 0 })
         {

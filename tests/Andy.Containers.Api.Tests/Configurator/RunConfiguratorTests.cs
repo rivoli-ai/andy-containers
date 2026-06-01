@@ -202,6 +202,61 @@ public class RunConfiguratorTests
         captured.EnvVars.Should().NotContainKey(EnvVarNames.AndyMcpUrl);
     }
 
+    // Per-run token attribution (rivoli-ai/conductor#1947) ----------------
+
+    [Fact]
+    public async Task ConfigureAsync_InjectsRunTaskAgentAttributionEnvVars()
+    {
+        // The runner owns the run/task/agent identity; it must surface it
+        // to the agent as env vars so andy-cli can stamp the
+        // X-Andy-Run-Id / X-Andy-Task-Id / X-Andy-Agent-Id headers on
+        // every andy-models call.
+        var run = SeedRun();
+        var spec = TriageAgent();
+        AgentSpec? captured = null;
+        _agents.Setup(a => a.GetAgentAsync(run.AgentId, run.AgentRevision, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(spec);
+        _builder
+            .Setup(b => b.Build(run, It.IsAny<AgentSpec>()))
+            .Callback<Run, AgentSpec>((_, s) => captured = s)
+            .Returns(SampleConfig(run.Id));
+        _writer.Setup(w => w.WriteAsync(It.IsAny<HeadlessRunConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("/tmp/x/config.json");
+
+        var result = await CreateSut().ConfigureAsync(run);
+
+        result.IsSuccess.Should().BeTrue();
+        captured!.EnvVars![EnvVarNames.AndyRunId].Should().Be(run.Id.ToString());
+        captured.EnvVars[EnvVarNames.AndyTaskId].Should().Be(run.CorrelationId.ToString());
+        captured.EnvVars[EnvVarNames.AndyAgentId].Should().Be(run.AgentId);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_OmitsTaskAttribution_WhenRunHasNoCorrelation()
+    {
+        // A non-plan run (no andy-tasks correlation) leaves the task
+        // dimension null so andy-models won't attribute it to a task.
+        var run = SeedRun();
+        run.CorrelationId = Guid.Empty;
+        var spec = TriageAgent();
+        AgentSpec? captured = null;
+        _agents.Setup(a => a.GetAgentAsync(run.AgentId, run.AgentRevision, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(spec);
+        _builder
+            .Setup(b => b.Build(run, It.IsAny<AgentSpec>()))
+            .Callback<Run, AgentSpec>((_, s) => captured = s)
+            .Returns(SampleConfig(run.Id));
+        _writer.Setup(w => w.WriteAsync(It.IsAny<HeadlessRunConfig>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("/tmp/x/config.json");
+
+        await CreateSut().ConfigureAsync(run);
+
+        captured!.EnvVars!.Should().ContainKey(EnvVarNames.AndyRunId);
+        captured.EnvVars.Should().NotContainKey(EnvVarNames.AndyTaskId,
+            "a run without a correlation id must not emit a task attribution var");
+        captured.EnvVars![EnvVarNames.AndyAgentId].Should().Be(run.AgentId);
+    }
+
     private static Run SeedRun() => new()
     {
         Id = Guid.NewGuid(),

@@ -102,6 +102,7 @@ Three layers compose the final dictionary in `RunConfigurator.MergeRunSecrets`:
     - `ANDY_TOKEN` from `ITokenIssuer.MintAsync(run.Id)`.
     - `ANDY_PROXY_URL` from `Secrets:ProxyUrl` in appsettings (skipped when null/empty).
     - `ANDY_MCP_URL` from `Secrets:McpUrl` (skipped when null/empty).
+    - **Per-run token attribution (conductor#1947):** `ANDY_RUN_ID` (= `run.Id`), `ANDY_AGENT_ID` (= `run.AgentId`), and `ANDY_TASK_ID` (= `run.CorrelationId`, skipped when `Guid.Empty`). The agent reads these and stamps `X-Andy-Run-Id` / `X-Andy-Task-Id` / `X-Andy-Agent-Id` on every andy-models call so token usage + cost is attributable per run / task / agent. The runner owns this identity (it's on the `Run`); the agent is just the carrier.
 2. **Agent-supplied (`AgentSpec.EnvVars`):** merged on top.
 3. **Collision rule:** the agent's value wins. An agent author who pins `ANDY_TOKEN` for a test fixture is not silently overridden by the platform — the collision is intentional, not the platform's call to break.
 
