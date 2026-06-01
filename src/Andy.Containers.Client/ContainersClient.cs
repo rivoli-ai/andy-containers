@@ -101,6 +101,15 @@ public sealed class ContainersClient
         return (await r.Content.ReadFromJsonAsync<ConnectionInfoDto>(_json, ct))!;
     }
 
+    // F6.4 (rivoli-ai/conductor#1943): list the run container's mapped +
+    // discovered listening web ports for the embedded preview.
+    public async Task<ContainerPortsDto> GetPortsAsync(string id, CancellationToken ct = default)
+    {
+        var r = await _http.GetAsync($"api/containers/{id}/ports", ct);
+        await EnsureSuccessAsync(r, ct);
+        return (await r.Content.ReadFromJsonAsync<ContainerPortsDto>(_json, ct))!;
+    }
+
     public async Task<ProviderDto[]> GetProvidersAsync(CancellationToken ct = default)
     {
         var r = await _http.GetAsync("api/providers", ct);
@@ -350,7 +359,15 @@ public sealed class ContainersClient
     public record ContainerStatsDto(double CpuPercent, long MemoryUsageBytes, long MemoryLimitBytes,
         double MemoryPercent, long DiskUsageBytes, long DiskLimitBytes, double DiskPercent);
     public record ConnectionInfoDto(string? IpAddress, string? SshEndpoint, string? IdeEndpoint,
-        string? VncEndpoint, Dictionary<string, int>? PortMappings);
+        string? VncEndpoint, Dictionary<string, int>? PortMappings, string[]? WebAppEndpoints = null);
+
+    // F6.4 (rivoli-ai/conductor#1943). Wire shapes for GET /ports — kept in
+    // lockstep with the server-side ContainerPortsDto / MappedPortDto so
+    // schema drift is a compile break.
+    public record ContainerPortsDto(
+        MappedPortDto[] Mapped, int[] DiscoveredUnmapped, int? SuggestedAppPort);
+    public record MappedPortDto(
+        int ContainerPort, int HostPort, bool Listening, string WebEndpoint);
 
     // Workspaces (rivoli-ai/andy-containers#189). Slim wire shape pinned
     // here so a server-side EF schema change on Workspace doesn't ripple

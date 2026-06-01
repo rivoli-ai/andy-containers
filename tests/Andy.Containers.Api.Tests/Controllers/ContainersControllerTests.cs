@@ -33,7 +33,7 @@ public class ContainersControllerTests : IDisposable
         mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         var mockCredentialService = new Mock<IGitCredentialService>();
         var mockProbeService = new Mock<IGitRepositoryProbeService>();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, new Mock<IGitDiffService>().Object);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, new Mock<IGitDiffService>().Object, new Mock<IPortDiscoveryService>().Object);
     }
 
     public void Dispose()

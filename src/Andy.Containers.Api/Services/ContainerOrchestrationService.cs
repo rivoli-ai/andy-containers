@@ -959,6 +959,18 @@ public class ContainerOrchestrationService : IContainerService
         return await infra.GetConnectionInfoAsync(container.ExternalId, ct);
     }
 
+    public async Task<MappedPort> ExposePortAsync(Guid containerId, int containerPort, CancellationToken ct)
+    {
+        var container = await GetContainerAsync(containerId, ct);
+        if (container.ExternalId is null)
+            throw new InvalidOperationException("Container has no external ID");
+        if (container.Status != ContainerStatus.Running)
+            throw new InvalidOperationException($"Container is {container.Status}, must be Running to expose a port");
+
+        var infra = _providerFactory.GetProvider(container.Provider!);
+        return await infra.ExposePortAsync(container.ExternalId, containerPort, ct);
+    }
+
     public async Task<ContainerStats> GetContainerStatsAsync(Guid containerId, CancellationToken ct)
     {
         var container = await GetContainerAsync(containerId, ct);

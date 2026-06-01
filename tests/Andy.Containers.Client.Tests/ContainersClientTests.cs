@@ -153,6 +153,56 @@ public class ContainersClientTests
             .Where(e => e.StatusCode == HttpStatusCode.NotFound);
     }
 
+    // F6.4 (rivoli-ai/conductor#1943). Contract test: the client's
+    // ContainerPortsDto must deserialize the server-side ContainerPortsDto
+    // wire shape exactly (camelCase JSON → records), and hit the right URL.
+    // Pins the cross-repo contract so a server route/shape change is a build
+    // or test break, not a runtime KeyNotFoundException in the CLI/Conductor.
+    [Fact]
+    public async Task GetPortsAsync_ParsesServerShape_AndHitsCorrectUrl()
+    {
+        const string json =
+            """
+            {
+              "mapped": [
+                { "containerPort": 3000, "hostPort": 49001, "listening": true, "webEndpoint": "http://localhost:49001" }
+              ],
+              "discoveredUnmapped": [ 5173 ],
+              "suggestedAppPort": 3000
+            }
+            """;
+        var handler = new CannedHandler(json, "application/json");
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.local/") };
+        var client = new ContainersClient(http);
+
+        var ports = await client.GetPortsAsync("abc-123");
+
+        handler.LastMethod.Should().Be(HttpMethod.Get);
+        handler.LastRequestUri!.AbsolutePath.Should().Be("/api/containers/abc-123/ports");
+        ports.SuggestedAppPort.Should().Be(3000);
+        ports.DiscoveredUnmapped.Should().Equal(5173);
+        ports.Mapped.Should().ContainSingle();
+        ports.Mapped[0].ContainerPort.Should().Be(3000);
+        ports.Mapped[0].HostPort.Should().Be(49001);
+        ports.Mapped[0].Listening.Should().BeTrue();
+        ports.Mapped[0].WebEndpoint.Should().Be("http://localhost:49001");
+    }
+
+    [Fact]
+    public async Task GetPortsAsync_403Response_ThrowsContainersApiException()
+    {
+        var http = new HttpClient(new CannedHandler("forbidden", "text/plain", HttpStatusCode.Forbidden))
+        {
+            BaseAddress = new Uri("https://example.local/"),
+        };
+        var client = new ContainersClient(http);
+
+        var act = () => client.GetPortsAsync(Guid.NewGuid().ToString());
+
+        await act.Should().ThrowAsync<ContainersApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.Forbidden);
+    }
+
     private sealed class CannedHandler : HttpMessageHandler
     {
         private readonly byte[] _body;

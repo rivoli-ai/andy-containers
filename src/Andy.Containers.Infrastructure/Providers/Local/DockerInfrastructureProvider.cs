@@ -353,15 +353,48 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             }
         }
 
+        // F6.4 (#1943): every mapped port that isn't a reserved
+        // IDE/VNC/SSH endpoint is a candidate web app the run published —
+        // surface it as a loopback URL Conductor can preview via the
+        // UnifiedProxy.
+        var webApps = ports
+            .Where(kv => !ReservedContainerPorts.Contains(kv.Key))
+            .OrderBy(kv => kv.Key)
+            .Select(kv => $"http://localhost:{kv.Value}")
+            .ToList();
+
         return new ConnectionInfo
         {
             IpAddress = inspect.NetworkSettings?.IPAddress,
             PortMappings = ports,
             IdeEndpoint = ports.TryGetValue(8080, out var idePort) ? $"https://localhost:{idePort}" : null,
             VncEndpoint = ports.TryGetValue(6080, out var vncPort) ? $"https://localhost:{vncPort}" : null,
-            SshEndpoint = ports.TryGetValue(22, out var sshPort) ? $"ssh root@localhost -p {sshPort}" : null
+            SshEndpoint = ports.TryGetValue(22, out var sshPort) ? $"ssh root@localhost -p {sshPort}" : null,
+            WebAppEndpoints = webApps,
         };
     }
+
+    /// <summary>
+    /// Container ports reserved for the IDE (8080), noVNC (6080) and SSH
+    /// (22) endpoints — excluded from the generic web-app preview list.
+    /// F6.4 (#1943).
+    /// </summary>
+    internal static readonly HashSet<int> ReservedContainerPorts = new() { 22, 6080, 8080 };
+
+    /// <summary>
+    /// F6.4 (#1943). Docker cannot publish a new port on an already-running
+    /// container — it would require recreating it. We surface this as the
+    /// same <see cref="NotSupportedException"/>→400 the API uses for live
+    /// resource resize, telling the caller to publish the port at
+    /// create-time. Ports published at create-time are already returned by
+    /// <see cref="GetConnectionInfoAsync"/>. No new Docker-Engine verb
+    /// (decision #17).
+    /// </summary>
+    public Task<MappedPort> ExposePortAsync(string externalId, int containerPort, CancellationToken ct = default)
+        => throw new NotSupportedException(
+            $"Docker cannot publish container port {containerPort} on a running container; " +
+            "the container must be recreated with the port published. " +
+            "Ports published when the container was created are returned by GET /ports.");
 
     public async Task<ContainerStats> GetContainerStatsAsync(string externalId, CancellationToken ct)
     {

@@ -22,6 +22,7 @@ public class ContainersController : ControllerBase
     private readonly IGitRepositoryProbeService _probeService;
     private readonly IOrganizationMembershipService _orgMembership;
     private readonly IGitDiffService _gitDiffService;
+    private readonly IPortDiscoveryService _portDiscoveryService;
 
     public ContainersController(
         IContainerService containerService,
@@ -31,7 +32,8 @@ public class ContainersController : ControllerBase
         IGitCredentialService credentialService,
         IGitRepositoryProbeService probeService,
         IOrganizationMembershipService orgMembership,
-        IGitDiffService gitDiffService)
+        IGitDiffService gitDiffService,
+        IPortDiscoveryService portDiscoveryService)
     {
         _containerService = containerService;
         _currentUser = currentUser;
@@ -41,6 +43,7 @@ public class ContainersController : ControllerBase
         _probeService = probeService;
         _orgMembership = orgMembership;
         _gitDiffService = gitDiffService;
+        _portDiscoveryService = portDiscoveryService;
     }
 
     [HttpGet]
@@ -627,6 +630,67 @@ public class ContainersController : ControllerBase
             diff.RawPatch));
     }
 
+    /// <summary>
+    /// F6.4 (rivoli-ai/conductor#1943). Lists the run container's TCP ports:
+    /// those published to a host (loopback) port — so Conductor can preview a
+    /// web app the agent started over the UnifiedProxy — merged with ports
+    /// discovered listening inside the container via <c>ss</c>/<c>netstat</c>
+    /// (the exec surface; no new Docker-Engine verb, decision #17). A stopped
+    /// container / no-listening-port yields an empty-but-OK result.
+    /// </summary>
+    [HttpGet("{id:guid}/ports")]
+    [RequirePermission("container:read")]
+    public async Task<IActionResult> GetPorts(Guid id, CancellationToken ct)
+    {
+        var container = await _containerService.GetContainerAsync(id, ct);
+        if (!CanAccess(container)) return Forbid();
+
+        var ports = await _portDiscoveryService.GetPortsAsync(id, ct);
+
+        return Ok(new ContainerPortsDto(
+            ports.Mapped.Select(m => new MappedPortDto(
+                m.ContainerPort, m.HostPort, m.Listening, m.WebEndpoint)).ToList(),
+            ports.DiscoveredUnmapped,
+            ports.SuggestedAppPort));
+    }
+
+    /// <summary>
+    /// F6.4 (rivoli-ai/conductor#1943). Publishes a container port to a host
+    /// (loopback) port for the run's web preview. Docker can only publish at
+    /// create-time, so a running-container expose surfaces as a 400 with an
+    /// explanatory message (same pattern as live resource resize); providers
+    /// that can't add a live mapping also return 400. Requires
+    /// <c>container:execute</c> (it mutates the runtime mapping).
+    /// </summary>
+    [HttpPost("{id:guid}/ports/expose")]
+    [RequirePermission("container:execute")]
+    public async Task<IActionResult> ExposePort(Guid id, [FromBody] ExposePortRequest request, CancellationToken ct)
+    {
+        if (request.ContainerPort is <= 0 or > 65535)
+            return BadRequest(new { error = "containerPort must be between 1 and 65535." });
+
+        try
+        {
+            var container = await _containerService.GetContainerAsync(id, ct);
+            if (!CanAccess(container)) return Forbid();
+
+            var mapped = await _portDiscoveryService.ExposePortAsync(id, request.ContainerPort, ct);
+            return Ok(new MappedPortDto(mapped.ContainerPort, mapped.HostPort, mapped.Listening, mapped.WebEndpoint));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (NotSupportedException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     private bool CanAccess(Container container)
     {
         if (_currentUser.IsAdmin()) return true;
@@ -657,6 +721,29 @@ public record GitDiffFileDto(
     int? Deletions,
     string Patch,
     bool Truncated);
+
+/// <summary>
+/// Wire shape for <c>GET /api/containers/{id}/ports</c> (F6.4,
+/// rivoli-ai/conductor#1943). Conductor's web-preview port picker defaults to
+/// <see cref="SuggestedAppPort"/> and previews <see cref="MappedPortDto.WebEndpoint"/>
+/// through the UnifiedProxy.
+/// </summary>
+public record ContainerPortsDto(
+    IReadOnlyList<MappedPortDto> Mapped,
+    IReadOnlyList<int> DiscoveredUnmapped,
+    int? SuggestedAppPort);
+
+public record MappedPortDto(
+    int ContainerPort,
+    int HostPort,
+    bool Listening,
+    string WebEndpoint);
+
+/// <summary>Body for <c>POST /api/containers/{id}/ports/expose</c> (F6.4).</summary>
+public class ExposePortRequest
+{
+    public int ContainerPort { get; set; }
+}
 
 public record AddRepositoryDto
 {

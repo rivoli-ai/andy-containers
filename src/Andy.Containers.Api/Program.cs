@@ -168,6 +168,8 @@ try
     // F6.1 (rivoli-ai/conductor#1940): per-run branch + git-diff endpoint.
     builder.Services.AddScoped<IRunBranchService, RunBranchService>();
     builder.Services.AddScoped<IGitDiffService, GitDiffService>();
+    // F6.4 (rivoli-ai/conductor#1943): web-port discovery + expose endpoint.
+    builder.Services.AddScoped<IPortDiscoveryService, PortDiscoveryService>();
     builder.Services.AddSingleton<ICodeAssistantInstallService, CodeAssistantInstallService>();
     // rivoli-ai/conductor#945 (M1.5.3). Scoped so it pulls a fresh
     // IContainerService per call (which is itself scoped because it

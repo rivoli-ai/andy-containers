@@ -185,4 +185,5 @@ internal sealed class ProviderExecAdapter : IContainerService
     public Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<ContainerStats> GetContainerStatsAsync(Guid containerId, CancellationToken ct = default) => throw new NotSupportedException();
     public Task ResizeContainerAsync(Guid containerId, ResourceSpec resources, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<MappedPort> ExposePortAsync(Guid containerId, int containerPort, CancellationToken ct = default) => throw new NotSupportedException();
 }
