@@ -27,6 +27,28 @@ public interface IInfrastructureProvider
     // Connectivity
     Task<ConnectionInfo> GetConnectionInfoAsync(string externalId, CancellationToken ct = default);
 
+    /// <summary>
+    /// F6.4 (rivoli-ai/conductor#1943). Publishes a container TCP port to a
+    /// host (loopback) port so Conductor can preview a web app the agent
+    /// started, returning the resulting (containerPort → hostPort) mapping.
+    ///
+    /// Docker can only publish ports at create-time, so a provider that
+    /// cannot add a mapping to an already-running container MUST throw
+    /// <see cref="NotSupportedException"/> with an explanatory message — the
+    /// API surfaces it as a 400 (same pattern as live resource resize). The
+    /// common case (the app's port was published when the container was
+    /// created) is covered without this method: it surfaces through
+    /// <see cref="GetConnectionInfoAsync"/>'s <c>PortMappings</c>.
+    ///
+    /// The default throws — only providers that genuinely support live port
+    /// addition override it. Honours decision #17: no new Docker-Engine verb
+    /// (Docker's answer here is always "recreate", hence the throw).
+    /// </summary>
+    Task<MappedPort> ExposePortAsync(string externalId, int containerPort, CancellationToken ct = default)
+        => throw new NotSupportedException(
+            "This provider cannot add a port mapping to a running container. " +
+            "Publish the port when the container is created instead.");
+
     // Monitoring
     Task<ContainerStats> GetContainerStatsAsync(string externalId, CancellationToken ct = default);
 
@@ -227,6 +249,16 @@ public class ConnectionInfo
     public string? VncEndpoint { get; set; }
     public string? SshEndpoint { get; set; }
     public string? AgentEndpoint { get; set; }
+
+    /// <summary>
+    /// F6.4 (rivoli-ai/conductor#1943). Loopback URLs for web apps the run
+    /// published to a host port (the non-reserved <see cref="PortMappings"/>
+    /// entries, i.e. excluding IDE/VNC/SSH/agent), so Conductor can preview
+    /// them in an embedded browser through the UnifiedProxy. Each is
+    /// <c>http://localhost:&lt;hostPort&gt;</c>. Empty when the run exposed
+    /// no web port.
+    /// </summary>
+    public IReadOnlyList<string> WebAppEndpoints { get; set; } = new List<string>();
 }
 
 public class ExecResult

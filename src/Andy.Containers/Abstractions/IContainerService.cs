@@ -76,6 +76,16 @@ public interface IContainerService
     Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct = default);
     Task<ContainerStats> GetContainerStatsAsync(Guid containerId, CancellationToken ct = default);
     Task ResizeContainerAsync(Guid containerId, ResourceSpec resources, CancellationToken ct = default);
+
+    /// <summary>
+    /// F6.4 (rivoli-ai/conductor#1943). Publishes a container TCP port to a
+    /// host (loopback) port for the run's web preview, returning the mapping.
+    /// Throws <see cref="NotSupportedException"/> for providers that cannot
+    /// add a live mapping (Docker on a running container, Apple, cloud) — the
+    /// API surfaces that as a 400. Honours decision #17 (no new
+    /// Docker-Engine verb).
+    /// </summary>
+    Task<MappedPort> ExposePortAsync(Guid containerId, int containerPort, CancellationToken ct = default);
 }
 
 public class CreateContainerRequest

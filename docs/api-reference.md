@@ -24,6 +24,8 @@ All endpoints require authentication (JWT Bearer token) and RBAC permissions via
 | POST | `/containers/{id}/repositories` | container:write | Clone a new repository |
 | POST | `/containers/{id}/repositories/{repoId}/pull` | container:execute | Pull latest changes |
 | GET | `/containers/{id}/git/diff` | container:read | Unified git diff of the run branch vs base |
+| GET | `/containers/{id}/ports` | container:read | List the run container's TCP ports (mapped + discovered) for web preview |
+| POST | `/containers/{id}/ports/expose` | container:execute | Publish a container port to a host (loopback) port for preview |
 
 ### `GET /api/containers/{id}/git/diff`
 
@@ -71,6 +73,43 @@ avoid streaming large blobs through the proxy.
 `additions`/`deletions` are `null` for binary files. `rawPatch` concatenates
 every included file's patch so callers can render structured *or* fall back to
 the raw text. Parity: MCP tool `GetContainerGitDiff`, gRPC `GetContainerGitDiff`.
+
+### `GET /api/containers/{id}/ports`
+
+Lists the run container's TCP ports so Conductor can preview a web app the
+agent started. Combines the provider's static publish-on-create port mappings
+with a **live `ss -ltn` / `netstat` probe** run through the infrastructure
+provider's exec surface (ARCHITECTURE §16) — **not** a Docker-Engine verb
+(decision #17). Reached through the `UnifiedProxy` localhost surface.
+
+**RBAC:** `container:read`. A non-owner / non-admin gets `403`. A stopped
+container, or one with nothing listening, returns `200` with empty arrays.
+
+**Response (`200`):**
+
+```json
+{
+  "mapped": [
+    { "containerPort": 5173, "hostPort": 49160, "listening": true,
+      "webEndpoint": "http://localhost:49160" }
+  ],
+  "discoveredUnmapped": [8000],
+  "suggestedAppPort": 5173
+}
+```
+
+`mapped` ports are reachable from Conductor at `http://localhost:<hostPort>`
+via the UnifiedProxy. `discoveredUnmapped` are listening inside the container
+but not yet published. `suggestedAppPort` is the most likely web-app port
+(prefers common dev ports 3000/5173/8000/8080), `null` when nothing listens —
+Conductor defaults the Preview tab's picker to it.
+
+### `POST /api/containers/{id}/ports/expose`
+
+Publishes a container port to a host (loopback) port for preview. Body:
+`{ "containerPort": 8000 }` (1–65535, else `400`). Returns the resulting
+`MappedPortDto` (`200`). `404` for an unknown container, `403` for a
+non-owner, `400` when the runtime can't publish post-create.
 
 ## Templates
 

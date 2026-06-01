@@ -250,5 +250,7 @@ public class Ap6Aq3SmokeTests : IDisposable
             => throw new NotImplementedException();
         public Task ResizeContainerAsync(Guid containerId, ResourceSpec resources, CancellationToken ct = default)
             => throw new NotImplementedException();
+        public Task<MappedPort> ExposePortAsync(Guid containerId, int containerPort, CancellationToken ct = default)
+            => throw new NotImplementedException();
     }
 }
