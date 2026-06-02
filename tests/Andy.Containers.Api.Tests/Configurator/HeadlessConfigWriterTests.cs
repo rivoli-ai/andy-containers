@@ -2,32 +2,46 @@ using System.Text.Json;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Configurator;
 using FluentAssertions;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Configurator;
 
 // AP3 (rivoli-ai/andy-containers#105). Verifies the writer atomically
-// produces a snake_case JSON file under the embedded path. The hosted path
-// (/var/run/andy/runs) is not exercised here — it requires root on the
-// CI host and the path-selection branch is covered by HostEnvironment.
+// produces a snake_case JSON file under a config-driven runs-root.
+//
+// The path is now selected by explicit config (the `Containers:HeadlessRunsRoot`
+// setting / `ANDY_HEADLESS_RUNS_ROOT` env var), NOT by the retired "Embedded"
+// hosting environment (conductor: "remove embedded across the board" — the
+// daemon runs services as host processes, so the root-owned /var/run/andy
+// default broke the host daemon with an UnauthorizedAccessException). When
+// unset the writer defaults to a user-writable temp root.
 public class HeadlessConfigWriterTests : IDisposable
 {
     private readonly string _tempBase;
+    private readonly string _customRoot;
 
     public HeadlessConfigWriterTests()
     {
         _tempBase = Path.Combine(Path.GetTempPath(), "andy-containers", "runs");
+        _customRoot = Path.Combine(Path.GetTempPath(), "andy-containers-test-" + Guid.NewGuid().ToString("N"));
     }
 
     public void Dispose()
     {
-        // Tests above write under the OS temp dir. Best-effort cleanup of
-        // run subdirs created during this run; intentionally narrow so we
-        // never blow away unrelated state if Path.GetTempPath shifts.
-        if (!Directory.Exists(_tempBase)) return;
-        foreach (var dir in Directory.EnumerateDirectories(_tempBase))
+        // Best-effort cleanup of run subdirs created during this run;
+        // intentionally narrow so we never blow away unrelated state.
+        CleanupRunDirs(_tempBase);
+        if (Directory.Exists(_customRoot))
+        {
+            try { Directory.Delete(_customRoot, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    private static void CleanupRunDirs(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        foreach (var dir in Directory.EnumerateDirectories(root))
         {
             if (Guid.TryParse(Path.GetFileName(dir), out _))
             {
@@ -36,15 +50,29 @@ public class HeadlessConfigWriterTests : IDisposable
         }
     }
 
+    // Empty configuration → no env var, no setting → user-writable temp default.
+    private static IConfiguration EmptyConfig() =>
+        new ConfigurationBuilder().AddInMemoryCollection().Build();
+
+    private static IConfiguration ConfigWithRoot(string root) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Containers:HeadlessRunsRoot"] = root,
+            })
+            .Build();
+
     [Fact]
-    public async Task WriteAsync_Embedded_WritesSnakeCaseJsonUnderTempRoot()
+    public async Task WriteAsync_DefaultsToUserWritableTempRoot()
     {
-        var writer = new HeadlessConfigWriter(new FakeEnv(HostEnvironmentExtensions.EmbeddedEnvironmentName));
+        var writer = new HeadlessConfigWriter(EmptyConfig());
         var config = SampleConfig();
 
         var path = await writer.WriteAsync(config);
 
-        path.Should().StartWith(_tempBase);
+        path.Should().StartWith(_tempBase,
+            "with no configured runs-root the writer must default to the user-writable temp dir, " +
+            "never the root-owned /var/run/andy that breaks the host daemon");
         File.Exists(path).Should().BeTrue();
 
         var json = await File.ReadAllTextAsync(path);
@@ -59,9 +87,23 @@ public class HeadlessConfigWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task WriteAsync_HonorsConfiguredRunsRoot()
+    {
+        var writer = new HeadlessConfigWriter(ConfigWithRoot(_customRoot));
+        var config = SampleConfig();
+
+        var path = await writer.WriteAsync(config);
+
+        path.Should().StartWith(_customRoot,
+            "an explicit Containers:HeadlessRunsRoot must be honored so hosted/Docker deployments " +
+            "can still target /var/run/andy/runs");
+        File.Exists(path).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task WriteAsync_OverwritesExistingFile()
     {
-        var writer = new HeadlessConfigWriter(new FakeEnv(HostEnvironmentExtensions.EmbeddedEnvironmentName));
+        var writer = new HeadlessConfigWriter(EmptyConfig());
         var config = SampleConfig();
 
         var first = await writer.WriteAsync(config);
@@ -76,7 +118,7 @@ public class HeadlessConfigWriterTests : IDisposable
     [Fact]
     public async Task WriteAsync_LeavesNoTmpFileBehind()
     {
-        var writer = new HeadlessConfigWriter(new FakeEnv(HostEnvironmentExtensions.EmbeddedEnvironmentName));
+        var writer = new HeadlessConfigWriter(EmptyConfig());
         var config = SampleConfig();
 
         var path = await writer.WriteAsync(config);
@@ -88,7 +130,7 @@ public class HeadlessConfigWriterTests : IDisposable
     [Fact]
     public async Task WriteAsync_EmptyRunId_Throws()
     {
-        var writer = new HeadlessConfigWriter(new FakeEnv(HostEnvironmentExtensions.EmbeddedEnvironmentName));
+        var writer = new HeadlessConfigWriter(EmptyConfig());
         var config = SampleConfig() with { RunId = Guid.Empty };
 
         var act = async () => await writer.WriteAsync(config);
@@ -106,13 +148,4 @@ public class HeadlessConfigWriterTests : IDisposable
         Output = new HeadlessOutput { File = "/workspace/.andy-run/output.json", Stream = "stdout" },
         Limits = new HeadlessLimits { MaxIterations = 50, TimeoutSeconds = 300 },
     };
-
-    private sealed class FakeEnv : IHostEnvironment
-    {
-        public FakeEnv(string name) { EnvironmentName = name; }
-        public string EnvironmentName { get; set; }
-        public string ApplicationName { get; set; } = "test";
-        public string ContentRootPath { get; set; } = "/";
-        public IFileProvider ContentRootFileProvider { get; set; } = null!;
-    }
 }
