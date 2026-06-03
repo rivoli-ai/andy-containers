@@ -26,9 +26,9 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             OutputFormat = "json-triage-output-v1",
             Model = new AgentSpecModel
             {
-                Provider = "anthropic",
-                Id = "claude-sonnet-4-6",
-                ApiKeyRef = "env:ANDY_MODEL_KEY",
+                Provider = "openrouter",
+                Id = "xiaomi/mimo-v2.5",
+                ApiKeyRef = "env:OPENROUTER_API_KEY",
             },
             Tools = new[]
             {
@@ -44,9 +44,9 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             OutputFormat = "json-plan-v1",
             Model = new AgentSpecModel
             {
-                Provider = "anthropic",
-                Id = "claude-opus-4-7",
-                ApiKeyRef = "env:ANDY_MODEL_KEY",
+                Provider = "openrouter",
+                Id = "xiaomi/mimo-v2.5",
+                ApiKeyRef = "env:OPENROUTER_API_KEY",
             },
             Tools = new[]
             {
@@ -62,9 +62,9 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             OutputFormat = "plain",
             Model = new AgentSpecModel
             {
-                Provider = "anthropic",
-                Id = "claude-sonnet-4-6",
-                ApiKeyRef = "env:ANDY_MODEL_KEY",
+                Provider = "openrouter",
+                Id = "xiaomi/mimo-v2.5",
+                ApiKeyRef = "env:OPENROUTER_API_KEY",
             },
             Tools = new[]
             {

@@ -473,6 +473,14 @@ public class ContainerOrchestrationService : IContainerService
                 envVars[kv.Key] = kv.Value;
         }
 
+        // Merge template-default env vars (lowest precedence — codeAssistant
+        // config and explicit request env both win). This is how a template
+        // ships standing configuration: an agent-runtime template (e.g.
+        // andy-cli-agent) carries its provider/model defaults so a container
+        // launched from the catalog — including from the Sessions UI, which
+        // sends only templateCode and no env — comes up configured.
+        envVars = MergeTemplateEnvDefaults(envVars, template.EnvironmentVariables, template.Code, _logger);
+
         // rivoli-ai/conductor#1947. Per-run token attribution. Inject the
         // run/task/agent identity this container is executing so the
         // in-container agent can forward them as X-Andy-Run-Id /
@@ -1011,6 +1019,52 @@ public class ContainerOrchestrationService : IContainerService
 
         _logger.LogInformation("Container {ContainerId} resized to {CpuCores} CPU, {MemoryMb}MB RAM",
             containerId, resources.CpuCores, resources.MemoryMb);
+    }
+
+    /// <summary>
+    /// Merges a template's JSON-encoded default environment variables into the
+    /// container env, WITHOUT overriding any key already set (codeAssistant
+    /// config and explicit request env both take precedence). This is how a
+    /// template ships standing configuration so a container launched from the
+    /// catalog — including the Sessions UI, which sends only templateCode and no
+    /// env — comes up configured. Null/empty input and invalid JSON are ignored
+    /// (the latter logged), never throwing out of the create path.
+    /// </summary>
+    internal static Dictionary<string, string>? MergeTemplateEnvDefaults(
+        Dictionary<string, string>? envVars,
+        string? templateEnvJson,
+        string templateCode,
+        ILogger logger)
+    {
+        if (string.IsNullOrEmpty(templateEnvJson))
+        {
+            return envVars;
+        }
+
+        Dictionary<string, string>? templateEnv;
+        try
+        {
+            templateEnv = JsonSerializer.Deserialize<Dictionary<string, string>>(templateEnvJson);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex,
+                "Failed to parse EnvironmentVariables for template {TemplateCode}", templateCode);
+            return envVars;
+        }
+
+        if (templateEnv is not { Count: > 0 })
+        {
+            return envVars;
+        }
+
+        envVars ??= new Dictionary<string, string>();
+        foreach (var kv in templateEnv.Where(kv => !envVars.ContainsKey(kv.Key)))
+        {
+            envVars[kv.Key] = kv.Value;
+        }
+
+        return envVars;
     }
 
     private static string GetDefaultModelEnvVar(CodeAssistantType tool) => tool switch
