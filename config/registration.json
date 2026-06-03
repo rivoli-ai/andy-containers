@@ -25,7 +25,7 @@
       "clientSecretEnvVar": "ANDY_CONTAINERS_API_SECRET",
       "displayName": "Andy Containers API",
       "description": "Service-to-service client for Andy Containers (M2M token consumer for #944).",
-      "grantTypes": ["authorization_code", "refresh_token", "client_credentials"],
+      "grantTypes": ["authorization_code", "refresh_token", "client_credentials", "token_exchange"],
       "scopes": [
         "email",
         "profile",
