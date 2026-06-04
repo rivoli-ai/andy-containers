@@ -218,6 +218,13 @@ try
     // (subscribers), which live in different request scopes.
     builder.Services.AddSingleton<Andy.Containers.Storage.IRunOutputBus, Andy.Containers.Infrastructure.Runs.Events.InMemoryRunOutputBus>();
 
+    // SM.2.6 (rivoli-ai/conductor#2008). Fleet-wide lifecycle phase bus.
+    // Singleton — the provisioning worker and orchestration service publish
+    // one event per phase change; GET /api/containers/events subscribes and
+    // streams them to Conductor's SM.4 ContainerLifecycle machine.
+    builder.Services.AddSingleton<Andy.Containers.Storage.IContainerLifecycleBus,
+        Andy.Containers.Infrastructure.Runs.Events.InMemoryContainerLifecycleBus>();
+
     // Current user service for RBAC
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();

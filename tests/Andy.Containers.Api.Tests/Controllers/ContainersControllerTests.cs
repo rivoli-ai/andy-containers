@@ -5,6 +5,7 @@ using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using Xunit;
@@ -33,7 +34,13 @@ public class ContainersControllerTests : IDisposable
         mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         var mockCredentialService = new Mock<IGitCredentialService>();
         var mockProbeService = new Mock<IGitRepositoryProbeService>();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, new Mock<IGitDiffService>().Object, new Mock<IPortDiscoveryService>().Object);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, new Mock<IGitDiffService>().Object, new Mock<IPortDiscoveryService>().Object, new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object);
+        // SM.2.6: the Get action writes X-Correlation-Id to Response.Headers;
+        // supply a DefaultHttpContext so the header write doesn't NRE.
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext(),
+        };
     }
 
     public void Dispose()
@@ -118,7 +125,10 @@ public class ContainersControllerTests : IDisposable
 
         var result = await _controller.Get(id, CancellationToken.None);
 
-        result.Should().BeOfType<NotFoundResult>();
+        // SM.2.6: 404 now returns a structured envelope (NotFoundObjectResult)
+        // so Conductor's §7.2 helper can distinguish it from a transient 503.
+        result.Should().BeOfType<NotFoundObjectResult>()
+            .Which.StatusCode.Should().Be(404);
     }
 
     [Fact]
