@@ -243,13 +243,18 @@ public class ImagesController : ControllerBase
         // SSE wire format: id:, event:, data: lines, terminated by
         // a blank line. The event name is lowercase-kebab to match
         // the IM5 OpenAPI BuildEvent.type discriminator.
+        // SM.2.7 (rivoli-ai/conductor#2009): two new event types added —
+        //   build-failed  (BuildFailureEvent)  — structured failure taxonomy
+        //   cached        (BuildCachedEvent)   — explicit cache-hit signal
         var name = envelope.Event switch
         {
             BuildStepStartedEvent => "step-start",
-            BuildStepStdoutEvent => "step-stdout",
-            BuildStepErrorEvent => "step-error",
-            BuildCompletedEvent => "complete",
-            _ => "unknown",
+            BuildStepStdoutEvent  => "step-stdout",
+            BuildStepErrorEvent   => "step-error",
+            BuildFailureEvent     => "build-failed",
+            BuildCachedEvent      => "cached",
+            BuildCompletedEvent   => "complete",
+            _                     => "unknown",
         };
         // Surfaced by the SSE wire-format integration test (#272 / sse-wire-format-test):
         //   1. JsonSerializer.Serialize<object>(value) uses the

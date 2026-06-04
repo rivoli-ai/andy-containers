@@ -241,7 +241,7 @@ Full OpenAPI spec lands in story IM5. Preview:
 | `GET /api/templates/{templateId}` | Return template metadata. |
 | `POST /api/images/{templateId}/build` | Trigger a build. Returns `{ buildId, status: "queued" }`. **Async** — see SSE below. If `specHash` already resolves to a `BuildArtifact` in the primary registry, returns the existing artifact reference immediately with `status: "cached"`. |
 | `GET /api/images/build/{buildId}` | Build status snapshot: `{ status, digest?, references[], buildLog? }`. |
-| `GET /api/images/build/{buildId}/events` | **Server-Sent Events** stream of build progress (`step-start`, `step-stdout`, `step-error`, `complete`). |
+| `GET /api/images/build/{buildId}/events` | **Server-Sent Events** stream of build progress (`step-start`, `step-stdout`, `step-error`, `cached`, `build-failed`, `complete`). See §BuildEvent failure taxonomy below. |
 | `GET /api/images` | List all `BuildArtifact`s. Each entry includes `references[]` per registry. |
 | `GET /api/images/{digest}` | Get a single artifact by digest. |
 | `DELETE /api/images/{digest}/references/{referenceId}` | Untag a reference (does not delete the artifact). Admin-only. |
@@ -256,6 +256,50 @@ Full OpenAPI spec lands in story IM5. Preview:
 | **`specHash` idempotent on register** | Re-uploading the same spec returns the existing template ID, no duplicate rows |
 | **Build response shape is registry-aware** (`{ digest, references[] }`) | The API works the same in solo and cloud modes; the references array changes |
 | **Content-addressable cache hit** on register-then-build | Skip rebuild if `specHash → digest` is already known in the primary registry |
+
+### BuildEvent failure taxonomy (SM.2.7 / rivoli-ai/conductor#2009)
+
+The build/pull SSE stream emits two typed events in addition to the existing `step-*` events:
+
+#### `cached` event
+
+Emitted on every cache hit so the consumer can reconcile against an "already present" state without inferring from silence or from the synchronous `status:"cached"` on the initial HTTP response. Aligns with Conductor's `registrySeedingPullCompleted(alreadyPresent: true)` semantics.
+
+```json
+{ "timestamp": "2026-06-04T12:00:00Z", "digest": "sha256:abc..." }
+```
+
+`digest` may be `null` when the cache hit was detected before the digest was resolved.
+
+#### `build-failed` event
+
+Emitted before the terminal `complete` event on every failure path. Carries a stable `reason` enum and a `transient` boolean so consumers can decide between retry (transient) and surface-terminal (permanent) without parsing free-text.
+
+```json
+{
+  "timestamp": "2026-06-04T12:00:00Z",
+  "reason": "registryUnreachable",
+  "transient": true,
+  "detail": "connection refused"
+}
+```
+
+Failure reason taxonomy and transient/permanent classification:
+
+| `reason`              | `transient` | Triggering condition                                            |
+|-----------------------|-------------|-----------------------------------------------------------------|
+| `registryUnreachable` | `true`      | DNS/TCP/TLS failure; retry after back-off                      |
+| `engineUnavailable`   | `true`      | Docker/container engine down or failed to start                |
+| `pullInterrupted`     | `true`      | Mid-transfer timeout or network drop                           |
+| `manifestUnknown`     | `false`     | Tag/repo not found in the registry                             |
+| `digestMismatch`      | `false`     | Pulled digest differs from expected/pinned value               |
+| `imagePullFailed`     | `false`     | Pull completed but image failed verification or policy         |
+| `unknown`             | `false`     | Unclassified failure; surface to operator                      |
+
+`transient: true` → the consumer may retry after exponential back-off.
+`transient: false` → the consumer must surface a terminal error; retry will not help.
+
+Image Pull stays a DTO consumed by `ContainerLifecycle` — no independent state machine. The failure taxonomy is the PREREQ that unblocks SM.2 (the `ContainerLifecycle` machine) from needing to treat image pull as a separate machine; it instead consumes failure reason as `phaseData`. See `docs/architecture/state-machine-adoption-spec.md §3`.
 
 ## Cross-cutting security implications
 
