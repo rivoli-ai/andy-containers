@@ -61,6 +61,23 @@ public sealed class AsyncBuildExecutor : IAsyncBuildExecutor
                 var cached = await orchestrator.TryCacheHitAsync(request, ct);
                 if (cached is not null)
                 {
+                    // SM.2.7 (rivoli-ai/conductor#2009). Emit an explicit
+                    // .cached SSE event so consumers can reconcile against a
+                    // "present" state without inferring from silence or the
+                    // synchronous status:"cached" on the initial HTTP response.
+                    _bus.Publish(cached.BuildId, new BuildCachedEvent
+                    {
+                        Timestamp = DateTimeOffset.UtcNow,
+                        Digest = cached.Digest,
+                    });
+                    // Terminal complete event — keeps consumers that only
+                    // watch for BuildCompletedEvent working unchanged.
+                    _bus.Publish(cached.BuildId, new BuildCompletedEvent
+                    {
+                        Timestamp = DateTimeOffset.UtcNow,
+                        Outcome = BuildOutcome.Succeeded,
+                        Digest = cached.Digest,
+                    });
                     return new AsyncBuildHandle(cached.BuildId, AsyncBuildHandleStatus.Cached, cached);
                 }
             }
@@ -127,6 +144,24 @@ public sealed class AsyncBuildExecutor : IAsyncBuildExecutor
                 };
             _registry.Update(buildId, terminal);
 
+            // SM.2.7 (rivoli-ai/conductor#2009). Before the terminal
+            // BuildCompletedEvent, emit a structured BuildFailureEvent when
+            // the build failed — consumers key on Reason+Transient to decide
+            // between retry and surface-terminal. The completed event still
+            // fires so consumers with a single terminal-event handler keep
+            // working unchanged.
+            if (result.Status == BuildResultStatus.Failed)
+            {
+                var (reason, transient) = ClassifyFailure(result.ErrorCode);
+                _bus.Publish(buildId, new BuildFailureEvent
+                {
+                    Timestamp = DateTimeOffset.UtcNow,
+                    Reason = reason,
+                    Transient = transient,
+                    Detail = result.ErrorMessage,
+                });
+            }
+
             // Publish a terminal event for SSE consumers if the
             // orchestrator hasn't already (the build backend may
             // have emitted its own complete event during run; the
@@ -179,6 +214,16 @@ public sealed class AsyncBuildExecutor : IAsyncBuildExecutor
                     ErrorMessage = ex.Message,
                 });
             }
+            // SM.2.7 (rivoli-ai/conductor#2009). Unexpected exceptions are
+            // classified as Unknown/permanent so the consumer surfaces them
+            // as terminal rather than retrying indefinitely.
+            _bus.Publish(buildId, new BuildFailureEvent
+            {
+                Timestamp = DateTimeOffset.UtcNow,
+                Reason = BuildFailureReason.Unknown,
+                Transient = false,
+                Detail = ex.Message,
+            });
             _bus.Publish(buildId, new BuildCompletedEvent
             {
                 Timestamp = DateTimeOffset.UtcNow,
@@ -186,6 +231,62 @@ public sealed class AsyncBuildExecutor : IAsyncBuildExecutor
                 FailureReason = ex.Message,
             });
         }
+    }
+
+    /// <summary>
+    /// SM.2.7 (rivoli-ai/conductor#2009). Map a build orchestrator
+    /// error code to a structured <see cref="BuildFailureReason"/> +
+    /// transient flag. The error codes come from
+    /// <see cref="Andy.Containers.Storage.IImageBuildOrchestrator"/>
+    /// failure paths and the <see cref="Andy.Containers.Abstractions.Images.IImagePullService"/>
+    /// <c>ImagePullException.Code</c> taxonomy.
+    /// </summary>
+    internal static (BuildFailureReason reason, bool transient) ClassifyFailure(string? errorCode)
+    {
+        if (string.IsNullOrEmpty(errorCode))
+            return (BuildFailureReason.Unknown, false);
+
+        // Docker engine / pull service engine-launch failures — transient.
+        if (errorCode.StartsWith("ensure_pull_docker_launch_failed", StringComparison.OrdinalIgnoreCase) ||
+            errorCode.Equals("engine_unavailable", StringComparison.OrdinalIgnoreCase))
+        {
+            return (BuildFailureReason.EngineUnavailable, true);
+        }
+
+        // Registry connectivity — transient.
+        if (errorCode.StartsWith("registry.unreachable", StringComparison.OrdinalIgnoreCase) ||
+            errorCode.StartsWith("ensure_pull_docker_nonzero_exit", StringComparison.OrdinalIgnoreCase))
+        {
+            // Heuristic: nonzero exit from docker pull is most often a
+            // transient network problem; we classify conservatively as
+            // RegistryUnreachable/transient. More specific codes override.
+            return (BuildFailureReason.RegistryUnreachable, true);
+        }
+
+        // Manifest not found — permanent.
+        if (errorCode.StartsWith("registry.manifest_unknown", StringComparison.OrdinalIgnoreCase) ||
+            errorCode.StartsWith("manifest_unknown", StringComparison.OrdinalIgnoreCase) ||
+            errorCode.Equals("image.not-found", StringComparison.OrdinalIgnoreCase))
+        {
+            return (BuildFailureReason.ManifestUnknown, false);
+        }
+
+        // Digest mismatch — permanent.
+        if (errorCode.StartsWith("registry.digest_mismatch", StringComparison.OrdinalIgnoreCase) ||
+            errorCode.StartsWith("digest_mismatch", StringComparison.OrdinalIgnoreCase))
+        {
+            return (BuildFailureReason.DigestMismatch, false);
+        }
+
+        // General pull failure (policy, verification, etc.) — permanent.
+        if (errorCode.StartsWith("ensure_pull_push_succeeded_but_lookup_failed", StringComparison.OrdinalIgnoreCase) ||
+            errorCode.StartsWith("image_pull_failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return (BuildFailureReason.ImagePullFailed, false);
+        }
+
+        // Fallback: surface as Unknown/permanent so the operator sees it.
+        return (BuildFailureReason.Unknown, false);
     }
 
     private static BuildExecutionStatus MapStatus(BuildResultStatus status) => status switch
