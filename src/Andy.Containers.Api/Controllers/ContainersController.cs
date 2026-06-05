@@ -2,6 +2,7 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
+using Andy.Containers.Storage;
 using Andy.Rbac.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,6 +24,7 @@ public class ContainersController : ControllerBase
     private readonly IOrganizationMembershipService _orgMembership;
     private readonly IGitDiffService _gitDiffService;
     private readonly IPortDiscoveryService _portDiscoveryService;
+    private readonly IContainerLifecycleBus _lifecycleBus;
 
     public ContainersController(
         IContainerService containerService,
@@ -33,7 +35,8 @@ public class ContainersController : ControllerBase
         IGitRepositoryProbeService probeService,
         IOrganizationMembershipService orgMembership,
         IGitDiffService gitDiffService,
-        IPortDiscoveryService portDiscoveryService)
+        IPortDiscoveryService portDiscoveryService,
+        IContainerLifecycleBus lifecycleBus)
     {
         _containerService = containerService;
         _currentUser = currentUser;
@@ -44,6 +47,7 @@ public class ContainersController : ControllerBase
         _orgMembership = orgMembership;
         _gitDiffService = gitDiffService;
         _portDiscoveryService = portDiscoveryService;
+        _lifecycleBus = lifecycleBus;
     }
 
     [HttpGet]
@@ -105,6 +109,50 @@ public class ContainersController : ControllerBase
         return Ok(new { items = containers, totalCount });
     }
 
+    /// <summary>
+    /// SM.2.6 (rivoli-ai/conductor#2008). Fleet-wide container lifecycle
+    /// phase SSE stream. Emits one <c>event: lifecycle</c> frame per
+    /// container state transition (pending → creating → running → … →
+    /// failed / exited / destroyed). Heartbeat comment frames every 15 s.
+    /// The stream stays open until the client disconnects.
+    /// </summary>
+    /// <remarks>
+    /// Wire format (docs/api-contracts/andy-containers.md §lifecycle):
+    /// <code>
+    /// id: &lt;sequence&gt;
+    /// event: lifecycle
+    /// data: {"containerId":"...","phase":"running","phaseData":{},"correlationId":"...","timestamp":"..."}
+    /// </code>
+    /// Resume via <c>Last-Event-ID</c>; the bus replays buffered events
+    /// from after the supplied id. On buffer miss (id too old) replay
+    /// restarts from the oldest buffered event.
+    /// RBAC: <c>container:read</c>. The bus delivers ALL containers; the
+    /// client filters to the containers it owns.
+    /// </remarks>
+    [HttpGet("events")]
+    [RequirePermission("container:read")]
+    public Task Events(CancellationToken ct)
+        => ContainerLifecycleSse.StreamAsync(Response, Request, _lifecycleBus, ct);
+
+    /// <summary>
+    /// SM.2.6 (rivoli-ai/conductor#2008). Classified GET — returns:
+    /// <list type="bullet">
+    ///   <item><c>200 OK</c> — container found and accessible.</item>
+    ///   <item><c>404 Not Found</c> — container confirmed deleted or never
+    ///     existed (SUSTAINED; caller SHOULD NOT retry without user action).
+    ///     Body: <c>{ code, message, correlationId }</c>.</item>
+    ///   <item><c>503 Service Unavailable</c> — infrastructure provider
+    ///     transiently unreachable; row exists but runtime state unknown
+    ///     (TRANSIENT; caller SHOULD retry after <c>Retry-After</c>
+    ///     seconds). Body: <c>{ code, message, correlationId }</c>.</item>
+    ///   <item><c>401 Unauthorized</c> — missing / invalid bearer token
+    ///     (standard HTTP auth, handled by middleware before reaching this
+    ///     action, but documented for Conductor's §7.2 classifier).</item>
+    /// </list>
+    /// The <c>X-Correlation-Id</c> response header mirrors
+    /// <c>correlationId</c> in the body so log aggregators can correlate
+    /// without parsing JSON.
+    /// </summary>
     [HttpGet("{id:guid}")]
     [RequirePermission("container:read")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
@@ -114,11 +162,38 @@ public class ContainersController : ControllerBase
             var container = await _containerService.GetContainerAsync(id, ct);
             if (!CanAccess(container))
                 return Forbid();
+
+            // SM.2.6: attach correlation id header to every 200 response so
+            // the Conductor §7.2 helper can correlate status responses with
+            // concurrent lifecycle SSE events.
+            var correlationId = container.StoryId ?? container.Id;
+            Response.Headers["X-Correlation-Id"] = correlationId.ToString();
             return Ok(container);
         }
         catch (KeyNotFoundException)
         {
-            return NotFound();
+            // Confirmed deletion — sustained 404.
+            var correlationId = id; // no container row to derive StoryId from
+            Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+            return NotFound(new
+            {
+                code = ContainerNotFoundException.ErrorCode,
+                message = $"Container {id} not found.",
+                correlationId,
+            });
+        }
+        catch (ContainerRuntimeUnavailableException ex)
+        {
+            // Transient provider/proxy failure — 503 with Retry-After.
+            Response.Headers["X-Correlation-Id"] = ex.CorrelationId.ToString();
+            Response.Headers["Retry-After"] = ex.RetryAfterSeconds.ToString();
+            return StatusCode(503, new
+            {
+                code = ContainerRuntimeUnavailableException.ErrorCode,
+                message = ex.Message,
+                correlationId = ex.CorrelationId,
+                retryAfterSeconds = ex.RetryAfterSeconds,
+            });
         }
     }
 

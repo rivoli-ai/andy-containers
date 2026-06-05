@@ -65,6 +65,7 @@ public class ContainerProvisioningWorkerTests : IDisposable
             _queue,
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockProviderFactory.Object,
+            new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object,
             NullLogger<ContainerProvisioningWorker>.Instance);
     }
 

@@ -46,7 +46,8 @@ public class ContainersControllerRetryInstallTests : IDisposable
             _mockProbe.Object,
             _mockOrgMembership.Object,
             new Mock<IGitDiffService>().Object,
-            new Mock<IPortDiscoveryService>().Object);
+            new Mock<IPortDiscoveryService>().Object,
+            new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object);
     }
 
     public void Dispose() => _db.Dispose();
