@@ -5,6 +5,7 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
+using Andy.Containers.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -16,19 +17,22 @@ public class ContainerProvisioningWorker : BackgroundService
     private readonly ContainerProvisioningQueue _queue;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IInfrastructureProviderFactory _providerFactory;
+    private readonly IContainerLifecycleBus _lifecycleBus;
     private readonly ILogger<ContainerProvisioningWorker> _logger;
 
-    private static readonly TimeSpan ProvisionTimeout = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan ProvisionTimeout = TimeSpan.FromMinutes(5);
 
     public ContainerProvisioningWorker(
         ContainerProvisioningQueue queue,
         IServiceScopeFactory scopeFactory,
         IInfrastructureProviderFactory providerFactory,
+        IContainerLifecycleBus lifecycleBus,
         ILogger<ContainerProvisioningWorker> logger)
     {
         _queue = queue;
         _scopeFactory = scopeFactory;
         _providerFactory = providerFactory;
+        _lifecycleBus = lifecycleBus;
         _logger = logger;
     }
 
@@ -84,9 +88,10 @@ public class ContainerProvisioningWorker : BackgroundService
             return;
         }
 
-        // Set status to Creating
+        // Set status to Creating and emit the "creating" lifecycle phase.
         container.Status = ContainerStatus.Creating;
         await db.SaveChangesAsync(stoppingToken);
+        PublishPhase(container, "creating", new ContainerLifecyclePhaseData());
 
         try
         {
@@ -336,6 +341,10 @@ public class ContainerProvisioningWorker : BackgroundService
             });
             await db.SaveChangesAsync(stoppingToken);
 
+            // SM.2.6: emit the "running" lifecycle phase now that the
+            // container is fully provisioned and ready to accept connections.
+            PublishPhase(container, "running", new ContainerLifecyclePhaseData());
+
             sw.Stop();
             Meters.ProvisioningDuration.Record(sw.Elapsed.TotalMilliseconds);
             _logger.LogInformation("Container {ContainerId} fully provisioned on {Provider}",
@@ -343,23 +352,84 @@ public class ContainerProvisioningWorker : BackgroundService
         }
         catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
         {
+            // SM.2.6: explicit provisioning-abort — timeout during runtime
+            // acquisition. Distinct from a stoppingToken cancel (service
+            // shutdown) so the client knows to surface a retryable message.
             _logger.LogError("Provisioning timed out for container {ContainerId} on {Provider}",
                 job.ContainerId, job.ProviderCode);
             Meters.ProvisioningErrors.Add(1);
             activity?.SetStatus(ActivityStatusCode.Error, "Provisioning timed out after 5 minutes");
-            await MarkFailedAsync(db, job.ContainerId, "Provisioning timed out after 5 minutes");
+            await MarkFailedAsync(db, job.ContainerId, ProvisioningAbortReason.Timeout,
+                "Provisioning timed out after 5 minutes");
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // SM.2.6: service is shutting down — abort with "cancelled"
+            // so the SM.0.4 helper doesn't classify this as a hard failure.
+            _logger.LogWarning("Provisioning cancelled (service shutdown) for container {ContainerId}",
+                job.ContainerId);
+            await MarkFailedAsync(db, job.ContainerId, ProvisioningAbortReason.Cancelled,
+                "Service shutdown during provisioning");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to provision container {ContainerId} on provider {Provider}",
-                job.ContainerId, job.ProviderCode);
+            // SM.2.6: classify the abort reason from the exception type so
+            // Conductor's SM.4 machine can render an actionable message.
+            var reason = ClassifyAbortReason(ex);
+            _logger.LogError(ex, "Failed to provision container {ContainerId} on provider {Provider} (reason={Reason})",
+                job.ContainerId, job.ProviderCode, reason.ToWireString());
             Meters.ProvisioningErrors.Add(1);
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            await MarkFailedAsync(db, job.ContainerId, ex.Message);
+            await MarkFailedAsync(db, job.ContainerId, reason, ex.Message);
         }
     }
 
-    private static async Task MarkFailedAsync(ContainersDbContext db, Guid containerId, string errorMessage)
+    /// <summary>
+    /// SM.2.6. Maps exception types to provisioning-abort reason codes.
+    /// Callers receive a typed enum so the abort event's <c>reason</c>
+    /// field carries the canonical wire string.
+    /// </summary>
+    internal static ProvisioningAbortReason ClassifyAbortReason(Exception ex)
+    {
+        // Docker/containerd "not found" manifest responses surface as
+        // various exception types depending on the client library; we
+        // heuristically match on the message text because the underlying
+        // image-not-found path doesn't currently throw a typed exception.
+        if (ex is InvalidOperationException &&
+            (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+             ex.Message.Contains("manifest unknown", StringComparison.OrdinalIgnoreCase) ||
+             ex.Message.Contains("image", StringComparison.OrdinalIgnoreCase)))
+        {
+            return ProvisioningAbortReason.ImageNotFound;
+        }
+
+        // QuotaExceededException — the quota check fires in
+        // CreateContainerAsync before the job reaches this worker, so
+        // this branch is mostly a belt-and-suspenders guard, but included
+        // for completeness.
+        if (ex is QuotaExceededException)
+        {
+            return ProvisioningAbortReason.QuotaDenied;
+        }
+
+        // Provider / engine unreachable (connection refused, timeout from
+        // the Docker daemon, Apple Containers not running, etc.).
+        if (ex is HttpRequestException ||
+            ex is TimeoutException ||
+            (ex.Message.Contains("connect", StringComparison.OrdinalIgnoreCase) &&
+             ex.Message.Contains("refused", StringComparison.OrdinalIgnoreCase)))
+        {
+            return ProvisioningAbortReason.EngineUnavailable;
+        }
+
+        return ProvisioningAbortReason.Unknown;
+    }
+
+    private async Task MarkFailedAsync(
+        ContainersDbContext db,
+        Guid containerId,
+        ProvisioningAbortReason reason,
+        string detail)
     {
         try
         {
@@ -371,17 +441,59 @@ public class ContainerProvisioningWorker : BackgroundService
                 {
                     ContainerId = containerId,
                     EventType = ContainerEventType.Failed,
-                    Details = System.Text.Json.JsonSerializer.Serialize(new { error = errorMessage })
+                    Details = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        error = detail,
+                        reason = reason.ToWireString()
+                    })
                 });
                 // Emit andy.containers.events.run.<id>.failed — provisioning failure.
                 db.AppendRunEvent(container, RunEventKind.Failed, exitCode: null, durationSeconds: null);
+
+                // SM.2.6: emit the discrete containerProvisioningAborted outbox
+                // event. This lets downstream services (andy-tasks, andy-issues)
+                // react without subscribing to the SSE stream.
+                var correlationId = container.StoryId ?? container.Id;
+                db.AppendProvisioningAbortedEvent(container, reason, detail, correlationId);
+
                 await db.SaveChangesAsync();
+
+                // SM.2.6: emit the lifecycle phase=failed SSE event with the
+                // reason so SM.4 can transition the ContainerLifecycle machine
+                // to a recoverable "provisioning failed — retry" state.
+                PublishPhase(container, "failed",
+                    new ContainerLifecyclePhaseData(Reason: reason.ToWireString()));
             }
         }
         catch (Exception ex)
         {
             // Last resort — can't even save the failure. The recovery logic will catch this on next startup.
             System.Diagnostics.Debug.WriteLine($"Failed to save failure status for container {containerId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Publishes one lifecycle phase transition to the in-process
+    /// <see cref="IContainerLifecycleBus"/>. Non-throwing: a publish
+    /// failure never propagates back to the provisioning flow.
+    /// </summary>
+    private void PublishPhase(Container container, string phase, ContainerLifecyclePhaseData phaseData)
+    {
+        try
+        {
+            var correlationId = container.StoryId ?? container.Id;
+            _lifecycleBus.Publish(new ContainerLifecycleEvent(
+                ContainerId: container.Id,
+                Phase: phase,
+                PhaseData: phaseData,
+                CorrelationId: correlationId,
+                Timestamp: DateTimeOffset.UtcNow));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to publish lifecycle phase '{Phase}' for container {ContainerId}",
+                phase, container.Id);
         }
     }
 
@@ -401,14 +513,27 @@ public class ContainerProvisioningWorker : BackgroundService
             {
                 _logger.LogWarning("Recovering stuck container {ContainerId} (status={Status}, created={CreatedAt})",
                     container.Id, container.Status, container.CreatedAt);
+                const string recoveryDetail = "Recovered from stuck state on worker restart";
                 container.Status = ContainerStatus.Failed;
                 db.Events.Add(new ContainerEvent
                 {
                     ContainerId = container.Id,
                     EventType = ContainerEventType.Failed,
-                    Details = System.Text.Json.JsonSerializer.Serialize(new { error = "Recovered from stuck state on worker restart" })
+                    Details = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        error = recoveryDetail,
+                        reason = ProvisioningAbortReason.Unknown.ToWireString()
+                    })
                 });
                 db.AppendRunEvent(container, RunEventKind.Failed, exitCode: null, durationSeconds: null);
+                // SM.2.6: emit provisioning-aborted outbox event so downstream
+                // consumers can act on the recovery.
+                var correlationId = container.StoryId ?? container.Id;
+                db.AppendProvisioningAbortedEvent(container, ProvisioningAbortReason.Unknown,
+                    recoveryDetail, correlationId);
+                // SM.2.6: emit lifecycle phase so SSE subscribers see the abort.
+                PublishPhase(container, "failed",
+                    new ContainerLifecyclePhaseData(Reason: ProvisioningAbortReason.Unknown.ToWireString()));
             }
 
             if (stuckContainers.Count > 0)

@@ -9,6 +9,9 @@ using Andy.Containers.Models;
 
 namespace Andy.Containers.Infrastructure.Messaging;
 
+// SM.2.6 (rivoli-ai/conductor#2008). Additional outbox helpers for the
+// provisioning-abort discrete event and the lifecycle SSE phase contract.
+
 // Helper for appending a run.* OutboxEntry to the DbContext in the same
 // unit of work as the domain change that produced the message. Caller
 // controls SaveChangesAsync — the outbox row lands with whatever else is
@@ -49,6 +52,41 @@ public static class RunEventOutbox
             Id = Guid.NewGuid(),
             Subject = subject,
             PayloadType = typeof(RunEventPayload).FullName,
+            PayloadJson = JsonSerializer.Serialize(payload, EventJson.Options),
+            CorrelationId = correlationId,
+            CausationId = null,
+            Generation = 0,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+    }
+
+    // SM.2.6. Emit a discrete containerProvisioningAborted event on the
+    // andy.containers.events.container.{id}.provisioning_aborted subject.
+    // Published in addition to the phase=failed SSE event so downstream
+    // services (andy-tasks, andy-issues) can react without subscribing to
+    // the SSE stream.
+    public static void AppendProvisioningAbortedEvent(
+        this ContainersDbContext db,
+        Container container,
+        ProvisioningAbortReason reason,
+        string detail,
+        Guid correlationId)
+    {
+        var payload = new ContainerProvisioningAbortedEvent(
+            ContainerId: container.Id,
+            Reason: reason.ToWireString(),
+            Detail: detail,
+            CorrelationId: correlationId,
+            AbortedAt: DateTimeOffset.UtcNow);
+
+        var subject =
+            $"andy.containers.events.container.{container.Id}.provisioning_aborted";
+
+        db.OutboxEntries.Add(new OutboxEntry
+        {
+            Id = Guid.NewGuid(),
+            Subject = subject,
+            PayloadType = typeof(ContainerProvisioningAbortedEvent).FullName,
             PayloadJson = JsonSerializer.Serialize(payload, EventJson.Options),
             CorrelationId = correlationId,
             CausationId = null,
