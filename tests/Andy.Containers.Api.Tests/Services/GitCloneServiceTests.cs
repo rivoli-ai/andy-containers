@@ -214,7 +214,7 @@ public class GitCloneServiceTests : IDisposable
             .ReturnsAsync("ghp_mytoken123");
 
         string? cloneCommand = null;
-        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()))
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()))
             .Callback<Guid, string, CancellationToken>((_, cmd, _) => cloneCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
         _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("---FILES---")), It.IsAny<CancellationToken>()))
@@ -245,7 +245,7 @@ public class GitCloneServiceTests : IDisposable
             .ReturnsAsync("ghp_mytoken123");
 
         string? cloneCommand = null;
-        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()))
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()))
             .Callback<Guid, string, CancellationToken>((_, cmd, _) => cloneCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
         _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("---FILES---")), It.IsAny<CancellationToken>()))
@@ -276,7 +276,7 @@ public class GitCloneServiceTests : IDisposable
             .ReturnsAsync((string?)null);
 
         string? cloneCommand = null;
-        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()))
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()))
             .Callback<Guid, string, CancellationToken>((_, cmd, _) => cloneCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
         _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("---FILES---")), It.IsAny<CancellationToken>()))
@@ -302,7 +302,7 @@ public class GitCloneServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         string? cloneCommand = null;
-        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()))
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()))
             .Callback<Guid, string, CancellationToken>((_, cmd, _) => cloneCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
         _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("---FILES---")), It.IsAny<CancellationToken>()))
@@ -328,7 +328,7 @@ public class GitCloneServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         string? cloneCommand = null;
-        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()))
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()))
             .Callback<Guid, string, CancellationToken>((_, cmd, _) => cloneCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
         _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("---FILES---")), It.IsAny<CancellationToken>()))
@@ -354,7 +354,7 @@ public class GitCloneServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         string? cloneCommand = null;
-        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()))
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()))
             .Callback<Guid, string, CancellationToken>((_, cmd, _) => cloneCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
         _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("---FILES---")), It.IsAny<CancellationToken>()))
@@ -381,7 +381,7 @@ public class GitCloneServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         string? cloneCommand = null;
-        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()))
+        _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()))
             .Callback<Guid, string, CancellationToken>((_, cmd, _) => cloneCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
         _mockContainerService.Setup(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("---FILES---")), It.IsAny<CancellationToken>()))
@@ -389,7 +389,11 @@ public class GitCloneServiceTests : IDisposable
 
         await _service.CloneRepositoryAsync(container.Id, repo.Id);
 
-        cloneCommand.Should().StartWith("git clone ");
+        // git can't clone into the pre-initialised /workspace, so the command
+        // clones into a temp dir and merges the result into the target.
+        cloneCommand.Should().Contain("git clone ");
+        cloneCommand.Should().Contain("/tmp/andy-clone-");
+        cloneCommand.Should().Contain("cp -a");
         cloneCommand.Should().NotContain("--depth");
         cloneCommand.Should().NotContain("--branch");
         cloneCommand.Should().NotContain("--recurse-submodules");
@@ -416,7 +420,7 @@ public class GitCloneServiceTests : IDisposable
         await _service.CloneRepositoriesAsync(container.Id);
 
         // 2 clone commands + 2 metadata collection commands
-        _mockContainerService.Verify(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _mockContainerService.Verify(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()), Times.Exactly(2));
 
         var repos = await _db.ContainerGitRepositories.Where(r => r.ContainerId == container.Id).ToListAsync();
         repos.Should().OnlyContain(r => r.CloneStatus == GitCloneStatus.Cloned);
@@ -444,7 +448,7 @@ public class GitCloneServiceTests : IDisposable
         await _service.CloneRepositoriesAsync(container.Id);
 
         // Only the Pending repo should be cloned (1 clone + 1 metadata)
-        _mockContainerService.Verify(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()), Times.Once);
+        _mockContainerService.Verify(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -474,7 +478,7 @@ public class GitCloneServiceTests : IDisposable
         await _service.CloneRepositoriesAsync(container.Id);
 
         // Both repos should have been attempted
-        _mockContainerService.Verify(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.StartsWith("git clone")), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _mockContainerService.Verify(s => s.ExecAsync(container.Id, It.Is<string>(cmd => cmd.Contains("git clone")), It.IsAny<CancellationToken>()), Times.Exactly(2));
 
         var repos = await _db.ContainerGitRepositories.Where(r => r.ContainerId == container.Id).ToListAsync();
         // One should have failed, one should have succeeded

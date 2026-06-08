@@ -191,13 +191,25 @@ public class GitCloneService : IGitCloneService
             if (repo.Submodules)
                 cloneArgs.Add("--recurse-submodules");
 
-            // `--` ends git's option parsing so a URL starting with `-` cannot
-            // be re-interpreted as a flag.
+            // git refuses to clone into a non-empty directory, but the
+            // container pre-initialises the workspace (an empty git repo +
+            // run branch) BEFORE clone time, so `git clone <url> /workspace`
+            // fails with "destination path already exists and is not an empty
+            // directory". Clone into a throwaway temp dir, then MERGE the
+            // result (including its real .git) into the target, replacing the
+            // placeholder init. `--` ends git's option parsing so a URL
+            // starting with `-` cannot be re-interpreted as a flag.
+            var tmpDir = "/tmp/andy-clone-" + Guid.NewGuid().ToString("N");
             cloneArgs.Add("--");
             cloneArgs.Add(ShellQuote(cloneUrl));
-            cloneArgs.Add(ShellQuote(repo.TargetPath));
+            cloneArgs.Add(ShellQuote(tmpDir));
 
-            var command = string.Join(" ", cloneArgs);
+            var target = ShellQuote(repo.TargetPath);
+            var quotedTmp = ShellQuote(tmpDir);
+            var command =
+                $"rm -rf {quotedTmp} && {string.Join(" ", cloneArgs)} && "
+                + $"mkdir -p {target} && rm -rf {target}/.git && "
+                + $"cp -a {quotedTmp}/. {target}/ && rm -rf {quotedTmp}";
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(CloneTimeout);

@@ -124,7 +124,40 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 CancellationToken.None);
         }
 
-        var command = $"andy-cli run --headless --config {ShellEscape(configPath)}";
+        // The configurator writes the headless config to a HOST temp dir, but
+        // andy-cli runs INSIDE the container where that path doesn't exist.
+        // Read it here (it's required — the agent can't run without it) and
+        // stage it into the container as the FIRST step of the same exec, so
+        // there's a single command whose exit code is andy-cli's.
+        string configJson;
+        try
+        {
+            configJson = await File.ReadAllTextAsync(configPath, execToken);
+        }
+        catch (OperationCanceledException) when (execToken.IsCancellationRequested)
+        {
+            return await TerminateAsync(run, RunEventKind.Cancelled, RunStatus.Cancelled,
+                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds, error: "Cancelled before spawn",
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return await TerminateAsync(run, RunEventKind.Failed, RunStatus.Failed,
+                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds,
+                error: $"Headless config could not be read from host path '{configPath}': {ex.Message}",
+                CancellationToken.None);
+        }
+
+        // base64 sidesteps every shell-escaping hazard the raw JSON would carry;
+        // `base64 -d` is in the coreutils every andy-headless image ships.
+        var inContainerConfigPath = $"/tmp/andy-runs/{run.Id}/config.json";
+        var stageDir = $"/tmp/andy-runs/{run.Id}";
+        var configB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(configJson));
+        var command =
+            $"mkdir -p {ShellEscape(stageDir)} && "
+            + $"printf %s {ShellEscape(configB64)} | base64 -d > {ShellEscape(inContainerConfigPath)} && "
+            + $"andy-cli run --headless --config {ShellEscape(inContainerConfigPath)}";
         var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
 
         // F4.1 (#1934). Resolve the literal run-scoped token so the

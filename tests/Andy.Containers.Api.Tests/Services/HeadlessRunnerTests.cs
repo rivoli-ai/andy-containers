@@ -26,8 +26,15 @@ public class HeadlessRunnerTests : IDisposable
     private readonly Mock<ITokenIssuer> _tokens = new();
     private readonly HeadlessRunner _runner;
 
+    // The runner now stages the on-disk headless config INTO the container
+    // before spawning andy-cli (it reads the host file + writes it via exec),
+    // so the config path must point at a real, readable file.
+    private readonly string _configPath;
+
     public HeadlessRunnerTests()
     {
+        _configPath = Path.Combine(Path.GetTempPath(), $"headless-config-{Guid.NewGuid():N}.json");
+        File.WriteAllText(_configPath, "{}");
         _db = InMemoryDbHelper.CreateContext();
         // AP10 (#112): runner now revokes the run-scoped token on every
         // terminal path. Default to a no-op revoke; AP10-specific tests
@@ -40,7 +47,11 @@ public class HeadlessRunnerTests : IDisposable
             NullLogger<HeadlessRunner>.Instance);
     }
 
-    public void Dispose() => _db.Dispose();
+    public void Dispose()
+    {
+        _db.Dispose();
+        try { File.Delete(_configPath); } catch { /* best-effort temp cleanup */ }
+    }
 
     [Fact]
     public async Task StartAsync_ExitZero_TransitionsToSucceeded_WritesFinishedEvent()
@@ -48,7 +59,7 @@ public class HeadlessRunnerTests : IDisposable
         var run = SeedRun();
         SetupExec(run.ContainerId!.Value, exitCode: 0, stdOut: "ok");
 
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json");
+        var outcome = await _runner.StartAsync(run, _configPath);
 
         outcome.Kind.Should().Be(RunEventKind.Finished);
         outcome.Status.Should().Be(RunStatus.Succeeded);
@@ -82,7 +93,7 @@ public class HeadlessRunnerTests : IDisposable
         var run = SeedRun();
         SetupExec(run.ContainerId!.Value, exitCode: exitCode, stdErr: "boom");
 
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json");
+        var outcome = await _runner.StartAsync(run, _configPath);
 
         outcome.Kind.Should().Be(kind);
         outcome.Status.Should().Be(status);
@@ -106,7 +117,7 @@ public class HeadlessRunnerTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("docker daemon unreachable"));
 
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json");
+        var outcome = await _runner.StartAsync(run, _configPath);
 
         outcome.Kind.Should().Be(RunEventKind.Failed);
         outcome.Status.Should().Be(RunStatus.Failed);
@@ -133,7 +144,7 @@ public class HeadlessRunnerTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException("exec timeout"));
 
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json", CancellationToken.None);
+        var outcome = await _runner.StartAsync(run, _configPath, CancellationToken.None);
 
         outcome.Kind.Should().Be(RunEventKind.Timeout);
         outcome.Status.Should().Be(RunStatus.Timeout);
@@ -153,7 +164,7 @@ public class HeadlessRunnerTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException(cts.Token));
 
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json", cts.Token);
+        var outcome = await _runner.StartAsync(run, _configPath, cts.Token);
 
         outcome.Kind.Should().Be(RunEventKind.Cancelled);
         outcome.Status.Should().Be(RunStatus.Cancelled);
@@ -179,7 +190,7 @@ public class HeadlessRunnerTests : IDisposable
                 throw new InvalidOperationException("delay should have thrown");
             });
 
-        var startTask = _runner.StartAsync(run, "/tmp/x/config.json");
+        var startTask = _runner.StartAsync(run, _configPath);
 
         // Wait for ExecAsync to be in flight before signalling — the
         // runner's registration only exists between the SaveChanges of
@@ -213,7 +224,7 @@ public class HeadlessRunnerTests : IDisposable
         var run = SeedRun();
         SetupExec(run.ContainerId!.Value, exitCode: 0);
 
-        await _runner.StartAsync(run, "/tmp/x/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         _cancellation.TryCancel(run.Id).Should().BeFalse(
             "registration must be removed after the runner terminates");
@@ -224,7 +235,7 @@ public class HeadlessRunnerTests : IDisposable
     {
         var run = SeedRunWithoutContainer();
 
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json");
+        var outcome = await _runner.StartAsync(run, _configPath);
 
         outcome.Kind.Should().Be(RunEventKind.Failed);
         outcome.Status.Should().Be(RunStatus.Failed);
@@ -253,7 +264,7 @@ public class HeadlessRunnerTests : IDisposable
         var run = SeedRun();
         SetupExec(run.ContainerId!.Value, exitCode);
 
-        await _runner.StartAsync(run, "/tmp/x/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         _tokens.Verify(t => t.RevokeAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -266,7 +277,7 @@ public class HeadlessRunnerTests : IDisposable
         // doesn't outlive the run row.
         var run = SeedRunWithoutContainer();
 
-        await _runner.StartAsync(run, "/tmp/x/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         _tokens.Verify(t => t.RevokeAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -281,18 +292,20 @@ public class HeadlessRunnerTests : IDisposable
             .Setup(t => t.RevokeAsync(run.Id, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("issuer down"));
 
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json");
+        var outcome = await _runner.StartAsync(run, _configPath);
 
         outcome.Status.Should().Be(RunStatus.Succeeded,
             "issuer failure must be logged, not propagated as a run failure");
     }
 
     [Fact]
-    public async Task StartAsync_ConfigPathIsShellEscaped()
+    public async Task StartAsync_StagesConfigIntoContainer_AndShellEscapesInContainerPath()
     {
-        // A config path with a single quote in it would break a naive
-        // command interpolation. Verify the runner emits a properly
-        // single-quote-escaped argument so /bin/sh -c can parse it.
+        // andy-cli runs INSIDE the container where the host config path doesn't
+        // exist, so the runner stages the config there (base64-decoded into a
+        // fixed in-container path) as the first step of the same exec, then
+        // points andy-cli at that path — single-quote-wrapped so /bin/sh -c
+        // parses it.
         var run = SeedRun();
         string? captured = null;
         _containers
@@ -301,11 +314,13 @@ public class HeadlessRunnerTests : IDisposable
             .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
-        await _runner.StartAsync(run, "/tmp/o'malley/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         captured.Should().NotBeNull();
-        captured.Should().Contain("andy-cli run --headless --config");
-        captured.Should().Contain("'/tmp/o'\\''malley/config.json'");
+        // Stage step: base64-decode the config into the in-container path.
+        captured.Should().Contain($"base64 -d > '/tmp/andy-runs/{run.Id}/config.json'");
+        // Run step: andy-cli against the single-quote-escaped in-container path.
+        captured.Should().Contain($"andy-cli run --headless --config '/tmp/andy-runs/{run.Id}/config.json'");
     }
 
     [Fact]
@@ -334,25 +349,29 @@ public class HeadlessRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_ConfigUnreadable_FallsBackToFifteenMinuteDefault()
+    public async Task StartAsync_ConfigUnreadable_FailsRunWithoutSpawningAndyCli()
     {
-        // A missing/malformed config file must not crash the runner — fall
-        // back to the legacy 15-min ceiling so a misconfigured run still
-        // terminates instead of hanging on the inner CTS that AQ3 also
-        // refuses to set up.
+        // The headless config is staged INTO the container (andy-cli reads it
+        // there), so a config that can't be read on the host is a hard failure
+        // — the agent must never start without its config. (Previously the
+        // runner fell back to a default timeout and spawned anyway; that masked
+        // a misconfigured run as a hung one.)
         var run = SeedRun();
         var missingPath = Path.Combine(Path.GetTempPath(), $"never-existed-{Guid.NewGuid():N}.json");
 
-        TimeSpan? capturedTimeout = null;
+        string? spawnCommand = null;
         _containers
             .Setup(c => c.ExecAsync(
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, _, t, _) => capturedTimeout = t)
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => spawnCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
-        await _runner.StartAsync(run, missingPath);
+        var outcome = await _runner.StartAsync(run, missingPath);
 
-        capturedTimeout.Should().Be(TimeSpan.FromMinutes(15));
+        outcome.Kind.Should().Be(RunEventKind.Failed);
+        outcome.Status.Should().Be(RunStatus.Failed);
+        outcome.Error.Should().Contain("config could not be read");
+        spawnCommand.Should().BeNull("andy-cli must not spawn when its config is unreadable");
     }
 
     [Fact]
@@ -383,7 +402,7 @@ public class HeadlessRunnerTests : IDisposable
         var run = SeedRun(correlationId: correlation);
         SetupExec(run.ContainerId!.Value, exitCode: 0);
 
-        await _runner.StartAsync(run, "/tmp/x/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         var entry = await _db.OutboxEntries.SingleAsync();
         entry.CorrelationId.Should().Be(correlation,
@@ -417,7 +436,7 @@ public class HeadlessRunnerTests : IDisposable
             NullLogger<HeadlessRunner>.Instance, collector.Object);
         SetupExec(run.ContainerId.Value, exitCode: 0);
 
-        await runner.StartAsync(run, "/tmp/x/config.json");
+        await runner.StartAsync(run, _configPath);
 
         var persisted = await _db.Runs.FindAsync(run.Id);
         persisted!.OutputArtifacts.Should().HaveCount(2);
@@ -454,7 +473,7 @@ public class HeadlessRunnerTests : IDisposable
             NullLogger<HeadlessRunner>.Instance, collector.Object);
         SetupExec(run.ContainerId.Value, exitCode: 0);
 
-        var outcome = await runner.StartAsync(run, "/tmp/x/config.json");
+        var outcome = await runner.StartAsync(run, _configPath);
 
         outcome.Status.Should().Be(RunStatus.Succeeded,
             "collector failures must not corrupt the run outcome");
@@ -480,7 +499,7 @@ public class HeadlessRunnerTests : IDisposable
 
         // Default _runner (constructed in the class ctor) has no
         // collector. Exercise it directly.
-        await _runner.StartAsync(run, "/tmp/x/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         var entry = await _db.OutboxEntries.SingleAsync();
         using var doc = JsonDocument.Parse(entry.PayloadJson);
@@ -502,7 +521,7 @@ public class HeadlessRunnerTests : IDisposable
             _containers.Object, _db, _cancellation, _tokens.Object,
             NullLogger<HeadlessRunner>.Instance, collector.Object);
 
-        await runner.StartAsync(run, "/tmp/x/config.json");
+        await runner.StartAsync(run, _configPath);
 
         collector.Verify(
             c => c.CollectAsync(It.IsAny<Container>(), It.IsAny<CancellationToken>()),
