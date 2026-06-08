@@ -315,6 +315,17 @@ public class ContainerOrchestrationService : IContainerService
             workspace = await _db.Workspaces.Include(w => w.Containers).FirstOrDefaultAsync(w => w.Id == request.WorkspaceId, ct)
                 ?? throw new ArgumentException($"Workspace not found: {request.WorkspaceId}");
             workspace.Containers.Add(container);
+
+            // Adopt this container as the workspace's default when it has none.
+            // The run dispatcher (RunModeDispatcher) resolves a run's target via
+            // Workspace.DefaultContainerId; without this, the first container a
+            // workspace provisions never becomes the default and every agent-run
+            // dispatch fails with "workspace has no default container". First
+            // container wins; an explicit re-point is a separate concern.
+            if (workspace.DefaultContainerId is null)
+            {
+                workspace.DefaultContainerId = container.Id;
+            }
         }
 
         _db.Events.Add(new ContainerEvent

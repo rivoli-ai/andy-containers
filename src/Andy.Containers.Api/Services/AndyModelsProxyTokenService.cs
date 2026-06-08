@@ -223,12 +223,25 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
             }
             catch (ServiceTokenException ex)
             {
-                throw new ProxyTokenException(
-                    "Could not exchange user token for andy-models OBO bearer. " +
-                    "Check ServiceAuth:* configuration, that the andy-containers-api " +
-                    "OAuth client is on the TokenExchange:Policies allow-list for " +
-                    $"audience '{AndyModelsApiAudience}', and that the inbound user " +
-                    "token is a valid access token issued by andy-auth.", ex);
+                // OBO exchange is a user-ATTRIBUTION optimization (sub=user,
+                // act=andy-containers-api) so andy-rbac sees the originating
+                // user on the proxy:tokens:mint check. When it fails — most
+                // commonly because the inbound user access token has expired,
+                // or a TokenExchange policy/issuer mismatch — DON'T hard-fail
+                // the whole container creation. Fall back to the pure-M2M
+                // bearer (sub=andy-containers-api), which still mints a valid
+                // proxy token; the only loss is user attribution on the mint.
+                // Logged loudly + greppably so the degradation is visible.
+                // (conductor#1973 — a launch must not break on an attribution
+                //  optimization.)
+                _logger.LogWarning(
+                    ex,
+                    "[PROXY-OBO-FALLBACK] OBO exchange for andy-models (audience={Audience}) failed; "
+                        + "falling back to the M2M bearer for the proxy-token mint. The token will carry "
+                        + "sub=andy-containers-api instead of the originating user. Likely cause: the inbound "
+                        + "user token is expired or not exchange-eligible. Underlying: {Reason}",
+                    AndyModelsApiAudience, ex.Message);
+                return await GetBearerAsync(ct).ConfigureAwait(false);
             }
         }
 
