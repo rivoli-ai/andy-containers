@@ -38,12 +38,14 @@ public class StubAndyAgentsClientTests
     }
 
     [Fact]
-    public async Task GetAgentAsync_CodingRole_CanPatchAndUseGit()
+    public async Task GetAgentAsync_CodingRole_HasLocalGitOnly()
     {
         var spec = await _client.GetAgentAsync("coding", revision: null);
 
-        spec!.Tools.Should().Contain(t => t.Name == "fs.patch");
-        spec.Tools.Should().Contain(t => t.Name == "git");
+        // git is a local CLI tool; file editing uses andy-cli's built-ins.
+        // No external MCP tools (a placeholder endpoint would crash the agent).
+        spec!.Tools.Should().Contain(t => t.Name == "git" && t.Transport == "cli");
+        spec.Tools.Should().OnlyContain(t => t.Transport == "cli");
     }
 
     [Fact]

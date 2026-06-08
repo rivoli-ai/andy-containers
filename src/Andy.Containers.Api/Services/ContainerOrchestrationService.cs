@@ -628,6 +628,67 @@ public class ContainerOrchestrationService : IContainerService
                 _logger.LogInformation(
                     "Injected shared ANDY_SERVICE_TOKEN (length={Length}) into container env (no per-container slugs required)",
                     serviceToken.Length);
+
+                // The headless andy-cli agent (plan execution) and any other
+                // OpenAI-SDK client read OPENAI_API_KEY + OPENAI_BASE_URL. The
+                // codeAssistant routing block above only runs for a configured
+                // assistant; an assistant-less headless run lands here, so
+                // point the OpenAI dialect at the andy-models proxy.
+                if (!string.IsNullOrWhiteSpace(containerFacingProxyUrl))
+                {
+                    // andy-models exposes the OpenAI-compatible chat surface at
+                    // `/models/v1/chat/completions` (the OpenAI SDK appends
+                    // `/chat/completions` to OPENAI_API_BASE). The `openai/v1`
+                    // dialect mount returns 405 for POST — use the plain `v1`.
+                    var openAiBaseUrl = CodeAssistantProxyRouting.BuildBaseUrl(
+                        containerFacingProxyUrl, "v1");
+                    // Set BOTH base-URL env names: the OpenAI SDK family uses
+                    // OPENAI_BASE_URL, but andy-cli's Andy.Llm provider (and
+                    // older clients like aider) read OPENAI_API_BASE.
+                    if (!envVars.ContainsKey("OPENAI_BASE_URL"))
+                    {
+                        envVars["OPENAI_BASE_URL"] = openAiBaseUrl;
+                    }
+                    if (!envVars.ContainsKey("OPENAI_API_BASE"))
+                    {
+                        envVars["OPENAI_API_BASE"] = openAiBaseUrl;
+                    }
+
+                    // The proxy validates aud=urn:andy-models-api; the shared
+                    // andy-containers M2M token (aud=urn:andy-containers-api) is
+                    // rejected 401. Mint a per-container proxy token ISSUED BY
+                    // andy-models (correct audience + denylist-revocable),
+                    // scoped to the default model slugs, and hand THAT to the
+                    // OpenAI client.
+                    if (_proxyTokenService is not null && !envVars.ContainsKey("OPENAI_API_KEY"))
+                    {
+                        var modelSlugs = _configuration.GetSection("Proxy:HeadlessModelSlugs").Get<string[]>();
+                        if (modelSlugs is null || modelSlugs.Length == 0)
+                        {
+                            modelSlugs = new[] { "deepseek-v4-flash" };
+                        }
+                        try
+                        {
+                            var modelToken = await _proxyTokenService.MintForContainerAsync(
+                                container.Id.ToString(), container.OwnerId, modelSlugs, ct);
+                            if (modelToken is not null)
+                            {
+                                envVars["OPENAI_API_KEY"] = modelToken.Jwt;
+                                container.ProxyServiceTokenId ??= modelToken.TokenId;
+                                _logger.LogInformation(
+                                    "Minted andy-models proxy token for headless OpenAI client (tokenId={TokenId}, slugs={Slugs}); OPENAI_BASE_URL={Url}",
+                                    modelToken.TokenId, string.Join(",", modelSlugs),
+                                    UrlRedactor.Redact(openAiBaseUrl));
+                            }
+                        }
+                        catch (ProxyTokenException ex)
+                        {
+                            _logger.LogWarning(ex,
+                                "Failed to mint andy-models proxy token for headless container {ContainerName}; OpenAI calls will 401.",
+                                container.Name);
+                        }
+                    }
+                }
             }
             catch (Exception tokenEx)
             {

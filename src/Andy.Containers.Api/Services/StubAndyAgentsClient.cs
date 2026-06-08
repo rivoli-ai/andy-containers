@@ -80,11 +80,14 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             return Task.FromResult<AgentSpec?>(null);
         }
 
-        // The coding role can patch files + use git; everyone else is read-only.
+        // The coding role gets the local `git` CLI for branch/diff work;
+        // file editing uses andy-cli's BUILT-IN tools (no external MCP server).
+        // Everyone else is read-only with no tools. (The previous fs.patch MCP
+        // tool pointed at a placeholder `mcp.internal` host that doesn't
+        // resolve, which crashed the in-container agent on startup.)
         var tools = key == "coding"
             ? new[]
             {
-                new AgentSpecTool { Name = "fs.patch", Transport = "mcp", Endpoint = "https://mcp.internal/tools/fs.patch" },
                 new AgentSpecTool { Name = "git", Transport = "cli", Binary = "git", Command = new[] { "git" } },
             }
             : Array.Empty<AgentSpecTool>();
