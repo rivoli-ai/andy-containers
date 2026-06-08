@@ -4,82 +4,67 @@ namespace Andy.Containers.Api.Services;
 
 /// <summary>
 /// AP3 (rivoli-ai/andy-containers#105) placeholder client. The real
-/// andy-agents service does not exist yet (Epic W); this stub returns
-/// reasonable fixture specs keyed off the agent slug so AP3 + AP6 can
-/// run end-to-end. Replace with an HTTP client once andy-agents is up.
+/// andy-agents-backed resolver is Epic W; until it lands this stub
+/// synthesises a runnable <see cref="AgentSpec"/> for the agent slugs the
+/// andy-tasks planner actually emits (the andy-agents roster: <c>coding</c>,
+/// <c>review</c>, <c>planning</c>, <c>triage</c>, <c>research</c>,
+/// <c>validation</c>), plus the legacy <c>*-agent</c> aliases.
 /// </summary>
 /// <remarks>
-/// TODO(andy-agents): Swap for an HTTP-backed implementation that calls
-/// <c>GET /api/agents/{slug}?revision=N</c> on the andy-agents service.
-/// Fixture data here intentionally tracks the AQ1 sample configs so the
-/// configurator output stays close to the canonical shapes during local dev.
+/// The synthesised model routes through Conductor's embedded andy-models
+/// proxy, NOT a public provider endpoint: the in-container andy-cli reaches
+/// the proxy via <c>ANDY_PROXY_BASE_URL</c> (host.docker.internal:9100/models)
+/// using the per-container <c>ANDY_SERVICE_TOKEN</c> as its bearer. So the
+/// spec declares the OpenAI-compatible dialect (<c>provider = "openai"</c> —
+/// the proxy speaks it, and it's in HeadlessConfigBuilder's allow-list, unlike
+/// the raw <c>"openrouter"</c> the old fixtures used) and the model slug
+/// registered in andy-models (<c>deepseek-v4-flash</c>, which the proxy maps
+/// to OpenRouter upstream). The api-key ref points at the injected service
+/// token rather than a provider key the container doesn't hold.
+///
+/// TODO(andy-agents / Epic W): replace with an HTTP client that resolves the
+/// agent (instructions, model, tools, limits) from andy-agents
+/// <c>GET /api/agents/by-slug/{slug}</c>.
 /// </remarks>
 public sealed class StubAndyAgentsClient : IAndyAgentsClient
 {
-    private static readonly Dictionary<string, AgentSpec> Fixtures = new(StringComparer.Ordinal)
+    // Model the in-container agent uses: the OpenAI-compatible dialect spoken
+    // by the andy-models proxy + the registered deepseek-v4-flash slug + the
+    // injected per-container service token.
+    private static AgentSpecModel ProxyModel() => new()
     {
-        ["triage-agent"] = new AgentSpec
+        Provider = "openai",
+        Id = "deepseek-v4-flash",
+        ApiKeyRef = "env:ANDY_SERVICE_TOKEN",
+    };
+
+    // Per-role presentation. Keyed by the andy-agents slug the planner emits;
+    // the legacy "<role>-agent" aliases resolve to the same entry.
+    private static readonly Dictionary<string, (string Instructions, string OutputFormat, string[] Boundaries, int MaxIter, int Timeout)> Roles =
+        new(StringComparer.Ordinal)
         {
-            Slug = "triage-agent",
-            Revision = 1,
-            Instructions = "You are the triage agent. Classify incoming issues against the Rivoli template set.",
-            OutputFormat = "json-triage-output-v1",
-            Model = new AgentSpecModel
-            {
-                Provider = "openrouter",
-                Id = "xiaomi/mimo-v2.5",
-                ApiKeyRef = "env:OPENROUTER_API_KEY",
-            },
-            Tools = new[]
-            {
-                new AgentSpecTool { Name = "issues.get", Transport = "mcp", Endpoint = "https://mcp.internal/tools/issues.get" },
-            },
-            Boundaries = new[] { "read-only" },
-            Limits = new AgentSpecLimits { MaxIterations = 50, TimeoutSeconds = 300 },
-        },
-        ["planning-agent"] = new AgentSpec
-        {
-            Slug = "planning-agent",
-            Instructions = "You are the planning agent. Decompose the triaged issue into TaskNodes.",
-            OutputFormat = "json-plan-v1",
-            Model = new AgentSpecModel
-            {
-                Provider = "openrouter",
-                Id = "xiaomi/mimo-v2.5",
-                ApiKeyRef = "env:OPENROUTER_API_KEY",
-            },
-            Tools = new[]
-            {
-                new AgentSpecTool { Name = "docs.put", Transport = "mcp", Endpoint = "https://mcp.internal/tools/docs.put" },
-            },
-            Boundaries = new[] { "draft-only" },
-            Limits = new AgentSpecLimits { MaxIterations = 120, TimeoutSeconds = 900 },
-        },
-        ["coding-agent"] = new AgentSpec
-        {
-            Slug = "coding-agent",
-            Instructions = "You are the coding agent. Implement the assigned TaskNode against the delegation contract.",
-            OutputFormat = "plain",
-            Model = new AgentSpecModel
-            {
-                Provider = "openrouter",
-                Id = "xiaomi/mimo-v2.5",
-                ApiKeyRef = "env:OPENROUTER_API_KEY",
-            },
-            Tools = new[]
-            {
-                new AgentSpecTool { Name = "fs.patch", Transport = "mcp", Endpoint = "https://mcp.internal/tools/fs.patch" },
-                new AgentSpecTool
-                {
-                    Name = "git",
-                    Transport = "cli",
-                    Binary = "git",
-                    Command = new[] { "git" },
-                },
-            },
-            Boundaries = new[] { "write-branch", "sandboxed" },
-            Limits = new AgentSpecLimits { MaxIterations = 400, TimeoutSeconds = 3600 },
-        },
+            ["triage"] = ("You are the triage agent. Classify the incoming issue against the Rivoli template set.",
+                "json-triage-output-v1", new[] { "read-only" }, 50, 300),
+            ["planning"] = ("You are the planning agent. Decompose the triaged issue into TaskNodes.",
+                "json-plan-v1", new[] { "draft-only" }, 120, 900),
+            ["research"] = ("You are the research agent. Gather the context the plan needs and summarise it.",
+                "plain", new[] { "read-only" }, 120, 900),
+            ["coding"] = ("You are the coding agent. Implement the assigned TaskNode against the delegation contract, editing files in /workspace and leaving the change on a branch for human review.",
+                "plain", new[] { "write-branch", "sandboxed" }, 400, 3600),
+            ["review"] = ("You are the review agent. Inspect the diff produced by the coding task for safety and correctness; do not modify files.",
+                "plain", new[] { "read-only" }, 200, 1800),
+            ["validation"] = ("You are the validation agent. Run the declared verifier and report pass/fail.",
+                "plain", new[] { "read-only" }, 200, 1800),
+        };
+
+    private static readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal)
+    {
+        ["triage-agent"] = "triage",
+        ["planning-agent"] = "planning",
+        ["coding-agent"] = "coding",
+        ["review-agent"] = "review",
+        ["research-agent"] = "research",
+        ["validation-agent"] = "validation",
     };
 
     public Task<AgentSpec?> GetAgentAsync(string agentSlug, int? revision, CancellationToken ct = default)
@@ -89,18 +74,32 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             return Task.FromResult<AgentSpec?>(null);
         }
 
-        if (!Fixtures.TryGetValue(agentSlug, out var spec))
+        var key = Aliases.TryGetValue(agentSlug, out var canonical) ? canonical : agentSlug;
+        if (!Roles.TryGetValue(key, out var role))
         {
             return Task.FromResult<AgentSpec?>(null);
         }
 
-        // Revision pinning is best-effort against the stub: if the caller
-        // asks for a specific revision, echo it back rather than the
-        // fixture's default so AP6 sees the pin propagated end-to-end.
-        if (revision.HasValue)
+        // The coding role can patch files + use git; everyone else is read-only.
+        var tools = key == "coding"
+            ? new[]
+            {
+                new AgentSpecTool { Name = "fs.patch", Transport = "mcp", Endpoint = "https://mcp.internal/tools/fs.patch" },
+                new AgentSpecTool { Name = "git", Transport = "cli", Binary = "git", Command = new[] { "git" } },
+            }
+            : Array.Empty<AgentSpecTool>();
+
+        var spec = new AgentSpec
         {
-            spec = spec with { Revision = revision };
-        }
+            Slug = agentSlug,
+            Revision = revision ?? 1,
+            Instructions = role.Instructions,
+            OutputFormat = role.OutputFormat,
+            Model = ProxyModel(),
+            Tools = tools,
+            Boundaries = role.Boundaries,
+            Limits = new AgentSpecLimits { MaxIterations = role.MaxIter, TimeoutSeconds = role.Timeout },
+        };
 
         return Task.FromResult<AgentSpec?>(spec);
     }
