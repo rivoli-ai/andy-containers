@@ -57,8 +57,11 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
         // (it asks for clarification and edits nothing). The AgentSpec carries
         // only the generic role prompt; the per-run objective lives on the
         // Run (forwarded from the andy-tasks TaskNode's delegation contract).
-        // Compose: role instructions + the concrete task.
-        var instructions = ComposeInstructions(agent.Instructions, run.Objective);
+        // Compose: role instructions + the concrete task + governing policy text
+        // (AX.8). The policy text arrives pre-rendered from andy-tasks and is
+        // appended verbatim under a short header so the in-container agent is
+        // bound by the same policy the planner resolved.
+        var instructions = ComposeInstructions(agent.Instructions, run.Objective, run.PolicyInstructions);
 
         return new HeadlessRunConfig
         {
@@ -109,7 +112,39 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
             // posture as env_vars / boundaries) so a run without inputs
             // emits no `inputs` key — wire shape identical to pre-EX.7.
             Inputs = MapInputs(run.Inputs),
+            // AX.9 (rivoli-ai/conductor#2096). Project the resolved permission
+            // allow-list onto the headless config's permissions block. Empty
+            // collapses to null so a run without an allow-list emits no
+            // `permissions` key — andy-cli treats absent as unchanged
+            // fail-closed (wire shape identical to pre-AX.9).
+            Permissions = MapPermissions(run.AllowedTools),
         };
+    }
+
+    // AX.9 (rivoli-ai/conductor#2096). Project the run's resolved permission
+    // allow-list onto the headless config. A null/empty list returns null so
+    // the `permissions` key is omitted entirely (fail-closed default). Blank
+    // entries are dropped and the list is de-duplicated to satisfy the
+    // andy-cli schema's `uniqueItems` constraint on `allowed_tools`.
+    private static HeadlessPermissions? MapPermissions(IReadOnlyList<string>? allowedTools)
+    {
+        if (allowedTools is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var cleaned = allowedTools
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (cleaned.Count == 0)
+        {
+            return null;
+        }
+
+        return new HeadlessPermissions { AllowedTools = cleaned };
     }
 
     // EX.7 (rivoli-ai/andy-containers#328). Validate + project the run's
@@ -203,19 +238,31 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
     }
 
     // Compose the agent's generic role prompt with the concrete per-run task
-    // objective into a single system prompt. When no objective is supplied
-    // (e.g. a read-only role, or a caller that didn't forward one) the role
-    // instructions stand alone — preserving the prior behaviour.
-    internal static string ComposeInstructions(string roleInstructions, string? objective)
+    // objective (AX) and the governing policy text (AX.8) into a single system
+    // prompt. Order: role instructions + "## Task\n{objective}" + "## Policies\n
+    // {policyInstructions}". Each section is independent — when no objective is
+    // supplied the task section is omitted (preserving prior behaviour), and
+    // when no policy text is supplied the policies section is omitted. The
+    // policy text arrives pre-formatted from andy-tasks, so it is appended
+    // verbatim under the header rather than reshaped.
+    public static string ComposeInstructions(
+        string roleInstructions,
+        string? objective,
+        string? policyInstructions = null)
     {
-        if (string.IsNullOrWhiteSpace(objective))
+        var composed = roleInstructions;
+
+        if (!string.IsNullOrWhiteSpace(objective))
         {
-            return roleInstructions;
+            composed += "\n\n## Task\n" + objective.Trim();
         }
 
-        return roleInstructions
-            + "\n\n## Task\n"
-            + objective.Trim();
+        if (!string.IsNullOrWhiteSpace(policyInstructions))
+        {
+            composed += "\n\n## Policies\n" + policyInstructions.Trim();
+        }
+
+        return composed;
     }
 
     private static HeadlessTool MapTool(AgentSpecTool tool)

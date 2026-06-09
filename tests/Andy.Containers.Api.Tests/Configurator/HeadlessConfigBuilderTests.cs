@@ -318,6 +318,173 @@ public class HeadlessConfigBuilderTests
         HeadlessConfigBuilder.ValidateDestRelativePath(raw).Should().Be(expected);
     }
 
+    // --- AX.8: policy text appended to the system prompt ---
+
+    [Fact]
+    public void ComposeInstructions_AppendsPolicyAfterObjective()
+    {
+        // The final system prompt must layer: role + ## Task + ## Policies,
+        // in that order, so the in-container agent sees the role, then the
+        // concrete task, then the governing policy.
+        var result = HeadlessConfigBuilder.ComposeInstructions(
+            "ROLE",
+            "OBJECTIVE",
+            "POLICY-TEXT");
+
+        result.Should().Be("ROLE\n\n## Task\nOBJECTIVE\n\n## Policies\nPOLICY-TEXT");
+
+        // Explicit ordering guard: the policy section comes after the task.
+        result.IndexOf("## Policies", StringComparison.Ordinal)
+            .Should().BeGreaterThan(result.IndexOf("## Task", StringComparison.Ordinal),
+                "policy text must be appended after the task objective");
+    }
+
+    [Fact]
+    public void ComposeInstructions_NoPolicy_LeavesPromptUnchanged()
+    {
+        // When no policy text is supplied the prompt is exactly role + task —
+        // no trailing Policies header (backward compatible with AX/pre-AX.8).
+        var result = HeadlessConfigBuilder.ComposeInstructions("ROLE", "OBJECTIVE");
+
+        result.Should().Be("ROLE\n\n## Task\nOBJECTIVE");
+        result.Should().NotContain("## Policies");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ComposeInstructions_BlankPolicy_OmitsPoliciesSection(string? policy)
+    {
+        var result = HeadlessConfigBuilder.ComposeInstructions("ROLE", "OBJECTIVE", policy);
+
+        result.Should().Be("ROLE\n\n## Task\nOBJECTIVE");
+    }
+
+    [Fact]
+    public void Build_WithPolicyInstructions_AppendsPolicyToSystemPrompt()
+    {
+        var run = SeedRun();
+        run.Objective = "Add a Quick Start section to README.md.";
+        run.PolicyInstructions = "You may not modify files under /infra. Never push to main.";
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Agent.Instructions.Should().Contain(spec.Instructions, "role prompt is preserved");
+        config.Agent.Instructions.Should().Contain("Add a Quick Start section to README.md.",
+            "the task objective is preserved");
+        config.Agent.Instructions.Should().Contain("## Policies",
+            "the policy section header is appended");
+        config.Agent.Instructions.Should().Contain(
+            "You may not modify files under /infra. Never push to main.",
+            "the pre-rendered policy text is appended verbatim");
+
+        // Ordering: policy text comes after the objective in the final prompt.
+        config.Agent.Instructions.IndexOf("## Policies", StringComparison.Ordinal)
+            .Should().BeGreaterThan(
+                config.Agent.Instructions.IndexOf("Add a Quick Start", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Build_WithoutPolicyInstructions_PromptUnchanged()
+    {
+        var run = SeedRun();
+        run.Objective = "Add a Quick Start section to README.md.";
+        // PolicyInstructions null
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Agent.Instructions.Should().NotContain("## Policies");
+    }
+
+    // --- AX.9: allowed-tools written to permissions.allowed_tools ---
+
+    [Fact]
+    public void Build_WithAllowedTools_EmitsPermissionsAllowedToolsSnakeCase()
+    {
+        var run = SeedRun();
+        run.AllowedTools = new[] { "write_file", "execute_command" };
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Permissions.Should().NotBeNull();
+        config.Permissions!.AllowedTools.Should().Equal("write_file", "execute_command");
+
+        // Serialises to the andy-cli AX.4 schema shape:
+        // "permissions": { "allowed_tools": [...] } (snake_case).
+        var json = HeadlessConfigJson.Serialize(config);
+        json.Should().Contain("\"permissions\"");
+        json.Should().Contain("\"allowed_tools\"");
+        json.Should().Contain("\"write_file\"");
+        json.Should().Contain("\"execute_command\"");
+
+        // Round-trips back through the configurator's serializer.
+        var roundTripped = System.Text.Json.JsonSerializer.Deserialize<HeadlessRunConfig>(
+            json, HeadlessConfigJson.Options);
+        roundTripped!.Permissions.Should().NotBeNull();
+        roundTripped.Permissions!.AllowedTools.Should().Equal("write_file", "execute_command");
+    }
+
+    [Fact]
+    public void Build_NoAllowedTools_OmitsPermissionsBlock()
+    {
+        var run = SeedRun(); // AllowedTools null
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Permissions.Should().BeNull(
+            "absent allow-list means no permissions block — andy-cli stays fail-closed");
+
+        var json = HeadlessConfigJson.Serialize(config);
+        json.Should().NotContain("\"permissions\"",
+            "the WhenWritingNull policy must drop the absent permissions key entirely");
+    }
+
+    [Fact]
+    public void Build_EmptyAllowedTools_CollapseToNull()
+    {
+        var run = SeedRun();
+        run.AllowedTools = Array.Empty<string>();
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Permissions.Should().BeNull(
+            "empty allow-list collapses to null, matching inputs/env_vars posture");
+    }
+
+    [Fact]
+    public void Build_AllowedTools_DropsBlanksAndDeduplicates()
+    {
+        // The schema requires uniqueItems on allowed_tools; the builder must
+        // strip blank/whitespace entries and de-duplicate before emitting.
+        var run = SeedRun();
+        run.AllowedTools = new[] { "write_file", "  ", "write_file", "read_file", "" };
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Permissions.Should().NotBeNull();
+        config.Permissions!.AllowedTools.Should().Equal("write_file", "read_file");
+    }
+
+    [Fact]
+    public void Build_AllowedTools_OnlyBlanks_CollapseToNull()
+    {
+        var run = SeedRun();
+        run.AllowedTools = new[] { "", "   " };
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Permissions.Should().BeNull(
+            "an allow-list of only blanks carries no real grant — omit the block");
+    }
+
     private static Run SeedRun() => new()
     {
         Id = Guid.NewGuid(),

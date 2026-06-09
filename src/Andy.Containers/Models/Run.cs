@@ -96,6 +96,38 @@ public class Run
     public string? Objective { get; set; }
 
     /// <summary>
+    /// AX.8 (rivoli-ai/conductor#2095). Pre-rendered policy text resolved by
+    /// andy-tasks from the run's governing policy (andy-policies). The
+    /// configurator APPENDS it verbatim under a short header to the headless
+    /// agent's system prompt (after the task objective) so the in-container
+    /// agent is bound by the policy. It arrives already formatted, so the
+    /// configurator does not reshape it. <c>null</c>/empty means no policy
+    /// text — behaviour unchanged.
+    /// <para>
+    /// Not persisted (<c>[NotMapped]</c>): consumed at create-time alongside
+    /// <see cref="Objective"/>, mirroring the same transient rail.
+    /// </para>
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? PolicyInstructions { get; set; }
+
+    /// <summary>
+    /// AX.9 (rivoli-ai/conductor#2096). The resolved permission allow-list —
+    /// the tool ids this run is permitted to execute, resolved by andy-tasks
+    /// from the run's policy. The configurator writes it into the headless
+    /// config's <c>permissions.allowed_tools</c> block so andy-cli's
+    /// fail-closed permission engine relaxes exactly these tools (everything
+    /// else stays denied). <c>null</c>/empty means no permissions block is
+    /// emitted — andy-cli treats absent as unchanged fail-closed.
+    /// <para>
+    /// Not persisted (<c>[NotMapped]</c>): consumed at create-time alongside
+    /// <see cref="Objective"/>, mirroring the same transient rail.
+    /// </para>
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public IReadOnlyList<string>? AllowedTools { get; set; }
+
+    /// <summary>
     /// Transition the run to <paramref name="next"/> according to AP1's state-machine
     /// invariants. Throws <see cref="InvalidOperationException"/> for illegal
     /// transitions so callers cannot silently corrupt history.

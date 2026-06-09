@@ -132,6 +132,37 @@ public class RunsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_ThreadsGovernanceFieldsOntoRunForConfigurator()
+    {
+        // AX.8/AX.9 (rivoli-ai/conductor#2095, #2096). The controller forwards
+        // policyInstructions + allowedTools from the request onto the (transient,
+        // NotMapped) Run fields the configurator consumes. Capture the Run the
+        // configurator receives and assert both governance fields arrived.
+        Run? captured = null;
+        _configurator
+            .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
+            .Callback<Run, CancellationToken>((r, _) => captured = r)
+            .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/noop/config.json"));
+
+        var request = new CreateRunRequest
+        {
+            AgentId = "triage-agent",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            Objective = "Add a Quick Start section.",
+            PolicyInstructions = "Never push to main.",
+            AllowedTools = new[] { "write_file", "execute_command" },
+        };
+
+        await _controller.Create(request, CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.Objective.Should().Be("Add a Quick Start section.");
+        captured.PolicyInstructions.Should().Be("Never push to main.");
+        captured.AllowedTools.Should().Equal("write_file", "execute_command");
+    }
+
+    [Fact]
     public async Task Create_InvokesDispatcher_AfterConfiguratorSuccess()
     {
         // AP5 wiring: configurator success hands off to the dispatcher with

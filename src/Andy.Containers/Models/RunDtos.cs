@@ -39,6 +39,27 @@ public class CreateRunRequest
     /// runs with no task context (the agent then sees only the role prompt).
     /// </summary>
     public string? Objective { get; set; }
+
+    /// <summary>
+    /// AX.8 (rivoli-ai/conductor#2095). Pre-rendered policy text (resolved by
+    /// andy-tasks from the run's governing policy). The configurator appends
+    /// it verbatim to the headless agent's system prompt, after the task
+    /// objective. Optional — omitted for ungoverned runs (the prompt then
+    /// carries only role + objective). Wire shape: <c>policyInstructions:
+    /// string</c>.
+    /// </summary>
+    public string? PolicyInstructions { get; set; }
+
+    /// <summary>
+    /// AX.9 (rivoli-ai/conductor#2096). The resolved permission allow-list:
+    /// tool ids this run may execute, resolved by andy-tasks from the run's
+    /// policy. The configurator writes it into the headless config's
+    /// <c>permissions.allowed_tools</c> so andy-cli's fail-closed permission
+    /// engine relaxes exactly these tools. Optional — omitted/empty means no
+    /// permissions block (andy-cli stays fail-closed). Wire shape:
+    /// <c>allowedTools: string[]</c>.
+    /// </summary>
+    public IReadOnlyList<string>? AllowedTools { get; set; }
 }
 
 public class WorkspaceRefRequest
