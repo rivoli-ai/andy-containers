@@ -388,10 +388,69 @@ try
     builder.Services.AddContainersMessaging(builder.Configuration);
 
     // AP3 (rivoli-ai/andy-containers#105). Configurator pipeline:
-    // andy-agents lookup (stubbed until Epic W lands) → headless-config
-    // builder → on-disk writer. RunsController invokes the facade after
-    // persisting a Pending Run. AP6 picks the file up to spawn andy-cli.
-    builder.Services.AddSingleton<IAndyAgentsClient, StubAndyAgentsClient>();
+    // andy-agents lookup → headless-config builder → on-disk writer.
+    // RunsController invokes the facade after persisting a Pending Run.
+    // AP6 picks the file up to spawn andy-cli.
+    //
+    // AX.1 (rivoli-ai/conductor#2088). The REAL andy-agents-backed resolver
+    // (AndyAgentsHttpClient) is the default whenever AndyAgents:ApiBaseUrl is
+    // set — andy-agents becomes the source of truth for agent instructions +
+    // model. When the base URL is empty (dev / embedded mode with no agents
+    // service reachable) we fall back to the in-process StubAndyAgentsClient,
+    // mirroring the AndyDocs wiring posture so startup never fails. Tools are
+    // NOT sourced from andy-agents — they're built into the in-container
+    // assistant (the spec's Tools is always empty); the permission allow-list
+    // is AX.3/AX.4.
+    builder.Services.Configure<AndyAgentsOptions>(
+        builder.Configuration.GetSection(AndyAgentsOptions.SectionName));
+    var agentsBaseUrl = builder.Configuration[$"{AndyAgentsOptions.SectionName}:ApiBaseUrl"];
+    if (!string.IsNullOrWhiteSpace(agentsBaseUrl))
+    {
+        var agentsOptions = builder.Configuration
+            .GetSection(AndyAgentsOptions.SectionName)
+            .Get<AndyAgentsOptions>() ?? new AndyAgentsOptions();
+        var agentsBuilder = builder.Services.AddHttpClient(AndyAgentsHttpClient.HttpClientName, client =>
+        {
+            // Trailing slash so URI resolution preserves any path prefix
+            // (e.g. embedded mode where the base is .../9100/agents).
+            client.BaseAddress = new Uri(agentsBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = agentsOptions.Timeout;
+        });
+        // Attach the M2M bearer (aud=urn:andy-agents-api) when AndyAuth is
+        // configured. In bypass mode (Authority empty) the client is anonymous,
+        // mirroring the AndyDocs / inbound JWT-bearer postures.
+        var agentsAuthority = builder.Configuration["AndyAuth:Authority"];
+        if (!string.IsNullOrWhiteSpace(agentsAuthority))
+        {
+            var audience = agentsOptions.Audience;
+            agentsBuilder.AddHttpMessageHandler(sp =>
+            {
+                var tokens = sp.GetRequiredService<IServiceTokenService>();
+                var logger = sp.GetService<ILogger<ServiceBearerHandler>>();
+                return new ServiceBearerHandler(
+                    async ct =>
+                    {
+                        try
+                        {
+                            return await tokens.GetAccessTokenAsync(audience, ct);
+                        }
+                        catch (ServiceTokenException)
+                        {
+                            // Surface as "no token" — the handler sends
+                            // anonymously and andy-agents replies 401, which
+                            // the client raises as a clear resolution error.
+                            return null;
+                        }
+                    },
+                    logger);
+            });
+        }
+        builder.Services.AddSingleton<IAndyAgentsClient, AndyAgentsHttpClient>();
+    }
+    else
+    {
+        builder.Services.AddSingleton<IAndyAgentsClient, StubAndyAgentsClient>();
+    }
     builder.Services.AddSingleton<IHeadlessConfigBuilder, HeadlessConfigBuilder>();
     builder.Services.AddSingleton<IHeadlessConfigWriter, HeadlessConfigWriter>();
     builder.Services.AddScoped<IRunConfigurator, RunConfigurator>();
