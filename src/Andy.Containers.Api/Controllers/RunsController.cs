@@ -97,6 +97,11 @@ public class RunsController : ControllerBase
             // Transient (NotMapped): consumed by the configurator at create-time
             // to bake the task into the headless agent's system prompt.
             Objective = request.Objective,
+            // AX.8/AX.9 (rivoli-ai/conductor#2095, #2096). Transient governance
+            // fields: policy text appended to the system prompt and the
+            // permission allow-list written into permissions.allowed_tools.
+            PolicyInstructions = request.PolicyInstructions,
+            AllowedTools = request.AllowedTools,
             Status = RunStatus.Pending,
             CreatedAt = now,
             UpdatedAt = now,

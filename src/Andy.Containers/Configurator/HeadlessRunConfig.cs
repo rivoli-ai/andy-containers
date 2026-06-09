@@ -42,6 +42,33 @@ public sealed record HeadlessRunConfig
     /// staging" — behaviour identical to pre-EX.7.
     /// </summary>
     public IReadOnlyList<HeadlessInput>? Inputs { get; init; }
+
+    /// <summary>
+    /// AX.9 (rivoli-ai/conductor#2096). Per-run permission allow-list. Maps to
+    /// the andy-cli AX.4 schema's <c>permissions</c> block. Headless is
+    /// fail-closed: mutating built-ins and <c>execute_command</c> default to
+    /// deny; tools listed in <see cref="HeadlessPermissions.AllowedTools"/> are
+    /// relaxed to allow. <c>null</c> (and the empty allow-list, which the
+    /// builder collapses to <c>null</c>) means the <c>permissions</c> key is
+    /// omitted entirely — andy-cli treats absent as unchanged fail-closed
+    /// behaviour (wire shape identical to pre-AX.9).
+    /// </summary>
+    public HeadlessPermissions? Permissions { get; init; }
+}
+
+/// <summary>
+/// AX.9 (rivoli-ai/conductor#2096). The <c>permissions</c> block of the
+/// andy-cli headless config. Serialises to <c>{"allowed_tools": [...]}</c>.
+/// </summary>
+public sealed record HeadlessPermissions
+{
+    /// <summary>
+    /// Tool ids the run is permitted to execute (e.g. <c>write_file</c>,
+    /// <c>execute_command</c>). Serialises to <c>allowed_tools</c>. A normally
+    /// fail-closed tool becomes executable when listed; a tool not listed
+    /// stays denied.
+    /// </summary>
+    public IReadOnlyList<string> AllowedTools { get; init; } = [];
 }
 
 /// <summary>
