@@ -5,6 +5,7 @@ using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Services;
@@ -44,6 +45,53 @@ public class RunEventStreamTests : IDisposable
         collected[0].Subject.Should().Be($"andy.containers.events.run.{run.Id}.finished");
         collected[0].ExitCode.Should().Be(0);
         collected[0].DurationSeconds.Should().Be(1.5);
+    }
+
+    [Fact]
+    public async Task TerminalRun_OnRealSqlite_YieldsEventAndStopsWithoutTranslationError()
+    {
+        // Regression: the cursor advance (`CreatedAt > cursor`) is a
+        // DateTimeOffset comparison the SQLite EF provider CANNOT translate.
+        // After the first poll delivers the terminal event and sets the
+        // cursor, the drain poll re-runs the query WITH that cursor and the
+        // buggy code threw InvalidOperationException ("could not be
+        // translated") — which aborted the run.events stream so the terminal
+        // Succeeded/Failed event never reached the upstream executor and the
+        // task hung "Running" forever. The InMemory provider masks this (it
+        // evaluates any CLR predicate), so — like
+        // OutboxDispatcherTests.DrainOnceAsync_DoesNotCrashUnderSqlite — this
+        // runs RunEventStream against a REAL SQLite database.
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<ContainersDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        using var db = new ContainersDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "stream-test",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            Status = RunStatus.Succeeded,
+        };
+        db.Runs.Add(run);
+        db.AppendAgentRunEvent(run, RunEventKind.Finished, exitCode: 0, durationSeconds: 1.5);
+        await db.SaveChangesAsync();
+
+        var collected = new List<RunEventDto>();
+        await foreach (var evt in RunEventStream.AsyncEnumerate(db, run.Id, FastPoll))
+        {
+            collected.Add(evt);
+        }
+
+        collected.Should().ContainSingle();
+        collected[0].Subject.Should().Be($"andy.containers.events.run.{run.Id}.finished");
+        collected[0].ExitCode.Should().Be(0);
     }
 
     [Fact]

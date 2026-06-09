@@ -45,19 +45,24 @@ public static class RunEventStream
         while (!ct.IsCancellationRequested)
         {
             // Fetch any new outbox rows for this run, ordered by creation.
-            // Cursor on CreatedAt + bounded batch + client-side ordering
-            // matches OutboxDispatcher's SQLite-friendly pattern (provider
-            // can't translate DateTimeOffset ORDER BY).
-            var query = db.OutboxEntries
+            // SQLite's EF provider can't translate DateTimeOffset operations:
+            // NEITHER the cursor comparison (`CreatedAt > x`) NOR ORDER BY.
+            // The subject-prefix filter IS translatable (→ LIKE), so scope
+            // server-side by prefix, then apply the cursor + ordering + batch
+            // bound CLIENT-side. A single run's outbox event count is small,
+            // so the client-eval is bounded. (Doing the cursor `Where` in the
+            // query throws "could not be translated" once cursor is set, which
+            // silently dropped every post-cursor event — including the
+            // terminal Succeeded/Failed — so the run never completed upstream.)
+            var rows = await db.OutboxEntries
                 .AsNoTracking()
-                .Where(e => e.Subject.StartsWith(subjectPrefix));
-            if (cursor is not null)
-            {
-                query = query.Where(e => e.CreatedAt > cursor.Value);
-            }
+                .Where(e => e.Subject.StartsWith(subjectPrefix))
+                .ToListAsync(ct);
 
-            var batch = (await query.Take(BatchSize).ToListAsync(ct))
+            var batch = rows
+                .Where(e => cursor is null || e.CreatedAt > cursor.Value)
                 .OrderBy(e => e.CreatedAt)
+                .Take(BatchSize)
                 .ToList();
 
             foreach (var entry in batch)
