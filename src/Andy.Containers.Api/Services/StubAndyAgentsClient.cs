@@ -27,9 +27,12 @@ namespace Andy.Containers.Api.Services;
 ///
 /// AX.1 done: <see cref="AndyAgentsHttpClient"/> resolves the agent
 /// (instructions + model) from andy-agents <c>GET /api/agents/by-slug/{slug}</c>.
-/// Tools are NOT sourced there — they're built into the in-container assistant;
-/// the real spec's Tools is empty (this stub keeps the coding shell/git tools
-/// only as a dev convenience).
+/// Tools are NOT sourced there — they're built into the in-container assistant
+/// (andy-cli AX.3) and gated by the injected permission allow-list (andy-cli
+/// AX.4); the real spec's Tools is always EMPTY. AX.5 brings this stub in line:
+/// it no longer synthesises a <c>shell</c>/<c>git</c> tool for the coding role,
+/// and its coding prompt no longer names a tool transport — the agent uses its
+/// built-in file/edit tools, not a synthesised cli tool.
 /// </remarks>
 public sealed class StubAndyAgentsClient : IAndyAgentsClient
 {
@@ -60,7 +63,7 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
                 "json-plan-v1", new[] { "draft-only" }, 120, 900),
             ["research"] = ("You are the research agent. Gather the context the plan needs and summarise it.",
                 "plain", new[] { "read-only" }, 120, 900),
-            ["coding"] = ("You are the coding agent working inside a sandboxed container. Your repository is checked out at /workspace (the current working directory). Implement the task described below by EDITING FILES — do not ask the user for clarification; you already have everything you need, so act. Use the `shell` tool to inspect and modify files: pass a single bash command string as the args element, e.g. `cat README.md`, `ls`, or a heredoc/printf/sed to write changes (the command runs as `bash -c \"<your string>\"` in /workspace). Use `git` for diff/branch/commit. Make the minimal change that satisfies the task, verify it by reading the file back, then stop. Keep your edits on the working tree for human review.",
+            ["coding"] = ("You are the coding agent working inside a sandboxed container. Your repository is checked out at /workspace (the current working directory). Implement the task described below by editing files — do not ask the user for clarification; you already have everything you need, so act. Make the minimal change that satisfies the task, verify it by reading the changed files back, then stop. Leave your edits on the working tree for human review.",
                 "plain", new[] { "write-branch", "sandboxed" }, 400, 3600),
             ["review"] = ("You are the review agent. Inspect the diff produced by the coding task for safety and correctness; do not modify files.",
                 "plain", new[] { "read-only" }, 200, 1800),
@@ -91,33 +94,12 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             return Task.FromResult<AgentSpec?>(null);
         }
 
-        // The coding role gets a `shell` tool (the agent's actual file-editing
-        // capability) plus the local `git` CLI for branch/diff work. Everyone
-        // else is read-only with no tools.
-        //
-        // andy-cli headless registers NO built-in file tools — the agent's
-        // entire tool surface is exactly what's declared here (HeadlessToolHost
-        // only wires `cli`/`mcp` transports). So a coding agent with only `git`
-        // literally cannot write files; it needs an exec capability. `shell`
-        // maps to `bash -c <script>` via CliSubprocessTool (the LLM supplies the
-        // script as a single `args` element), which is how andy-cli edits files
-        // in the sandboxed container. (The earlier fs.patch MCP tool pointed at
-        // a placeholder `mcp.internal` host that didn't resolve and crashed the
-        // agent on startup; a shell tool needs no external server.)
-        var tools = key == "coding"
-            ? new[]
-            {
-                new AgentSpecTool
-                {
-                    Name = "shell",
-                    Transport = "cli",
-                    Binary = "bash",
-                    Command = new[] { "bash", "-c" },
-                },
-                new AgentSpecTool { Name = "git", Transport = "cli", Binary = "git", Command = new[] { "git" } },
-            }
-            : Array.Empty<AgentSpecTool>();
-
+        // Tools are EMPTY for every role, mirroring AndyAgentsHttpClient. Under
+        // the corrected tools model the assistant's tools are BUILT-IN (andy-cli
+        // AX.3) and gated by the injected permission allow-list (andy-cli AX.4):
+        // andy-agents (and this fallback) no longer synthesise cli tools. The
+        // coding role used to carry a `shell`(bash -c)+`git` spec here; AX.5
+        // retires that interim stopgap.
         var spec = new AgentSpec
         {
             Slug = agentSlug,
@@ -125,7 +107,7 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             Instructions = role.Instructions,
             OutputFormat = role.OutputFormat,
             Model = ProxyModel(),
-            Tools = tools,
+            Tools = Array.Empty<AgentSpecTool>(),
             Boundaries = role.Boundaries,
             Limits = new AgentSpecLimits { MaxIterations = role.MaxIter, TimeoutSeconds = role.Timeout },
         };
