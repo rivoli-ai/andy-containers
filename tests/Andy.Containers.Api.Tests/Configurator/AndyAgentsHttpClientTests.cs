@@ -67,14 +67,17 @@ public class AndyAgentsHttpClientTests
     // ---- Pure mapping: model-id derivation ---------------------------------
 
     [Fact]
-    public void Map_ModelId_FromPreferenceSlug_StripsProviderPrefix()
+    public void Map_ModelId_FromPreferenceSlug_UsesFullSlug()
     {
-        var dto = Dto(modelName: "ignored", prefSlugs: new[] { "deepseek/deepseek-v4-flash" });
+        // The andy-models registry keys on the FULL slug including the provider
+        // segment (the seed registers e.g. "openrouter/qwen3-coder"), so the
+        // prefix must be preserved — stripping it yields an unresolvable id.
+        var dto = Dto(modelName: "ignored", prefSlugs: new[] { "openrouter/qwen3-coder" });
 
         var spec = AndyAgentsHttpClient.MapToAgentSpec(dto, revision: null, DefaultOptions);
 
-        spec!.Model.Id.Should().Be("deepseek-v4-flash",
-            "the segment after the last '/' is what the proxy registers");
+        spec!.Model.Id.Should().Be("openrouter/qwen3-coder",
+            "the full slug (with provider prefix) is what the andy-models proxy registers");
     }
 
     [Fact]
@@ -111,11 +114,11 @@ public class AndyAgentsHttpClientTests
     public void Map_ModelId_FirstUsablePreferenceWins_SkipsBlankSlugs()
     {
         // A hint-only preference (no Slug) is skipped; the first pinned slug wins.
-        var dto = Dto(modelName: "ignored", prefSlugs: new string?[] { null, "x/cerebras-llama-70b" });
+        var dto = Dto(modelName: "ignored", prefSlugs: new string?[] { null, "openrouter/cerebras-llama-70b" });
 
         var spec = AndyAgentsHttpClient.MapToAgentSpec(dto, revision: null, DefaultOptions);
 
-        spec!.Model.Id.Should().Be("cerebras-llama-70b");
+        spec!.Model.Id.Should().Be("openrouter/cerebras-llama-70b");
     }
 
     // ---- Pure mapping: tools empty + limits/boundaries ---------------------
@@ -197,7 +200,7 @@ public class AndyAgentsHttpClientTests
         spec.Instructions.Should().Be("You are the coding agent.");
         spec.Model.Provider.Should().Be("openai");
         spec.Model.ApiKeyRef.Should().Be("env:OPENAI_API_KEY");
-        spec.Model.Id.Should().Be("deepseek-v4-flash", "preference slug wins + prefix stripped");
+        spec.Model.Id.Should().Be("deepseek/deepseek-v4-flash", "preference slug wins, used as the full registry slug");
         spec.Tools.Should().BeEmpty("ToolIds are ignored; tools are built into the assistant");
     }
 

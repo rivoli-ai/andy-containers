@@ -220,10 +220,12 @@ public sealed class AndyAgentsHttpClient : IAndyAgentsClient
 
     /// <summary>
     /// Resolves the model id the andy-models proxy knows. Preference order:
-    /// the first pinned preference slug (with any provider prefix stripped),
-    /// then <see cref="AgentDtoWire.ModelName"/>. The provider-prefix strip
-    /// turns andy-models routing slugs like "deepseek/deepseek-v4-flash" into
-    /// the bare "deepseek-v4-flash" the OpenAI-dialect proxy registers.
+    /// the first pinned preference slug, then <see cref="AgentDtoWire.ModelName"/>.
+    /// The FULL slug is used as-is: the andy-models registry keys on the whole
+    /// slug INCLUDING the provider segment (e.g. "openrouter/qwen3-coder",
+    /// "anthropic/claude-sonnet-4-6"), so stripping the prefix would produce an
+    /// id the proxy can't resolve. (An unprefixed slug like "gpt-4o" passes
+    /// through unchanged.)
     /// </summary>
     public static string DeriveModelId(AgentDtoWire dto)
     {
@@ -241,16 +243,7 @@ public sealed class AndyAgentsHttpClient : IAndyAgentsClient
             return "default";
         }
 
-        var stripped = StripProviderPrefix(raw);
-        return string.IsNullOrWhiteSpace(stripped) ? raw : stripped;
-    }
-
-    // "deepseek/deepseek-v4-flash" → "deepseek-v4-flash"; "gpt-4o" → "gpt-4o".
-    // Only the segment after the LAST '/' is kept.
-    private static string StripProviderPrefix(string slug)
-    {
-        var idx = slug.LastIndexOf('/');
-        return idx >= 0 && idx + 1 < slug.Length ? slug[(idx + 1)..] : slug;
+        return raw.Trim();
     }
 
     private static async Task<string> SafeReadAsync(HttpContent content, CancellationToken ct)
