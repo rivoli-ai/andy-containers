@@ -41,19 +41,22 @@ public class StubAndyAgentsClientTests
     }
 
     [Fact]
-    public async Task GetAgentAsync_CodingRole_HasShellAndGitTools()
+    public async Task GetAgentAsync_CodingRole_HasNoSynthesisedTools()
     {
         var spec = await _client.GetAgentAsync("coding", revision: null);
 
-        // The coding agent's actual file-editing capability is the `shell`
-        // tool (bash -c via CliSubprocessTool) — andy-cli headless registers NO
-        // built-in file tools, so without an exec tool the agent cannot write
-        // files. `git` is kept for branch/diff/commit. All local CLI; no
-        // external MCP (a placeholder endpoint would crash the agent).
-        spec!.Tools.Should().Contain(t => t.Name == "shell" && t.Transport == "cli"
-            && t.Binary == "bash");
-        spec.Tools.Should().Contain(t => t.Name == "git" && t.Transport == "cli");
-        spec.Tools.Should().OnlyContain(t => t.Transport == "cli");
+        // AX.5: under the corrected tools model the assistant's tools are
+        // BUILT-IN (andy-cli AX.3) and gated by the injected permission
+        // allow-list (andy-cli AX.4). The stub no longer synthesises a
+        // `shell`(bash -c)+`git` spec for the coding role; Tools is EMPTY for
+        // every role, matching AndyAgentsHttpClient.
+        spec!.Tools.Should().BeEmpty(
+            "tools come from the assistant built-ins now, not synthesised cli tools");
+
+        // The coding prompt no longer references the removed `shell` tool or its
+        // `bash -c` transport — it uses the agent's built-in file/edit tools.
+        spec.Instructions.Should().NotContain("shell");
+        spec.Instructions.Should().NotContain("bash -c");
     }
 
     [Fact]
