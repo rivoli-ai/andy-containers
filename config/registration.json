@@ -31,7 +31,8 @@
         "profile",
         "roles",
         "scp:urn:andy-containers-api",
-        "scp:urn:andy-models-api"
+        "scp:urn:andy-models-api",
+        "scp:urn:andy-agents-api"
       ]
     },
     "webClient": {
@@ -75,7 +76,13 @@
       { "code": "user",   "name": "User",          "description": "Standard user",              "isSystem": true },
       { "code": "viewer", "name": "Viewer",        "description": "Read-only access",           "isSystem": true }
     ],
-    "testUserRole": "admin"
+    "testUserRole": "admin",
+    "servicePrincipal": {
+      "clientId": "andy-containers-api",
+      "permissions": [
+        "andy-agents:agent:read"
+      ]
+    }
   },
   "settings": {
     "definitions": [
