@@ -35,7 +35,13 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
     {
         Provider = "openai",
         Id = "deepseek-v4-flash",
-        ApiKeyRef = "env:ANDY_SERVICE_TOKEN",
+        // The in-container OpenAI-dialect client reads its bearer from
+        // OPENAI_API_KEY — andy-containers injects a per-container proxy token
+        // there (aud=urn:andy-models-api) alongside OPENAI_BASE_URL pointed at
+        // the andy-models proxy. (The shared ANDY_SERVICE_TOKEN is
+        // aud=urn:andy-containers-api and the proxy rejects it 401, so the key
+        // ref must name OPENAI_API_KEY, not ANDY_SERVICE_TOKEN.)
+        ApiKeyRef = "env:OPENAI_API_KEY",
     };
 
     // Per-role presentation. Keyed by the andy-agents slug the planner emits;
@@ -49,7 +55,7 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
                 "json-plan-v1", new[] { "draft-only" }, 120, 900),
             ["research"] = ("You are the research agent. Gather the context the plan needs and summarise it.",
                 "plain", new[] { "read-only" }, 120, 900),
-            ["coding"] = ("You are the coding agent. Implement the assigned TaskNode against the delegation contract, editing files in /workspace and leaving the change on a branch for human review.",
+            ["coding"] = ("You are the coding agent working inside a sandboxed container. Your repository is checked out at /workspace (the current working directory). Implement the task described below by EDITING FILES — do not ask the user for clarification; you already have everything you need, so act. Use the `shell` tool to inspect and modify files: pass a single bash command string as the args element, e.g. `cat README.md`, `ls`, or a heredoc/printf/sed to write changes (the command runs as `bash -c \"<your string>\"` in /workspace). Use `git` for diff/branch/commit. Make the minimal change that satisfies the task, verify it by reading the file back, then stop. Keep your edits on the working tree for human review.",
                 "plain", new[] { "write-branch", "sandboxed" }, 400, 3600),
             ["review"] = ("You are the review agent. Inspect the diff produced by the coding task for safety and correctness; do not modify files.",
                 "plain", new[] { "read-only" }, 200, 1800),
@@ -80,14 +86,29 @@ public sealed class StubAndyAgentsClient : IAndyAgentsClient
             return Task.FromResult<AgentSpec?>(null);
         }
 
-        // The coding role gets the local `git` CLI for branch/diff work;
-        // file editing uses andy-cli's BUILT-IN tools (no external MCP server).
-        // Everyone else is read-only with no tools. (The previous fs.patch MCP
-        // tool pointed at a placeholder `mcp.internal` host that doesn't
-        // resolve, which crashed the in-container agent on startup.)
+        // The coding role gets a `shell` tool (the agent's actual file-editing
+        // capability) plus the local `git` CLI for branch/diff work. Everyone
+        // else is read-only with no tools.
+        //
+        // andy-cli headless registers NO built-in file tools — the agent's
+        // entire tool surface is exactly what's declared here (HeadlessToolHost
+        // only wires `cli`/`mcp` transports). So a coding agent with only `git`
+        // literally cannot write files; it needs an exec capability. `shell`
+        // maps to `bash -c <script>` via CliSubprocessTool (the LLM supplies the
+        // script as a single `args` element), which is how andy-cli edits files
+        // in the sandboxed container. (The earlier fs.patch MCP tool pointed at
+        // a placeholder `mcp.internal` host that didn't resolve and crashed the
+        // agent on startup; a shell tool needs no external server.)
         var tools = key == "coding"
             ? new[]
             {
+                new AgentSpecTool
+                {
+                    Name = "shell",
+                    Transport = "cli",
+                    Binary = "bash",
+                    Command = new[] { "bash", "-c" },
+                },
                 new AgentSpecTool { Name = "git", Transport = "cli", Binary = "git", Command = new[] { "git" } },
             }
             : Array.Empty<AgentSpecTool>();

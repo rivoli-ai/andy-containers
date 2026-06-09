@@ -30,6 +30,15 @@ public class CreateRunRequest
     /// controller mints a fresh root id so every Run still has a chain anchor.
     /// </summary>
     public Guid? CorrelationId { get; set; }
+
+    /// <summary>
+    /// The concrete task objective (the andy-tasks TaskNode's
+    /// delegation-contract objective). The configurator bakes it into the
+    /// headless agent's system prompt so the in-container agent acts on the
+    /// actual task, not just its generic role prompt. Optional — omitted for
+    /// runs with no task context (the agent then sees only the role prompt).
+    /// </summary>
+    public string? Objective { get; set; }
 }
 
 public class WorkspaceRefRequest

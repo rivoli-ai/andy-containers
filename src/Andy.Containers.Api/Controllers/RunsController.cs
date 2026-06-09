@@ -94,6 +94,9 @@ public class RunsController : ControllerBase
                 },
             PolicyId = request.PolicyId,
             CorrelationId = request.CorrelationId ?? Guid.NewGuid(),
+            // Transient (NotMapped): consumed by the configurator at create-time
+            // to bake the task into the headless agent's system prompt.
+            Objective = request.Objective,
             Status = RunStatus.Pending,
             CreatedAt = now,
             UpdatedAt = now,

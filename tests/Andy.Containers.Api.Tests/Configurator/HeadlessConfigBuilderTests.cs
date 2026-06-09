@@ -57,6 +57,39 @@ public class HeadlessConfigBuilderTests
     }
 
     [Fact]
+    public void Build_WithObjective_BakesTaskIntoSystemPrompt()
+    {
+        // andy-cli uses Agent.Instructions as the system prompt + a fixed
+        // "Begin." kickoff, so the concrete task must be inside the
+        // instructions or the agent has nothing to act on. The per-run
+        // objective (forwarded from the andy-tasks delegation contract) must
+        // be appended to the agent's generic role prompt.
+        var run = SeedRun();
+        run.Objective = "Add a Quick Start section to README.md.";
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Agent.Instructions.Should().Contain(spec.Instructions,
+            "the generic role prompt is preserved");
+        config.Agent.Instructions.Should().Contain("Add a Quick Start section to README.md.",
+            "the concrete task objective must be baked into the system prompt");
+    }
+
+    [Fact]
+    public void Build_WithoutObjective_LeavesRoleInstructionsUnchanged()
+    {
+        // A run with no objective (read-only role, or a caller that didn't
+        // forward one) keeps exactly the role prompt — no trailing scaffolding.
+        var run = SeedRun(); // Objective null
+        var spec = TriageAgent();
+
+        var config = _builder.Build(run, spec);
+
+        config.Agent.Instructions.Should().Be(spec.Instructions);
+    }
+
+    [Fact]
     public void Build_EmptyInstructions_Throws()
     {
         var run = SeedRun();

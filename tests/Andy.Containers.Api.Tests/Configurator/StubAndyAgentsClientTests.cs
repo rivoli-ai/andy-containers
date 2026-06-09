@@ -34,17 +34,25 @@ public class StubAndyAgentsClientTests
         // allow-list would reject.
         spec.Model.Provider.Should().Be("openai");
         spec.Model.Id.Should().Be("deepseek-v4-flash");
-        spec.Model.ApiKeyRef.Should().Be("env:ANDY_SERVICE_TOKEN");
+        // The OpenAI-dialect client reads its bearer from OPENAI_API_KEY (the
+        // per-container aud=urn:andy-models-api proxy token), NOT the shared
+        // ANDY_SERVICE_TOKEN (aud=urn:andy-containers-api, rejected 401).
+        spec.Model.ApiKeyRef.Should().Be("env:OPENAI_API_KEY");
     }
 
     [Fact]
-    public async Task GetAgentAsync_CodingRole_HasLocalGitOnly()
+    public async Task GetAgentAsync_CodingRole_HasShellAndGitTools()
     {
         var spec = await _client.GetAgentAsync("coding", revision: null);
 
-        // git is a local CLI tool; file editing uses andy-cli's built-ins.
-        // No external MCP tools (a placeholder endpoint would crash the agent).
-        spec!.Tools.Should().Contain(t => t.Name == "git" && t.Transport == "cli");
+        // The coding agent's actual file-editing capability is the `shell`
+        // tool (bash -c via CliSubprocessTool) — andy-cli headless registers NO
+        // built-in file tools, so without an exec tool the agent cannot write
+        // files. `git` is kept for branch/diff/commit. All local CLI; no
+        // external MCP (a placeholder endpoint would crash the agent).
+        spec!.Tools.Should().Contain(t => t.Name == "shell" && t.Transport == "cli"
+            && t.Binary == "bash");
+        spec.Tools.Should().Contain(t => t.Name == "git" && t.Transport == "cli");
         spec.Tools.Should().OnlyContain(t => t.Transport == "cli");
     }
 

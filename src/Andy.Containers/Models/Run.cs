@@ -79,6 +79,23 @@ public class Run
     public IReadOnlyList<RunInput>? Inputs { get; set; }
 
     /// <summary>
+    /// The concrete task objective for this run — the andy-tasks TaskNode's
+    /// delegation-contract objective, forwarded on the create request. The
+    /// configurator bakes it into the headless agent's system prompt
+    /// (<c>HeadlessConfigBuilder.ComposeInstructions</c>) so the in-container
+    /// agent acts on the actual task rather than the generic role prompt.
+    /// <para>
+    /// Not persisted (<c>[NotMapped]</c>): it's consumed at create-time, when
+    /// the configurator builds the headless config from the in-memory run, so
+    /// no schema change is needed. (A configurator RETRY that re-loads the run
+    /// from the DB would not see it — persisting it is a follow-up if retry
+    /// fidelity is required.)
+    /// </para>
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? Objective { get; set; }
+
+    /// <summary>
     /// Transition the run to <paramref name="next"/> according to AP1's state-machine
     /// invariants. Throws <see cref="InvalidOperationException"/> for illegal
     /// transitions so callers cannot silently corrupt history.

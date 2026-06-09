@@ -51,6 +51,15 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
 
         var tools = agent.Tools.Select(MapTool).ToList();
 
+        // andy-cli uses Agent.Instructions as the SYSTEM PROMPT and hands the
+        // agent a fixed "Begin." kickoff — so the concrete task objective MUST
+        // be baked into the instructions or the model has nothing to act on
+        // (it asks for clarification and edits nothing). The AgentSpec carries
+        // only the generic role prompt; the per-run objective lives on the
+        // Run (forwarded from the andy-tasks TaskNode's delegation contract).
+        // Compose: role instructions + the concrete task.
+        var instructions = ComposeInstructions(agent.Instructions, run.Objective);
+
         return new HeadlessRunConfig
         {
             SchemaVersion = 1,
@@ -59,7 +68,7 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
             {
                 Slug = agent.Slug,
                 Revision = agent.Revision,
-                Instructions = agent.Instructions,
+                Instructions = instructions,
                 OutputFormat = agent.OutputFormat,
             },
             Model = new HeadlessModel
@@ -191,6 +200,22 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
         // Re-join from the validated segments so the stager works against
         // a canonical, collapsed relative path.
         return string.Join('/', segments);
+    }
+
+    // Compose the agent's generic role prompt with the concrete per-run task
+    // objective into a single system prompt. When no objective is supplied
+    // (e.g. a read-only role, or a caller that didn't forward one) the role
+    // instructions stand alone — preserving the prior behaviour.
+    internal static string ComposeInstructions(string roleInstructions, string? objective)
+    {
+        if (string.IsNullOrWhiteSpace(objective))
+        {
+            return roleInstructions;
+        }
+
+        return roleInstructions
+            + "\n\n## Task\n"
+            + objective.Trim();
     }
 
     private static HeadlessTool MapTool(AgentSpecTool tool)
