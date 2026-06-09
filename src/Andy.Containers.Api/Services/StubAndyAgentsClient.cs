@@ -3,8 +3,11 @@ using Andy.Containers.Configurator;
 namespace Andy.Containers.Api.Services;
 
 /// <summary>
-/// AP3 (rivoli-ai/andy-containers#105) placeholder client. The real
-/// andy-agents-backed resolver is Epic W; until it lands this stub
+/// AP3 (rivoli-ai/andy-containers#105) in-process fallback client. As of AX.1
+/// (rivoli-ai/conductor#2088) the real andy-agents-backed resolver is
+/// <see cref="AndyAgentsHttpClient"/> — the default whenever
+/// <c>AndyAgents:ApiBaseUrl</c> is configured. This stub remains the fallback
+/// for dev / embedded mode where no andy-agents instance is reachable, and
 /// synthesises a runnable <see cref="AgentSpec"/> for the agent slugs the
 /// andy-tasks planner actually emits (the andy-agents roster: <c>coding</c>,
 /// <c>review</c>, <c>planning</c>, <c>triage</c>, <c>research</c>,
@@ -22,9 +25,11 @@ namespace Andy.Containers.Api.Services;
 /// to OpenRouter upstream). The api-key ref points at the injected service
 /// token rather than a provider key the container doesn't hold.
 ///
-/// TODO(andy-agents / Epic W): replace with an HTTP client that resolves the
-/// agent (instructions, model, tools, limits) from andy-agents
-/// <c>GET /api/agents/by-slug/{slug}</c>.
+/// AX.1 done: <see cref="AndyAgentsHttpClient"/> resolves the agent
+/// (instructions + model) from andy-agents <c>GET /api/agents/by-slug/{slug}</c>.
+/// Tools are NOT sourced there — they're built into the in-container assistant;
+/// the real spec's Tools is empty (this stub keeps the coding shell/git tools
+/// only as a dev convenience).
 /// </remarks>
 public sealed class StubAndyAgentsClient : IAndyAgentsClient
 {
