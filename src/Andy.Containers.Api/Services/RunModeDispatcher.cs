@@ -9,18 +9,18 @@ namespace Andy.Containers.Api.Services;
 public sealed class RunModeDispatcher : IRunModeDispatcher
 {
     private readonly ContainersDbContext _db;
-    private readonly IHeadlessRunner _runner;
+    private readonly IHeadlessRunLauncher _launcher;
     private readonly IRunBranchService _runBranch;
     private readonly ILogger<RunModeDispatcher> _logger;
 
     public RunModeDispatcher(
         ContainersDbContext db,
-        IHeadlessRunner runner,
+        IHeadlessRunLauncher launcher,
         IRunBranchService runBranch,
         ILogger<RunModeDispatcher> logger)
     {
         _db = db;
-        _runner = runner;
+        _launcher = launcher;
         _runBranch = runBranch;
         _logger = logger;
     }
@@ -95,31 +95,25 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
 
         return run.Mode switch
         {
-            RunMode.Headless => await StartHeadlessAsync(run, configPath, ct),
+            RunMode.Headless => StartHeadlessDetached(run, configPath),
             RunMode.Terminal => RunDispatchOutcome.Attachable(),
             _ => Fail(run, $"Unknown run mode: {run.Mode}."),
         };
     }
 
-    private async Task<RunDispatchOutcome> StartHeadlessAsync(Run run, string configPath, CancellationToken ct)
+    // AX.16 (rivoli-ai/conductor#2104). The andy-cli exec can outlast any
+    // sane HTTP timeout (a 480B coding model legitimately runs for many
+    // minutes), so the dispatch hands off to the background launcher and
+    // returns immediately. Terminal state reaches callers through the run
+    // events the runner publishes over NATS + GET /api/runs/{id} polling —
+    // the contract andy-tasks' ConductorExecutor already consumes.
+    private RunDispatchOutcome StartHeadlessDetached(Run run, string configPath)
     {
-        try
-        {
-            var outcome = await _runner.StartAsync(run, configPath, ct);
-            return RunDispatchOutcome.Started(outcome);
-        }
-        catch (Exception ex)
-        {
-            // The runner owns its own terminal-event writes — if it threw
-            // before getting there the row is stuck mid-flight. Surface the
-            // failure to the caller; transitioning the run row to Failed is
-            // intentionally not done here because the runner's TerminateAsync
-            // path is the canonical place for that and reaching in around it
-            // would race with a slow-but-recovering runner.
-            _logger.LogError(ex,
-                "Run {RunId} headless dispatch threw: {Message}", run.Id, ex.Message);
-            return RunDispatchOutcome.Failed(ex.Message);
-        }
+        _ = _launcher.Launch(run.Id, configPath);
+        _logger.LogInformation(
+            "Run {RunId} headless execution detached to background; POST returns with status {Status}.",
+            run.Id, run.Status);
+        return RunDispatchOutcome.Detached();
     }
 
     private RunDispatchOutcome Fail(Run run, string error)

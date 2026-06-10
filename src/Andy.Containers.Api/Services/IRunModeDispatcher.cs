@@ -21,19 +21,19 @@ public interface IRunModeDispatcher
 }
 
 /// <summary>
-/// Outcome of a dispatch attempt. <see cref="RunDispatchKind.Started"/>
-/// carries the inner <see cref="HeadlessRunOutcome"/> so callers can
-/// observe headless runs end-to-end without reaching for AP6 directly;
-/// the other kinds leave that null.
+/// Outcome of a dispatch attempt. <see cref="RunDispatchKind.Detached"/>
+/// (AX.16, rivoli-ai/conductor#2104) means the headless execution was
+/// handed to <see cref="IHeadlessRunLauncher"/> and is running in the
+/// background — terminal state is observed via run events / polling,
+/// never through this return value.
 /// </summary>
 public sealed record RunDispatchOutcome
 {
     public required RunDispatchKind Kind { get; init; }
     public string? Error { get; init; }
-    public HeadlessRunOutcome? HeadlessOutcome { get; init; }
 
-    public static RunDispatchOutcome Started(HeadlessRunOutcome inner)
-        => new() { Kind = RunDispatchKind.Started, HeadlessOutcome = inner };
+    public static RunDispatchOutcome Detached()
+        => new() { Kind = RunDispatchKind.Detached };
 
     public static RunDispatchOutcome Attachable()
         => new() { Kind = RunDispatchKind.Attachable };
@@ -47,8 +47,8 @@ public sealed record RunDispatchOutcome
 
 public enum RunDispatchKind
 {
-    /// <summary>Headless run started via AP6; <c>HeadlessOutcome</c> populated.</summary>
-    Started,
+    /// <summary>Headless execution detached to the background launcher (AX.16).</summary>
+    Detached,
 
     /// <summary>Terminal mode run is bound to a container and ready for WebSocket attach.</summary>
     Attachable,
