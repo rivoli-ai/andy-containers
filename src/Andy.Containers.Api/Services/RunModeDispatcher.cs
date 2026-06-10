@@ -1,4 +1,6 @@
 using Andy.Containers.Infrastructure.Data;
+using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -43,18 +45,18 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
         var workspaceId = run.WorkspaceRef?.WorkspaceId ?? Guid.Empty;
         if (workspaceId == Guid.Empty)
         {
-            return Fail(run, "Run has no workspace reference; cannot select a container.");
+            return await FailAsync(run, "Run has no workspace reference; cannot select a container.", ct);
         }
 
         var workspace = await _db.Workspaces.FirstOrDefaultAsync(w => w.Id == workspaceId, ct);
         if (workspace is null)
         {
-            return Fail(run, $"Workspace {workspaceId} not found.");
+            return await FailAsync(run, $"Workspace {workspaceId} not found.", ct);
         }
 
         if (workspace.DefaultContainerId is not { } containerId)
         {
-            return Fail(run, $"Workspace {workspaceId} has no default container; provision one before dispatching the run.");
+            return await FailAsync(run, $"Workspace {workspaceId} has no default container; provision one before dispatching the run.", ct);
         }
 
         run.ContainerId = containerId;
@@ -97,7 +99,7 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
         {
             RunMode.Headless => StartHeadlessDetached(run, configPath),
             RunMode.Terminal => RunDispatchOutcome.Attachable(),
-            _ => Fail(run, $"Unknown run mode: {run.Mode}."),
+            _ => await FailAsync(run, $"Unknown run mode: {run.Mode}.", ct),
         };
     }
 
@@ -116,9 +118,33 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
         return RunDispatchOutcome.Detached();
     }
 
-    private RunDispatchOutcome Fail(Run run, string error)
+    // rivoli-ai/conductor#2122: a dispatch-level failure is TERMINAL for
+    // the run, not a log line. Before this, Fail() only logged — the Run
+    // row stayed Pending, no andy.containers.events.run.{id}.failed was
+    // ever published (only provisioning/runner failures publish), and
+    // andy-tasks' RunEventConsumer waited forever on an event that never
+    // comes, leaving its AgentRun row Running with nothing behind it.
+    // Transition the row to Failed, record the reason, and publish the
+    // terminal event through the same outbox the runner uses so every
+    // downstream consumer folds the truth.
+    private async Task<RunDispatchOutcome> FailAsync(Run run, string error, CancellationToken ct)
     {
         _logger.LogWarning("Run {RunId} dispatch failed: {Error}", run.Id, error);
+
+        run.Error = error;
+        if (RunStatusTransitions.CanTransition(run.Status, RunStatus.Failed))
+        {
+            run.TransitionTo(RunStatus.Failed);
+            _db.AppendAgentRunEvent(run, RunEventKind.Failed);
+            await _db.SaveChangesAsync(ct);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Run {RunId} dispatch failure could not transition {Status}→Failed; leaving status untouched.",
+                run.Id, run.Status);
+        }
+
         return RunDispatchOutcome.Failed(error);
     }
 }
