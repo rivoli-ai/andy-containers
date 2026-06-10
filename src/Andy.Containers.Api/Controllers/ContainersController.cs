@@ -246,7 +246,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:execute")]
     public async Task<IActionResult> Start(Guid id, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         try
@@ -270,7 +271,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:execute")]
     public async Task<IActionResult> Stop(Guid id, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         try
@@ -297,7 +299,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:delete")]
     public async Task<IActionResult> Destroy(Guid id, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         await _containerService.DestroyContainerAsync(id, ct);
@@ -308,7 +311,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:execute")]
     public async Task<IActionResult> Exec(Guid id, [FromBody] ExecRequest request, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         var result = await _containerService.ExecAsync(id, request.Command, ct);
@@ -330,7 +334,8 @@ public class ContainersController : ControllerBase
         [FromServices] ICodeAssistantInstallExecutor executor,
         CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         if (container.Status != ContainerStatus.Running)
@@ -401,7 +406,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:read")]
     public async Task<IActionResult> GetConnectionInfo(Guid id, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         var info = await _containerService.GetConnectionInfoAsync(id, ct);
@@ -571,7 +577,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:read")]
     public async Task<IActionResult> GetEvents(Guid id, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         var events = await _db.Events
@@ -586,7 +593,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:read")]
     public async Task<IActionResult> ListRepositories(Guid id, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         var repos = await _db.ContainerGitRepositories
@@ -604,7 +612,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:write")]
     public async Task<IActionResult> AddRepository(Guid id, [FromBody] AddRepositoryDto dto, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         if (container.Status != ContainerStatus.Running)
@@ -658,7 +667,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:execute")]
     public async Task<IActionResult> PullRepository(Guid id, Guid repoId, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         if (container.Status != ContainerStatus.Running)
@@ -692,7 +702,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:read")]
     public async Task<IActionResult> GetGitDiff(Guid id, [FromQuery] Guid? repoId, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         var diff = await _gitDiffService.GetDiffAsync(id, repoId, ct);
@@ -717,7 +728,8 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:read")]
     public async Task<IActionResult> GetPorts(Guid id, CancellationToken ct)
     {
-        var container = await _containerService.GetContainerAsync(id, ct);
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
         var ports = await _portDiscoveryService.GetPortsAsync(id, ct);
@@ -770,6 +782,42 @@ public class ContainersController : ControllerBase
     {
         if (_currentUser.IsAdmin()) return true;
         return container.OwnerId == _currentUser.GetUserId();
+    }
+
+    /// <summary>
+    /// Resolves a container for sub-resource endpoints, translating the
+    /// store's <see cref="KeyNotFoundException"/> into <c>null</c> so the
+    /// caller can return the structured 404 envelope instead of leaking a
+    /// 500 (rivoli-ai/conductor#1972 — observed live on
+    /// <c>GET /api/containers/{id}/git/diff</c> with an unknown id).
+    /// </summary>
+    private async Task<Container?> FindContainerAsync(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            return await _containerService.GetContainerAsync(id, ct);
+        }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Structured 404 envelope for an unknown container id — same shape as
+    /// the classified <c>GET /api/containers/{id}</c> response (SM.2.6):
+    /// <c>{ code, message, correlationId }</c> plus the
+    /// <c>X-Correlation-Id</c> header.
+    /// </summary>
+    private NotFoundObjectResult ContainerNotFound(Guid id)
+    {
+        Response.Headers["X-Correlation-Id"] = id.ToString();
+        return NotFound(new
+        {
+            code = ContainerNotFoundException.ErrorCode,
+            message = $"Container {id} not found.",
+            correlationId = id,
+        });
     }
 }
 
