@@ -43,12 +43,7 @@ public class RunsMcpToolsTests : IDisposable
         _dispatcher = new Mock<IRunModeDispatcher>();
         _dispatcher
             .Setup(d => d.DispatchAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(RunDispatchOutcome.Started(new HeadlessRunOutcome
-            {
-                Kind = RunEventKind.Finished,
-                Status = RunStatus.Succeeded,
-                ExitCode = 0,
-            }));
+            .ReturnsAsync(RunDispatchOutcome.Detached());
 
         _cancellation = new RunCancellationRegistry();
 

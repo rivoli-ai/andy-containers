@@ -18,7 +18,7 @@ namespace Andy.Containers.Api.Tests.Services;
 public class RunModeDispatcherTests : IDisposable
 {
     private readonly ContainersDbContext _db;
-    private readonly Mock<IHeadlessRunner> _runner = new();
+    private readonly Mock<IHeadlessRunLauncher> _launcher = new();
     private readonly Mock<IRunBranchService> _runBranch = new();
     private readonly RunModeDispatcher _dispatcher;
     private const string ConfigPath = "/tmp/runs/x/config.json";
@@ -26,7 +26,10 @@ public class RunModeDispatcherTests : IDisposable
     public RunModeDispatcherTests()
     {
         _db = InMemoryDbHelper.CreateContext();
-        _dispatcher = new RunModeDispatcher(_db, _runner.Object, _runBranch.Object, NullLogger<RunModeDispatcher>.Instance);
+        _launcher
+            .Setup(l => l.Launch(It.IsAny<Guid>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _dispatcher = new RunModeDispatcher(_db, _launcher.Object, _runBranch.Object, NullLogger<RunModeDispatcher>.Instance);
     }
 
     public void Dispose() => _db.Dispose();
@@ -37,9 +40,6 @@ public class RunModeDispatcherTests : IDisposable
     public async Task Dispatch_Headless_EnsuresRunBranchOnSelectedContainer()
     {
         var (run, workspace) = SeedRunAndWorkspace(RunMode.Headless);
-        _runner
-            .Setup(r => r.StartAsync(It.IsAny<Run>(), ConfigPath, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HeadlessRunOutcome { Kind = RunEventKind.Finished, Status = RunStatus.Succeeded });
 
         await _dispatcher.DispatchAsync(run, ConfigPath);
 
@@ -56,59 +56,30 @@ public class RunModeDispatcherTests : IDisposable
         _runBranch
             .Setup(b => b.EnsureRunBranchAsync(It.IsAny<Run>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("branch boom"));
-        _runner
-            .Setup(r => r.StartAsync(It.IsAny<Run>(), ConfigPath, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HeadlessRunOutcome { Kind = RunEventKind.Finished, Status = RunStatus.Succeeded });
 
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
-        outcome.Kind.Should().Be(RunDispatchKind.Started);
+        outcome.Kind.Should().Be(RunDispatchKind.Detached);
     }
 
     [Fact]
-    public async Task Dispatch_HeadlessHappyPath_AssignsContainer_TransitionsProvisioning_InvokesRunner()
+    public async Task Dispatch_HeadlessHappyPath_AssignsContainer_TransitionsProvisioning_DetachesToLauncher()
     {
+        // AX.16 (rivoli-ai/conductor#2104): the dispatcher no longer awaits
+        // the runner — it hands the run id + config path to the background
+        // launcher and returns Detached immediately. Terminal state reaches
+        // callers via run events / polling.
         var (run, workspace) = SeedRunAndWorkspace(RunMode.Headless);
-        _runner
-            .Setup(r => r.StartAsync(It.IsAny<Run>(), ConfigPath, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HeadlessRunOutcome
-            {
-                Kind = RunEventKind.Finished,
-                Status = RunStatus.Succeeded,
-                ExitCode = 0,
-            });
 
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
-        outcome.Kind.Should().Be(RunDispatchKind.Started);
-        outcome.HeadlessOutcome.Should().NotBeNull();
-        outcome.HeadlessOutcome!.Status.Should().Be(RunStatus.Succeeded);
-
+        outcome.Kind.Should().Be(RunDispatchKind.Detached);
         run.ContainerId.Should().Be(workspace.DefaultContainerId);
-        // The runner advances Provisioning → Running → terminal; we observe
-        // the final state, but ContainerId proves AP5 ran first.
-        _runner.Verify(r => r.StartAsync(
-            It.Is<Run>(rn => rn.ContainerId == workspace.DefaultContainerId),
-            ConfigPath,
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task Dispatch_Headless_TransitionsToProvisioningBeforeRunnerCall()
-    {
-        // Pin the runner-side state at call time: dispatcher must have moved
-        // Pending → Provisioning before invoking the runner so AP6 sees the
-        // expected starting status.
-        var (run, _) = SeedRunAndWorkspace(RunMode.Headless);
-        RunStatus? statusSeenByRunner = null;
-        _runner
-            .Setup(r => r.StartAsync(It.IsAny<Run>(), ConfigPath, It.IsAny<CancellationToken>()))
-            .Callback<Run, string, CancellationToken>((r, _, _) => statusSeenByRunner = r.Status)
-            .ReturnsAsync(new HeadlessRunOutcome { Kind = RunEventKind.Finished, Status = RunStatus.Succeeded });
-
-        await _dispatcher.DispatchAsync(run, ConfigPath);
-
-        statusSeenByRunner.Should().Be(RunStatus.Provisioning);
+        // Detach happens AFTER the Provisioning transition is persisted, so
+        // the background scope re-loads a row that already carries the
+        // container assignment.
+        run.Status.Should().Be(RunStatus.Provisioning);
+        _launcher.Verify(l => l.Launch(run.Id, ConfigPath), Times.Once);
     }
 
     [Fact]
@@ -119,13 +90,11 @@ public class RunModeDispatcherTests : IDisposable
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
         outcome.Kind.Should().Be(RunDispatchKind.Attachable);
-        outcome.HeadlessOutcome.Should().BeNull();
         run.ContainerId.Should().Be(workspace.DefaultContainerId);
         run.Status.Should().Be(RunStatus.Provisioning,
             "Terminal-mode runs are still provisioned — the user attaches separately via the terminal WS");
 
-        _runner.Verify(r => r.StartAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        _launcher.Verify(l => l.Launch(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -142,7 +111,7 @@ public class RunModeDispatcherTests : IDisposable
         outcome.Error.Should().NotBeNullOrEmpty();
         run.ContainerId.Should().BeNull();
         run.Status.Should().Be(RunStatus.Pending);
-        _runner.VerifyNoOtherCalls();
+        _launcher.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -221,21 +190,28 @@ public class RunModeDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task Dispatch_RunnerThrows_ReturnsFailed()
+    public async Task Dispatch_FailurePaths_NeverReachTheLauncher()
     {
-        var (run, _) = SeedRunAndWorkspace(RunMode.Headless);
-        _runner
-            .Setup(r => r.StartAsync(It.IsAny<Run>(), ConfigPath, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("kaboom"));
+        // A run that fails container selection must not be detached — the
+        // launcher would re-load a row with no ContainerId and fail later,
+        // losing the actionable error the dispatcher already has.
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            Status = RunStatus.Pending,
+            WorkspaceRef = new WorkspaceRef { WorkspaceId = Guid.NewGuid() }, // not seeded
+        };
+        _db.Runs.Add(run);
+        await _db.SaveChangesAsync();
 
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
         outcome.Kind.Should().Be(RunDispatchKind.Failed);
-        outcome.Error.Should().Be("kaboom");
-        // ContainerId is still set — the runner is the canonical place to
-        // mark the run Failed; we leave the row in Provisioning so the
-        // operator can see exactly where it stopped.
-        run.ContainerId.Should().NotBeNull();
+        _launcher.Verify(l => l.Launch(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]

@@ -40,18 +40,13 @@ public class RunsControllerTests : IDisposable
         _configurator
             .Setup(c => c.ConfigureAsync(It.IsAny<Run>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(RunConfiguratorResult.Ok("/tmp/noop/config.json"));
-        // AP5 wires the dispatcher into Create. Default stub: Started outcome
+        // AP5 wires the dispatcher into Create. Default stub: Detached outcome (AX.16)
         // (the controller doesn't act on the result besides logging). The
         // dedicated RunModeDispatcherTests cover routing/container selection.
         _dispatcher = new Mock<IRunModeDispatcher>();
         _dispatcher
             .Setup(d => d.DispatchAsync(It.IsAny<Run>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(RunDispatchOutcome.Started(new HeadlessRunOutcome
-            {
-                Kind = RunEventKind.Finished,
-                Status = RunStatus.Succeeded,
-                ExitCode = 0,
-            }));
+            .ReturnsAsync(RunDispatchOutcome.Detached());
         // AP7 wires the cancellation registry into Cancel. Use the real
         // implementation — it's a leaf class with no other deps and
         // mocking it would just duplicate its surface.

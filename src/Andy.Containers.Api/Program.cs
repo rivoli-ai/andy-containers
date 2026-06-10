@@ -567,6 +567,11 @@ try
     // success.
     builder.Services.AddScoped<IRunModeDispatcher, RunModeDispatcher>();
 
+    // AX.16 (rivoli-ai/conductor#2104). Singleton: outlives any request so a
+    // multi-minute andy-cli exec keeps running after POST /api/runs returns.
+    // Each launched run gets its own DI scope (fresh DbContext + runner).
+    builder.Services.AddSingleton<IHeadlessRunLauncher, HeadlessRunLauncher>();
+
     var app = builder.Build();
 
     // Auto-migrate on both providers. Conductor #883.
