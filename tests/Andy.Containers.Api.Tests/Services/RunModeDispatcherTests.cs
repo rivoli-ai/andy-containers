@@ -229,6 +229,75 @@ public class RunModeDispatcherTests : IDisposable
         await act.Should().ThrowAsync<ArgumentException>();
     }
 
+    // rivoli-ai/conductor#2122 — a dispatch-level failure must be TERMINAL:
+    // the Run row transitions to Failed with the reason recorded, and the
+    // andy.containers.events.run.{id}.failed outbox event is published so
+    // downstream consumers (andy-tasks' RunEventConsumer) fold the truth
+    // instead of leaving their AgentRun rows Running forever.
+    [Fact]
+    public async Task Dispatch_NoWorkspaceRef_TransitionsRunToFailed_AndPublishesFailedEvent()
+    {
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            Status = RunStatus.Pending,
+        };
+        _db.Runs.Add(run);
+        await _db.SaveChangesAsync();
+
+        var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
+
+        outcome.Kind.Should().Be(RunDispatchKind.Failed);
+        run.Status.Should().Be(RunStatus.Failed);
+        run.Error.Should().Contain("workspace reference");
+        _db.OutboxEntries.Should().ContainSingle(e =>
+            e.Subject == $"andy.containers.events.run.{run.Id}.failed");
+    }
+
+    [Fact]
+    public async Task Dispatch_WorkspaceNotFound_TransitionsRunToFailed_AndPublishesFailedEvent()
+    {
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AgentId = "x",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            Status = RunStatus.Pending,
+            WorkspaceRef = new WorkspaceRef { WorkspaceId = Guid.NewGuid() }, // not seeded
+        };
+        _db.Runs.Add(run);
+        await _db.SaveChangesAsync();
+
+        await _dispatcher.DispatchAsync(run, ConfigPath);
+
+        run.Status.Should().Be(RunStatus.Failed);
+        run.Error.Should().Contain("not found");
+        _db.OutboxEntries.Should().ContainSingle(e =>
+            e.Subject == $"andy.containers.events.run.{run.Id}.failed");
+    }
+
+    // Desktop's NotImplemented bail deliberately keeps the row Pending
+    // (a not-yet-wired mode is retryable, not failed) — pin that the new
+    // terminal handling did not leak into it.
+    [Fact]
+    public async Task Dispatch_Desktop_StaysPending_NoFailedEvent()
+    {
+        var (run, _) = SeedRunAndWorkspace(RunMode.Desktop);
+
+        var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
+
+        outcome.Kind.Should().Be(RunDispatchKind.NotImplemented);
+        run.Status.Should().Be(RunStatus.Pending);
+        _db.OutboxEntries.Should().NotContain(e =>
+            e.Subject == $"andy.containers.events.run.{run.Id}.failed");
+    }
+
     private (Run run, Workspace workspace) SeedRunAndWorkspace(RunMode mode)
     {
         var workspace = new Workspace
