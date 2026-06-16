@@ -42,21 +42,31 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
             return RunDispatchOutcome.NotImplemented(reason);
         }
 
-        var workspaceId = run.WorkspaceRef?.WorkspaceId ?? Guid.Empty;
-        if (workspaceId == Guid.Empty)
+        // The "workspace" indirection is gone: andy-tasks passes a CONTAINER
+        // id directly in WorkspaceRef.WorkspaceId (the provider returns a
+        // container id labelled as WorkspaceId). Resolve it straight against
+        // the Containers table — no Workspaces lookup, no DefaultContainerId
+        // hop. (The field rename WorkspaceRef.WorkspaceId → ContainerId is a
+        // separate cleanup; only the RESOLUTION changes here.)
+        var containerId = run.WorkspaceRef?.WorkspaceId ?? Guid.Empty;
+        if (containerId == Guid.Empty)
         {
-            return await FailAsync(run, "Run has no workspace reference; cannot select a container.", ct);
+            return await FailAsync(run, "[TX-DISPATCH-NO-CONTAINER] Run has no container reference; cannot select a container.", ct);
         }
 
-        var workspace = await _db.Workspaces.FirstOrDefaultAsync(w => w.Id == workspaceId, ct);
-        if (workspace is null)
+        var container = await _db.Containers.FirstOrDefaultAsync(c => c.Id == containerId, ct);
+        if (container is null)
         {
-            return await FailAsync(run, $"Workspace {workspaceId} not found.", ct);
+            return await FailAsync(run, $"[TX-DISPATCH-CONTAINER-NOT-FOUND] Container {containerId} not found.", ct);
         }
 
-        if (workspace.DefaultContainerId is not { } containerId)
+        // A run execs into a live container; a Stopped/Failed/Destroyed one
+        // can't host it. Fail with an actionable reason rather than handing a
+        // dead container to the launcher and surfacing an opaque exec error.
+        if (container.Status is ContainerStatus.Stopped or ContainerStatus.Failed
+            or ContainerStatus.Destroying or ContainerStatus.Destroyed)
         {
-            return await FailAsync(run, $"Workspace {workspaceId} has no default container; provision one before dispatching the run.", ct);
+            return await FailAsync(run, $"[TX-DISPATCH-CONTAINER-NOT-RUNNING] Container {containerId} is {container.Status}, cannot dispatch a run into it.", ct);
         }
 
         run.ContainerId = containerId;

@@ -28,18 +28,29 @@ namespace Andy.Containers.Messaging.Events;
 // grew a new nullable field. v2 consumers continue to deserialise
 // successfully (DocsRef is ignored as an unknown property under the
 // EventJson tolerant-read policy).
+// Error (rivoli-ai/conductor#2204) is the v4 addition. When a run ends
+// non-successfully the producer (AP6 HeadlessRunner) stamps Run.Error with
+// an actionable, bounded reason — the andy-cli exit code plus a stderr/
+// stdout tail, carrying the greppable [AC-HEADLESS-EXIT] code. Before this
+// field existed the reason never left andy-containers, so andy-tasks could
+// only synthesise a bare "Run <id> ended with Failed." from the kind alone.
+// Nullable + omitted-when-null so pre-v4 consumers deserialise unchanged;
+// consumers that opt in surface it as the task-failure reason instead of
+// the synthesised placeholder.
 public sealed record RunEventPayload(
     Guid RunId,
     Guid? StoryId,
     string Status,
     int? ExitCode,
     double? DurationSeconds,
-    IReadOnlyList<RunOutputArtifact>? OutputArtifacts = null)
+    IReadOnlyList<RunOutputArtifact>? OutputArtifacts = null,
+    string? Error = null)
 {
-    // Bumped to 3 when DocsRef landed on RunOutputArtifact (#320).
-    // Consumers that need the bytes-uploaded guarantee can gate on
-    // schema_version >= 3; pre-v3 consumers ignore DocsRef cleanly.
-    public const int SchemaVersion = 3;
+    // Bumped to 4 when Error landed on the payload (conductor#2204).
+    // Pre-v4 consumers ignore Error cleanly (tolerant-read); v4+ consumers
+    // can gate on schema_version >= 4 to know the actionable reason is
+    // present on a non-success terminal event.
+    public const int SchemaVersion = 4;
 
     public int Schema_Version => SchemaVersion;
 }

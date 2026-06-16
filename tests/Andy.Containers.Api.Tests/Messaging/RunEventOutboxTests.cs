@@ -196,8 +196,8 @@ public class RunEventOutboxTests
         using var doc = JsonDocument.Parse(entry.PayloadJson);
         var root = doc.RootElement;
         root.GetProperty("schema_version").GetInt32().Should().Be(RunEventPayload.SchemaVersion);
-        root.GetProperty("schema_version").GetInt32().Should().Be(3,
-            "DocsRef on RunOutputArtifact bumped the wire shape to v3 (#320)");
+        root.GetProperty("schema_version").GetInt32().Should().Be(4,
+            "the Error field on RunEventPayload bumped the wire shape to v4 (conductor#2204)");
 
         var arr = root.GetProperty("output_artifacts");
         arr.GetArrayLength().Should().Be(2);
@@ -453,8 +453,9 @@ public class RunEventOutboxTests
         arr[0].GetProperty("docs_ref").GetProperty("link_id").GetString()
             .Should().Be(docLinkId.ToString());
 
-        // Schema version reflects the v3 bump.
-        doc.RootElement.GetProperty("schema_version").GetInt32().Should().Be(3);
+        // Schema version reflects the latest bump (v4 added the Error
+        // field per conductor#2204; DocsRef still rides on the artifact).
+        doc.RootElement.GetProperty("schema_version").GetInt32().Should().Be(4);
 
         // Persisted Run row also carries the DocsRef (through the
         // EF JSON converter on Run.OutputArtifacts).

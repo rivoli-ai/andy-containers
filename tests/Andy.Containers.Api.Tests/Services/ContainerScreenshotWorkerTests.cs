@@ -238,6 +238,57 @@ public class ContainerScreenshotWorkerTests : IDisposable
         await _worker.CaptureAllScreenshotsAsync(CancellationToken.None);
     }
 
+    // rivoli-ai/conductor#2204. A container deleted out-of-band used to
+    // log one full-stack WARNING per capture cycle, forever. The status
+    // sync worker owns the reconcile; this worker must stay quiet
+    // (debug-level only) and complete the cycle.
+    [Fact]
+    public async Task CaptureAllScreenshots_MissingContainer_NoWarningAndDoesNotCrash()
+    {
+        var provider = CreateProvider();
+        var container = new Container
+        {
+            Name = "vanished",
+            OwnerId = "user1",
+            ProviderId = provider.Id,
+            Status = ContainerStatus.Running,
+            ExternalId = "ext-vanished"
+        };
+        _db.Containers.Add(container);
+        _db.SaveChanges();
+
+        _mockProvider.Setup(p => p.ExecAsync(
+                "ext-vanished",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Docker.DotNet.DockerContainerNotFoundException(
+                System.Net.HttpStatusCode.NotFound,
+                """{"message":"No such container: ext-vanished"}"""));
+
+        var logger = new Mock<ILogger<ContainerScreenshotWorker>>();
+        var worker = new ContainerScreenshotWorker(
+            InMemoryDbHelper.CreateScopeFactory(_db),
+            _providerFactory.Object,
+            logger.Object,
+            new ConfigurationBuilder().Build());
+
+        // Should not throw
+        await worker.CaptureAllScreenshotsAsync(CancellationToken.None);
+
+        // No per-attempt warning — reconciling (and the single warning)
+        // is ContainerStatusSyncWorker's job.
+        logger.Verify(l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+
+        // The record itself is untouched here.
+        _db.Containers.First(c => c.Id == container.Id).Status.Should().Be(ContainerStatus.Running);
+    }
+
     [Fact]
     public async Task CaptureAllScreenshots_MultipleRunningContainers_CapturesAll()
     {

@@ -122,13 +122,19 @@ public static class RunEventOutbox
             run.OutputArtifacts = outputArtifacts;
         }
 
+        // conductor#2204. Carry the run's actionable failure reason out over
+        // the wire so andy-tasks → Conductor surfaces the real cause (exit
+        // code + stderr tail) instead of a synthesised "ended with Failed."
+        // Run.Error is set by the runner before this append on every
+        // non-success terminal path; null for a clean success.
         var payload = new RunEventPayload(
             RunId: run.Id,
             StoryId: null,
             Status: run.Status.ToString(),
             ExitCode: exitCode,
             DurationSeconds: durationSeconds,
-            OutputArtifacts: outputArtifacts);
+            OutputArtifacts: outputArtifacts,
+            Error: run.Error);
 
         var subject = $"andy.containers.events.run.{run.Id}.{kind.ToSubjectKind()}";
 

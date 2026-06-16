@@ -235,9 +235,50 @@ public sealed class HeadlessRunner : IHeadlessRunner
             "Run {RunId} exited with code {ExitCode} → {Kind}/{Status} after {Duration}s",
             run.Id, result.ExitCode, kind, status, durationSeconds);
 
+        // #2204. A non-zero exec used to surface only the raw stderr (and
+        // *nothing* when stderr was empty — e.g. an exit-code-127 "andy-cli:
+        // not found" that writes to a swallowed stream), so the user saw a
+        // bare "Run <id> ended with Failed." with zero diagnostic content.
+        // Enrich the reason with the exit code AND a bounded slice of the
+        // container's stderr/stdout so the cause travels all the way to
+        // andy-tasks → Conductor. The [AC-HEADLESS-EXIT] code is greppable
+        // per the project rule that user-facing errors carry a unique code.
         return await TerminateAsync(run, kind, status,
             exitCode: result.ExitCode, durationSeconds: durationSeconds,
-            error: status == RunStatus.Succeeded ? null : Truncate(result.StdErr, 500), ct);
+            error: status == RunStatus.Succeeded
+                ? null
+                : BuildExitFailureReason(result),
+            ct);
+    }
+
+    // #2204. Compose the actionable failure reason carried on Run.Error and
+    // out over the run-event wire. Always names the exit code; appends a
+    // bounded stderr tail (falling back to stdout when stderr is empty, so
+    // an exit-127 that logs to stdout isn't silently dropped). Bounded to
+    // keep the event payload small even when the agent floods output.
+    private static string BuildExitFailureReason(ExecResult result)
+    {
+        const int maxOutput = 500;
+        var stderr = result.StdErr?.Trim();
+        var stdout = result.StdOut?.Trim();
+
+        string detail;
+        if (!string.IsNullOrEmpty(stderr))
+        {
+            detail = $" — {Truncate(stderr, maxOutput)}";
+        }
+        else if (!string.IsNullOrEmpty(stdout))
+        {
+            // No stderr (common for exit-127 / missing-binary shells) — the
+            // useful line is on stdout; surface its tail rather than nothing.
+            detail = $" — (no stderr) {Truncate(stdout, maxOutput)}";
+        }
+        else
+        {
+            detail = " — no output captured";
+        }
+
+        return $"[AC-HEADLESS-EXIT] andy-cli run failed: exit code {result.ExitCode}{detail}";
     }
 
     // AQ2 (rivoli-ai/andy-cli#47) exit-code contract. Keep this mapping in

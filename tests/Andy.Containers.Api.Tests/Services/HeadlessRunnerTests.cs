@@ -108,6 +108,88 @@ public class HeadlessRunnerTests : IDisposable
             "AP6 must key on Run.Id, not Container.Id");
     }
 
+    // conductor#2204. A non-zero andy-cli exit must surface an ACTIONABLE
+    // reason — the exit code AND the container's stderr tail — both on
+    // Run.Error AND out over the run-event wire (the payload the andy-tasks
+    // consumer reads). Before the fix the reason was the bare stderr (and
+    // null when stderr was empty), and RunEventPayload didn't even carry an
+    // Error field, so the user saw only "Run <id> ended with Failed."
+    [Fact]
+    public async Task StartAsync_ExitNonZeroWithStderr_SurfacesExitCodeAndStderr_OnRunErrorAndWire()
+    {
+        var run = SeedRun();
+        // The canonical "andy-cli not found" shape: exit 127 + a stderr line.
+        SetupExec(run.ContainerId!.Value, exitCode: 127,
+            stdErr: "/bin/sh: andy-cli: command not found");
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Failed);
+        outcome.ExitCode.Should().Be(127);
+
+        // Outcome reason carries the exit code + stderr + the greppable code.
+        outcome.Error.Should().Contain("127");
+        outcome.Error.Should().Contain("command not found");
+        outcome.Error.Should().Contain("[AC-HEADLESS-EXIT]");
+
+        // Persisted on the Run row.
+        var persisted = await _db.Runs.FindAsync(run.Id);
+        persisted!.Error.Should().Contain("127");
+        persisted.Error.Should().Contain("command not found");
+
+        // And — the actual gap this fixes — it travels on the wire payload
+        // the andy-tasks consumer deserialises (RunEventPayload.error).
+        var entry = await _db.OutboxEntries.SingleAsync();
+        entry.Subject.Should().EndWith(".failed");
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        doc.RootElement.GetProperty("exit_code").GetInt32().Should().Be(127);
+        var wireError = doc.RootElement.GetProperty("error").GetString();
+        wireError.Should().Contain("127");
+        wireError.Should().Contain("command not found");
+        wireError.Should().Contain("[AC-HEADLESS-EXIT]");
+    }
+
+    // conductor#2204. Even when stderr is empty (an exit-127 shell that logs
+    // to stdout, or no output at all), the reason must still name the exit
+    // code and fall back to the stdout tail rather than collapsing to null.
+    [Fact]
+    public async Task StartAsync_ExitNonZeroNoStderr_StillSurfacesExitCodeAndStdoutTail()
+    {
+        var run = SeedRun();
+        SetupExec(run.ContainerId!.Value, exitCode: 127,
+            stdOut: "andy-cli: No such file or directory", stdErr: null);
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Failed);
+        outcome.Error.Should().NotBeNull();
+        outcome.Error.Should().Contain("127");
+        outcome.Error.Should().Contain("No such file or directory");
+
+        var entry = await _db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        doc.RootElement.GetProperty("error").GetString()
+            .Should().Contain("No such file or directory");
+    }
+
+    // conductor#2204. The stderr tail is bounded so a chatty agent can't
+    // bloat the run-event payload.
+    [Fact]
+    public async Task StartAsync_ExitNonZeroWithHugeStderr_TruncatesReason()
+    {
+        var run = SeedRun();
+        var huge = new string('x', 5000);
+        SetupExec(run.ContainerId!.Value, exitCode: 1, stdErr: huge);
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Error.Should().NotBeNull();
+        // Bounded: exit-code prefix + the greppable code + 500-char tail +
+        // ellipsis — comfortably under 700 chars even though stderr was 5000.
+        outcome.Error!.Length.Should().BeLessThan(700);
+        outcome.Error.Should().EndWith("...");
+    }
+
     [Fact]
     public async Task StartAsync_ExecThrows_TransitionsToFailed_WritesFailedEvent()
     {
