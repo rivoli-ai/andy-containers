@@ -13,9 +13,15 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
     // Schema enum closures. Kept private and local rather than reading the
     // schema file at runtime — the schema lives in a sibling repo and bumps
     // are deliberate version events, not silent extensions.
+    // Kept in lockstep with the andy-cli headless-config.v1 schema's
+    // `model.provider` enum (rivoli-ai/andy-cli schemas/headless-config.v1.json):
+    // ["anthropic","openai","openrouter","google","cerebras","groq","local"].
+    // `openrouter` + `groq` were missing here while present in the schema, so a
+    // provider=openrouter agent (the OpenRouter setup) threw at config-build time
+    // before andy-cli ever saw the config — a producer-vs-schema drift.
     private static readonly HashSet<string> AllowedProviders = new(StringComparer.Ordinal)
     {
-        "anthropic", "openai", "google", "cerebras", "local",
+        "anthropic", "openai", "openrouter", "google", "cerebras", "groq", "local",
     };
 
     private const string DefaultWorkspaceRoot = "/workspace";
