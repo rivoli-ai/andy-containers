@@ -764,15 +764,25 @@ public class ContainersController : ControllerBase
         // (Running > Provisioning > Pending); otherwise the most-recent run
         // so a just-finished task still replays its buffered tail. A
         // container with no run yet yields an empty stream (handled below).
-        var run = await _db.Runs.AsNoTracking()
+        //
+        // SQLite cannot translate an ORDER BY over a DateTimeOffset column
+        // (System.NotSupportedException), so the recency tiebreak MUST be
+        // ordered client-side. Pull the container's runs (bounded — a
+        // workspace container has few runs) into memory, then rank. Ordering
+        // the whole thing client-side keeps the priority CASE and the
+        // CreatedAt tiebreak in one place and provider-agnostic.
+        var candidates = await _db.Runs.AsNoTracking()
             .Where(r => r.ContainerId == id)
+            .Select(r => new { r.Id, r.Status, r.CreatedAt })
+            .ToListAsync(ct);
+
+        var run = candidates
             .OrderByDescending(r =>
                 r.Status == RunStatus.Running ? 3 :
                 r.Status == RunStatus.Provisioning ? 2 :
                 r.Status == RunStatus.Pending ? 1 : 0)
             .ThenByDescending(r => r.CreatedAt)
-            .Select(r => new { r.Id })
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefault();
 
         if (run is null)
         {
