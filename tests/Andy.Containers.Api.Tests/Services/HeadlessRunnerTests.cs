@@ -8,6 +8,7 @@ using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -172,8 +173,9 @@ public class HeadlessRunnerTests : IDisposable
             .Should().Contain("No such file or directory");
     }
 
-    // conductor#2204. The stderr tail is bounded so a chatty agent can't
-    // bloat the run-event payload.
+    // conductor#2204 / #2232. The stderr slice is bounded so a chatty agent
+    // can't bloat the run-event payload. After #2232 the slice is the TAIL,
+    // so the ellipsis marking dropped output is at the START, not the end.
     [Fact]
     public async Task StartAsync_ExitNonZeroWithHugeStderr_TruncatesReason()
     {
@@ -185,9 +187,53 @@ public class HeadlessRunnerTests : IDisposable
 
         outcome.Error.Should().NotBeNull();
         // Bounded: exit-code prefix + the greppable code + 500-char tail +
-        // ellipsis — comfortably under 700 chars even though stderr was 5000.
+        // leading ellipsis — comfortably under 700 chars even though stderr
+        // was 5000.
         outcome.Error!.Length.Should().BeLessThan(700);
-        outcome.Error.Should().EndWith("...");
+        // #2232: dropped-output ellipsis now leads the tail slice.
+        outcome.Error.Should().Contain("...");
+    }
+
+    // #2232. THE regression this fixes: andy-cli's output starts with a long
+    // "Registered tool ..." ToolRegistry banner and the REAL error lands at
+    // the END. Head-truncation surfaced the banner (registration noise) and
+    // cut off the cause; tail-truncation must surface the real error and drop
+    // the banner. This is the test that fails against the old Truncate-from-
+    // start code and passes against the new Tail code.
+    [Fact]
+    public async Task StartAsync_ExitNonZero_ReasonCarriesTailErrorNotHeadBanner()
+    {
+        var run = SeedRun();
+
+        // Realistic andy-cli failure shape: a long registration banner first,
+        // the actual error last. The banner alone exceeds the 500-char slice,
+        // so head-truncation would NEVER reach the error.
+        var bannerLines = Enumerable.Range(0, 60)
+            .Select(i => $"Registered tool tool_{i:D2}: a builtin capability for the agent runtime");
+        var banner = string.Join("\n", bannerLines);
+        const string realError =
+            "ERROR: model provider 'openai' could not resolve api key from env:OPENAI_API_KEY (unset)";
+        var output = banner + "\n" + realError;
+
+        SetupExec(run.ContainerId!.Value, exitCode: 1, stdErr: output);
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Failed);
+        outcome.Error.Should().NotBeNull();
+        // The real cause survives...
+        outcome.Error.Should().Contain("could not resolve api key");
+        outcome.Error.Should().Contain("OPENAI_API_KEY");
+        // ...and the head banner noise is dropped (the user no longer sees
+        // "Registered tool tool_00" as the "reason").
+        outcome.Error.Should().NotContain("Registered tool tool_00");
+
+        // Same on the wire payload andy-tasks reads.
+        var entry = await _db.OutboxEntries.SingleAsync();
+        using var doc = JsonDocument.Parse(entry.PayloadJson);
+        var wireError = doc.RootElement.GetProperty("error").GetString();
+        wireError.Should().Contain("could not resolve api key");
+        wireError.Should().NotContain("Registered tool tool_00");
     }
 
     [Fact]
@@ -405,6 +451,167 @@ public class HeadlessRunnerTests : IDisposable
         captured.Should().Contain($"andy-cli run --headless --config '/tmp/andy-runs/{run.Id}/config.json'");
     }
 
+    // ----- #2231 model-scoped OPENAI_API_KEY override -----
+
+    // #2231. THE bug GOAL-23 hit: the container's create-time OPENAI_API_KEY
+    // is a proxy token scoped only to the container-default model slug
+    // ("deepseek-v4-flash"). When a run's agent uses a DIFFERENT model
+    // ("openrouter/qwen3-coder"), andy-models' proxy 403s every completion
+    // ("token was not minted for model 'openrouter/qwen3-coder'") and andy-cli
+    // exits 1. The runner must re-mint a token scoped to the run's ACTUAL
+    // model (read from the headless config) and override OPENAI_API_KEY for
+    // the andy-cli process. This test mints against a REAL fake proxy service
+    // (records the slugs it was asked for, returns a known jwt) and asserts
+    // (a) the mint was scoped to the config's model.id, and (b) the spawn
+    // command prefixes `OPENAI_API_KEY='<jwt>'` before the andy-cli invocation.
+    [Fact]
+    public async Task StartAsync_MintsModelScopedProxyToken_AndOverridesOpenAiKeyForAndyCli()
+    {
+        var run = SeedRun();
+        SeedContainer(run.ContainerId!.Value, ownerId: "owner-42");
+        const string modelId = "openrouter/qwen3-coder";
+        var configPath = WriteRealConfigWithModel(modelId);
+
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var proxy = new RecordingProxyTokenService("jwt-scoped-to-qwen");
+        var runner = MakeRunnerWithProxy(proxy, modelsBaseUrlConfigured: true);
+
+        await runner.StartAsync(run, configPath);
+
+        // (a) The token was minted scoped to the run's actual model — NOT the
+        // container default. (Mint signature: containerId, subjectId, slugs.)
+        proxy.Mints.Should().ContainSingle();
+        proxy.Mints[0].ContainerId.Should().Be(run.ContainerId!.Value.ToString());
+        proxy.Mints[0].SubjectId.Should().Be("owner-42");
+        proxy.Mints[0].Slugs.Should().ContainSingle().Which.Should().Be(modelId);
+
+        // (b) The andy-cli invocation is prefixed with the model-scoped key.
+        captured.Should().NotBeNull();
+        captured.Should().Contain("OPENAI_API_KEY='jwt-scoped-to-qwen' andy-cli run --headless");
+        File.Delete(configPath);
+    }
+
+    // #2231. When no proxy service is wired (the existing test surface and
+    // no-proxy deployments) the command is byte-identical to pre-#2231: no
+    // OPENAI_API_KEY prefix, the container's own create-time key is used.
+    [Fact]
+    public async Task StartAsync_NoProxyService_DoesNotPrefixOpenAiKey()
+    {
+        var run = SeedRun();
+        var configPath = WriteRealConfigWithModel("openrouter/qwen3-coder");
+
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        // Default _runner has no proxy service.
+        await _runner.StartAsync(run, configPath);
+
+        captured.Should().NotBeNull();
+        captured.Should().NotContain("OPENAI_API_KEY=");
+        captured.Should().Contain("andy-cli run --headless");
+        File.Delete(configPath);
+    }
+
+    // #2231. AndyModels:BaseUrl unset → skip the mint round-trip (it would
+    // throw ProxyTokenException) and keep the container default. No prefix,
+    // and the proxy is never called — the create path already tolerated the
+    // missing config, so the run path must too.
+    [Fact]
+    public async Task StartAsync_ModelsBaseUrlUnset_SkipsMint_NoPrefix()
+    {
+        var run = SeedRun();
+        SeedContainer(run.ContainerId!.Value, ownerId: "owner-42");
+        var configPath = WriteRealConfigWithModel("openrouter/qwen3-coder");
+
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var proxy = new RecordingProxyTokenService("unused");
+        var runner = MakeRunnerWithProxy(proxy, modelsBaseUrlConfigured: false);
+
+        await runner.StartAsync(run, configPath);
+
+        proxy.Mints.Should().BeEmpty("a missing AndyModels:BaseUrl must skip the round-trip");
+        captured.Should().NotContain("OPENAI_API_KEY=");
+        File.Delete(configPath);
+    }
+
+    // #2231. A mint failure must NEVER abort the run — the container default
+    // still works for default-model runs, and a non-default 403 surfaces a
+    // clear tail error (post-#2232). The run proceeds (no prefix) and reaches
+    // its normal exit-code-driven terminal outcome.
+    [Fact]
+    public async Task StartAsync_MintThrows_RunProceedsWithoutPrefix()
+    {
+        var run = SeedRun();
+        SeedContainer(run.ContainerId!.Value, ownerId: "owner-42");
+        var configPath = WriteRealConfigWithModel("openrouter/qwen3-coder");
+
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var proxy = new RecordingProxyTokenService("unused") { ThrowOnMint = true };
+        var runner = MakeRunnerWithProxy(proxy, modelsBaseUrlConfigured: true);
+
+        var outcome = await runner.StartAsync(run, configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded,
+            "a proxy-token mint failure must not fail the run");
+        captured.Should().NotContain("OPENAI_API_KEY=");
+        File.Delete(configPath);
+    }
+
+    private HeadlessRunner MakeRunnerWithProxy(IProxyTokenService proxy, bool modelsBaseUrlConfigured)
+    {
+        var settings = new Dictionary<string, string?>();
+        if (modelsBaseUrlConfigured)
+        {
+            settings["AndyModels:BaseUrl"] = "http://localhost:9100/models";
+        }
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        return new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance,
+            artifactCollector: null, inputStager: null, outputBus: null,
+            proxyTokenService: proxy, configuration: config);
+    }
+
+    private static string WriteRealConfigWithModel(string modelId)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"model-test-{Guid.NewGuid():N}.json");
+        var config = new HeadlessRunConfig
+        {
+            RunId = Guid.NewGuid(),
+            Model = new HeadlessModel
+            {
+                Provider = "openai",
+                Id = modelId,
+                ApiKeyRef = "env:OPENAI_API_KEY",
+            },
+            Limits = new HeadlessLimits { MaxIterations = 4, TimeoutSeconds = 60 },
+        };
+        File.WriteAllText(path, HeadlessConfigJson.Serialize(config));
+        return path;
+    }
+
     [Fact]
     public async Task StartAsync_ReadsLimitsTimeoutSecondsFromConfig_AddsGrace()
     {
@@ -610,17 +817,17 @@ public class HeadlessRunnerTests : IDisposable
             Times.Never);
     }
 
-    private void SeedContainer(Guid containerId)
+    private void SeedContainer(Guid containerId, string ownerId = "u")
     {
         // Minimal Container row for the runner's collector-path FindAsync.
         // The Container Status doesn't matter for these tests since the
         // mocked collector ignores it; we still seed it as Running for
-        // realism.
+        // realism. #2231 reads OwnerId as the proxy-token mint subject.
         _db.Containers.Add(new Container
         {
             Id = containerId,
             Name = $"c-{containerId:N}",
-            OwnerId = "u",
+            OwnerId = ownerId,
             ExternalId = "ext-" + containerId.ToString("N")[..8],
             Status = ContainerStatus.Running,
         });
@@ -787,4 +994,36 @@ public class HeadlessRunnerTests : IDisposable
         _db.SaveChanges();
         return run;
     }
+}
+
+// #2231. A REAL fake of IProxyTokenService (not a behavioural Moq) so the
+// model-scoped mint path is exercised against an actual implementation that
+// records every mint request. The runner calls MintForContainerAsync with the
+// run's actual model slug; this fake captures (containerId, subjectId, slugs)
+// for assertion and returns a deterministic jwt. RevokeAsync is a no-op.
+file sealed class RecordingProxyTokenService : IProxyTokenService
+{
+    private readonly string _jwt;
+
+    public RecordingProxyTokenService(string jwt) => _jwt = jwt;
+
+    /// <summary>When true, MintForContainerAsync throws — exercises the
+    /// mint-failure-doesn't-abort-the-run path.</summary>
+    public bool ThrowOnMint { get; set; }
+
+    public List<(string ContainerId, string SubjectId, IReadOnlyList<string> Slugs)> Mints { get; } = new();
+
+    public Task<MintedProxyToken?> MintForContainerAsync(
+        string containerId, string subjectId, IReadOnlyList<string> allowedSlugs, CancellationToken ct = default)
+    {
+        if (ThrowOnMint)
+        {
+            throw new ProxyTokenException("andy-models unreachable (test).");
+        }
+        Mints.Add((containerId, subjectId, allowedSlugs));
+        return Task.FromResult<MintedProxyToken?>(
+            new MintedProxyToken(Guid.NewGuid(), _jwt, DateTimeOffset.UtcNow.AddHours(1)));
+    }
+
+    public Task RevokeAsync(Guid tokenId, CancellationToken ct = default) => Task.CompletedTask;
 }

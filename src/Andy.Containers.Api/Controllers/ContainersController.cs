@@ -25,6 +25,7 @@ public class ContainersController : ControllerBase
     private readonly IGitDiffService _gitDiffService;
     private readonly IPortDiscoveryService _portDiscoveryService;
     private readonly IContainerLifecycleBus _lifecycleBus;
+    private readonly IRunOutputBus _outputBus;
 
     public ContainersController(
         IContainerService containerService,
@@ -36,7 +37,8 @@ public class ContainersController : ControllerBase
         IOrganizationMembershipService orgMembership,
         IGitDiffService gitDiffService,
         IPortDiscoveryService portDiscoveryService,
-        IContainerLifecycleBus lifecycleBus)
+        IContainerLifecycleBus lifecycleBus,
+        IRunOutputBus outputBus)
     {
         _containerService = containerService;
         _currentUser = currentUser;
@@ -48,6 +50,7 @@ public class ContainersController : ControllerBase
         _gitDiffService = gitDiffService;
         _portDiscoveryService = portDiscoveryService;
         _lifecycleBus = lifecycleBus;
+        _outputBus = outputBus;
     }
 
     [HttpGet]
@@ -714,6 +717,75 @@ public class ContainersController : ControllerBase
             diff.Files.Select(f => new GitDiffFileDto(
                 f.Path, f.ChangeType, f.Additions, f.Deletions, f.Patch, f.Truncated)).ToList(),
             diff.RawPatch));
+    }
+
+    /// <summary>
+    /// rivoli-ai/conductor#2236. Server-Sent Events stream of the
+    /// container's MID-RUN agent output — the container-scoped counterpart
+    /// of <c>GET /api/runs/{id}/output</c> (<see cref="RunsController.Output"/>).
+    /// Conductor's live agent feed (TX F4.2, #1935) is keyed by the goal's
+    /// workspace container id (one container per workspace, decision #21),
+    /// not by run id, so it connects HERE. We resolve the container's
+    /// most-recent run and delegate to the shared <see cref="RunOutputSse"/>
+    /// serialiser so the wire format, <c>Last-Event-ID</c> resumption, and
+    /// terminal-stop semantics are byte-identical to the run-scoped endpoint.
+    /// </summary>
+    /// <remarks>
+    /// The <c>IRunOutputBus</c> doc already promised both endpoints subscribe
+    /// to it; only the run-scoped route had been wired, so the container feed
+    /// connected to a non-existent route (404) and rendered nothing. This is
+    /// the missing producer half.
+    ///
+    /// When no run has been dispatched for the container yet, we emit a
+    /// well-formed but empty <c>text/event-stream</c> that closes cleanly so
+    /// the consumer renders its empty-state instead of hanging — never a 404
+    /// (a healthy never-run container is not an error). <c>follow</c>/<c>tail</c>
+    /// query params are accepted for contract parity; the in-process bus
+    /// always follows live and replays its ring buffer.
+    /// </remarks>
+    [HttpGet("{id:guid}/logs")]
+    [RequirePermission("container:read")]
+    public async Task Logs(Guid id, CancellationToken ct)
+    {
+        var container = await FindContainerAsync(id, ct);
+        if (container is null)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            Response.Headers["X-Correlation-Id"] = id.ToString();
+            return;
+        }
+        if (!CanAccess(container))
+        {
+            Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+
+        // Resolve the run whose output to stream. Prefer a live run
+        // (Running > Provisioning > Pending); otherwise the most-recent run
+        // so a just-finished task still replays its buffered tail. A
+        // container with no run yet yields an empty stream (handled below).
+        var run = await _db.Runs.AsNoTracking()
+            .Where(r => r.ContainerId == id)
+            .OrderByDescending(r =>
+                r.Status == RunStatus.Running ? 3 :
+                r.Status == RunStatus.Provisioning ? 2 :
+                r.Status == RunStatus.Pending ? 1 : 0)
+            .ThenByDescending(r => r.CreatedAt)
+            .Select(r => new { r.Id })
+            .FirstOrDefaultAsync(ct);
+
+        if (run is null)
+        {
+            // No run dispatched yet — open an empty SSE stream and close it
+            // cleanly so the live feed shows its empty-state, not a hang.
+            Response.Headers.ContentType = "text/event-stream";
+            Response.Headers.CacheControl = "no-store";
+            Response.Headers["X-Accel-Buffering"] = "no";
+            await Response.Body.FlushAsync(ct);
+            return;
+        }
+
+        await RunOutputSse.StreamAsync(Response, Request, _outputBus, run.Id, ct);
     }
 
     /// <summary>
