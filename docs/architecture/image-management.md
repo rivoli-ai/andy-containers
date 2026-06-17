@@ -23,7 +23,7 @@ This document covers how `andy-containers` manages **customer-built dev containe
 | **Single-tenant cloud** (customer's own cloud) | Whatever the customer mandates — JFrog Artifactory, Azure Container Registry, Amazon ECR, Harbor, Google Artifact Registry. **No embedded zot.** | Often "no Docker daemon on dev laptops" — ACR Tasks / Cloud Build / CodeBuild / BuildKit-on-cluster | AAD token / STS / Artifactory access token / GAR workload identity | `andy-rbac` AND the customer registry's RBAC (both gate, neither alone is sufficient) |
 | **Multi-tenant Rivoli Cloud** | zot scale-out cluster (S3 storage + DynamoDB-compatible metadata + HAProxy front, proven topology in zot v2.1+) | Hosted BuildKit-on-cluster pool | `andy-auth` → JWT → zot OIDC | `andy-rbac` with prefix-isolated repos `tenant-<id>/...` |
 
-The point of the matrix: **the API contract `andy-containers` exposes to Conductor, the CLI, and the MCP gateway is identical across all four modes.** Only the internal adapter wiring changes. A Conductor that talks to a solo-mode `andy-containers` and a Conductor that talks to a Rivoli-Cloud-tenant `andy-containers` issue the same HTTP requests; the difference is invisible to the client.
+The point of the matrix: **the API contract `andy-containers` exposes to Conductor, the CLI, and the MCP proxy is identical across all four modes.** Only the internal adapter wiring changes. A Conductor that talks to a solo-mode `andy-containers` and a Conductor that talks to a Rivoli-Cloud-tenant `andy-containers` issue the same HTTP requests; the difference is invisible to the client.
 
 ## zot ownership in embedded mode
 

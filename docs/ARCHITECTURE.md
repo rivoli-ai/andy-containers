@@ -11,7 +11,7 @@ Andy Containers is a platform for provisioning, managing, and orchestrating isol
 1. **Infrastructure Agnostic** — A single API manages containers across Docker, Apple Containers, Azure Container Instances, Azure Container Apps, Azure ACP, Rivoli-managed VPS, and third-party SSH hosts
 2. **Catalog-Driven** — Container templates are organized in a hierarchical catalog (global, organization, team, user) enabling reuse and governance
 3. **Security-First** — All operations gated by Andy Auth (authentication) and Andy RBAC (authorization)
-4. **Agent-Native** — First-class integration with Andy-DevPilot for spawning AI agents on containers
+4. **Agent-Native** — First-class agent runs (Epic AP): a `Run` entity, a state machine, NATS lifecycle events, and `andy-cli` as the in-container runtime (see [`docs/runs.md`](runs.md) and ADR 0003)
 5. **GPU-Aware** — Containers can request GPU acceleration when available on the target infrastructure
 
 ## 2. System Context
@@ -66,7 +66,7 @@ Presentation Layer
 ├── REST Controllers (Andy.Containers.Api)
 ├── gRPC Services (Andy.Containers.Api)
 ├── MCP Tools (Andy.Containers.Api)
-├── Blazor UI (Andy.Containers.Web)
+├── Angular 18 SPA (src/andy-containers-web)
 └── CLI (Andy.Containers.Cli)
          │
 Business Logic Layer
@@ -112,7 +112,7 @@ Infrastructure Layer (Andy.Containers.Infrastructure)
 ### 3.2 Project Dependencies
 
 ```
-Andy.Containers.Web ──▶ Andy.Containers.Client
+andy-containers-web (Angular SPA) ──▶ Andy.Containers.Api (HTTP)
 Andy.Containers.Cli ──▶ Andy.Containers.Client
 Andy.Containers.Client ──▶ Andy.Containers (core)
 
@@ -525,7 +525,14 @@ Beyond role-based permissions, containers support instance-level sharing:
 - API keys for LLM providers are passed securely to agent containers
 - No secrets are exposed in API responses or logs
 
-## 8. Andy-DevPilot Integration
+## 8. Agent Integration (Legacy)
+
+> **Note:** This section describes an earlier agent-spawning design. The
+> current model is captured in [Epic AP / ADR 0003](adr/0003-agent-run-execution.md)
+> and [docs/runs.md](runs.md): runs are first-class entities, `andy-cli`
+> is the in-container runtime, and lifecycle events publish to NATS for
+> downstream services (e.g. `andy-issues`) to consume. The flow below is
+> retained for historical context.
 
 ### 8.1 Agent Spawning Flow
 
