@@ -36,7 +36,7 @@ public class ContainersControllerGitTests : IDisposable
         mockProbeService.Setup(p => p.ProbeRepositoriesAsync(It.IsAny<IReadOnlyList<GitRepositoryConfig>>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string>());
         _mockGitDiffService = new Mock<IGitDiffService>();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, _mockGitDiffService.Object, new Mock<IPortDiscoveryService>().Object, new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, _mockGitDiffService.Object, new Mock<IPortDiscoveryService>().Object, new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object, new Mock<Andy.Containers.Storage.IRunOutputBus>().Object);
     }
 
     public void Dispose()

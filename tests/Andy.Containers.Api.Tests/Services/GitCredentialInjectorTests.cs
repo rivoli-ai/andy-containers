@@ -108,8 +108,13 @@ public class GitCredentialInjectorTests
         var script = GitCredentialInjector.BuildInjectionScript("alice", creds);
         // `:` → `%3A`, `@` → `%40`, `/` → `%2F`
         script.Should().Contain("abc%3Ade%40fg%2Fh");
-        script.Should().NotContain("abc:de@fg/h",
-                "the raw token must not appear in the URL — it would break the parser.");
+        // The raw token must not appear inside the credential-helper URL — it
+        // would break git's URL parser. (conductor#2242: the raw token DOES now
+        // appear, single-quoted, in the GH_TOKEN export line, which gh requires
+        // verbatim — so scope the assertion to the URL form specifically.)
+        script.Should().NotContain("abc:de@fg/h@github.com");
+        script.Should().NotContain("https://x-access-token:abc:de@fg/h",
+                "the raw token must not appear in the credential URL — it would break the parser.");
     }
 
     // -------------------------------------------------------------

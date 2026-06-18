@@ -10,11 +10,12 @@ using Xunit;
 
 namespace Andy.Containers.Api.Tests.Services;
 
-// AP5 (rivoli-ai/andy-containers#107). Mode dispatcher selects a container
-// from the run's workspace, transitions Pending → Provisioning, and routes
-// by Mode: headless → IHeadlessRunner; terminal → Attachable; desktop →
-// NotImplemented (no GUI provider yet). Failure modes here keep the run
-// row queryable rather than rolling it back.
+// AP5 (rivoli-ai/andy-containers#107). Mode dispatcher resolves the run's
+// container DIRECTLY (the "workspace" indirection is removed — andy-tasks
+// passes a container id in WorkspaceRef.WorkspaceId), transitions
+// Pending → Provisioning, and routes by Mode: headless → IHeadlessRunner;
+// terminal → Attachable; desktop → NotImplemented (no GUI provider yet).
+// Failure modes here keep the run row queryable rather than rolling it back.
 public class RunModeDispatcherTests : IDisposable
 {
     private readonly ContainersDbContext _db;
@@ -39,20 +40,20 @@ public class RunModeDispatcherTests : IDisposable
     [Fact]
     public async Task Dispatch_Headless_EnsuresRunBranchOnSelectedContainer()
     {
-        var (run, workspace) = SeedRunAndWorkspace(RunMode.Headless);
+        var (run, container) = SeedRunAndContainer(RunMode.Headless);
 
         await _dispatcher.DispatchAsync(run, ConfigPath);
 
         _runBranch.Verify(b => b.EnsureRunBranchAsync(
             It.Is<Run>(rn => rn.Id == run.Id),
-            workspace.DefaultContainerId!.Value,
+            container.Id,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task Dispatch_Headless_RunBranchFailure_DoesNotAbortDispatch()
     {
-        var (run, _) = SeedRunAndWorkspace(RunMode.Headless);
+        var (run, _) = SeedRunAndContainer(RunMode.Headless);
         _runBranch
             .Setup(b => b.EnsureRunBranchAsync(It.IsAny<Run>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("branch boom"));
@@ -69,12 +70,12 @@ public class RunModeDispatcherTests : IDisposable
         // the runner — it hands the run id + config path to the background
         // launcher and returns Detached immediately. Terminal state reaches
         // callers via run events / polling.
-        var (run, workspace) = SeedRunAndWorkspace(RunMode.Headless);
+        var (run, container) = SeedRunAndContainer(RunMode.Headless);
 
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
         outcome.Kind.Should().Be(RunDispatchKind.Detached);
-        run.ContainerId.Should().Be(workspace.DefaultContainerId);
+        run.ContainerId.Should().Be(container.Id);
         // Detach happens AFTER the Provisioning transition is persisted, so
         // the background scope re-loads a row that already carries the
         // container assignment.
@@ -85,12 +86,12 @@ public class RunModeDispatcherTests : IDisposable
     [Fact]
     public async Task Dispatch_Terminal_AssignsContainer_ReturnsAttachable_DoesNotInvokeRunner()
     {
-        var (run, workspace) = SeedRunAndWorkspace(RunMode.Terminal);
+        var (run, container) = SeedRunAndContainer(RunMode.Terminal);
 
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
         outcome.Kind.Should().Be(RunDispatchKind.Attachable);
-        run.ContainerId.Should().Be(workspace.DefaultContainerId);
+        run.ContainerId.Should().Be(container.Id);
         run.Status.Should().Be(RunStatus.Provisioning,
             "Terminal-mode runs are still provisioned — the user attaches separately via the terminal WS");
 
@@ -103,7 +104,7 @@ public class RunModeDispatcherTests : IDisposable
         // Desktop has no GUI provider yet (Epic AP doesn't ship one). The
         // dispatcher must short-circuit before assigning ContainerId so the
         // row isn't half-configured for an execution path that won't fire.
-        var (run, _) = SeedRunAndWorkspace(RunMode.Desktop);
+        var (run, _) = SeedRunAndContainer(RunMode.Desktop);
 
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
@@ -115,7 +116,7 @@ public class RunModeDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task Dispatch_NoWorkspaceRef_Fails()
+    public async Task Dispatch_NoContainerRef_Fails()
     {
         var run = new Run
         {
@@ -133,11 +134,12 @@ public class RunModeDispatcherTests : IDisposable
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
         outcome.Kind.Should().Be(RunDispatchKind.Failed);
+        outcome.Error.Should().Contain("[TX-DISPATCH-NO-CONTAINER]");
         run.ContainerId.Should().BeNull();
     }
 
     [Fact]
-    public async Task Dispatch_WorkspaceNotFound_Fails()
+    public async Task Dispatch_ContainerNotFound_Fails()
     {
         var run = new Run
         {
@@ -155,20 +157,21 @@ public class RunModeDispatcherTests : IDisposable
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
         outcome.Kind.Should().Be(RunDispatchKind.Failed);
+        outcome.Error.Should().Contain("[TX-DISPATCH-CONTAINER-NOT-FOUND]");
         outcome.Error.Should().Contain("not found");
     }
 
     [Fact]
-    public async Task Dispatch_WorkspaceWithoutDefaultContainer_Fails()
+    public async Task Dispatch_ContainerNotRunning_Fails()
     {
-        var workspace = new Workspace
+        var container = new Container
         {
             Id = Guid.NewGuid(),
-            Name = "ws",
+            Name = "ctr-stopped",
             OwnerId = "u",
-            DefaultContainerId = null,
+            Status = ContainerStatus.Stopped,
         };
-        _db.Workspaces.Add(workspace);
+        _db.Containers.Add(container);
         var run = new Run
         {
             Id = Guid.NewGuid(),
@@ -177,7 +180,7 @@ public class RunModeDispatcherTests : IDisposable
             EnvironmentProfileId = Guid.NewGuid(),
             CorrelationId = Guid.NewGuid(),
             Status = RunStatus.Pending,
-            WorkspaceRef = new WorkspaceRef { WorkspaceId = workspace.Id },
+            WorkspaceRef = new WorkspaceRef { WorkspaceId = container.Id },
         };
         _db.Runs.Add(run);
         await _db.SaveChangesAsync();
@@ -185,7 +188,7 @@ public class RunModeDispatcherTests : IDisposable
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
         outcome.Kind.Should().Be(RunDispatchKind.Failed);
-        outcome.Error.Should().Contain("default container");
+        outcome.Error.Should().Contain("[TX-DISPATCH-CONTAINER-NOT-RUNNING]");
         run.ContainerId.Should().BeNull();
     }
 
@@ -224,7 +227,7 @@ public class RunModeDispatcherTests : IDisposable
     [Fact]
     public async Task Dispatch_BlankConfigPath_Throws()
     {
-        var (run, _) = SeedRunAndWorkspace(RunMode.Headless);
+        var (run, _) = SeedRunAndContainer(RunMode.Headless);
         Func<Task> act = () => _dispatcher.DispatchAsync(run, "  ");
         await act.Should().ThrowAsync<ArgumentException>();
     }
@@ -235,7 +238,7 @@ public class RunModeDispatcherTests : IDisposable
     // downstream consumers (andy-tasks' RunEventConsumer) fold the truth
     // instead of leaving their AgentRun rows Running forever.
     [Fact]
-    public async Task Dispatch_NoWorkspaceRef_TransitionsRunToFailed_AndPublishesFailedEvent()
+    public async Task Dispatch_NoContainerRef_TransitionsRunToFailed_AndPublishesFailedEvent()
     {
         var run = new Run
         {
@@ -253,13 +256,13 @@ public class RunModeDispatcherTests : IDisposable
 
         outcome.Kind.Should().Be(RunDispatchKind.Failed);
         run.Status.Should().Be(RunStatus.Failed);
-        run.Error.Should().Contain("workspace reference");
+        run.Error.Should().Contain("[TX-DISPATCH-NO-CONTAINER]");
         _db.OutboxEntries.Should().ContainSingle(e =>
             e.Subject == $"andy.containers.events.run.{run.Id}.failed");
     }
 
     [Fact]
-    public async Task Dispatch_WorkspaceNotFound_TransitionsRunToFailed_AndPublishesFailedEvent()
+    public async Task Dispatch_ContainerNotFound_TransitionsRunToFailed_AndPublishesFailedEvent()
     {
         var run = new Run
         {
@@ -288,7 +291,7 @@ public class RunModeDispatcherTests : IDisposable
     [Fact]
     public async Task Dispatch_Desktop_StaysPending_NoFailedEvent()
     {
-        var (run, _) = SeedRunAndWorkspace(RunMode.Desktop);
+        var (run, _) = SeedRunAndContainer(RunMode.Desktop);
 
         var outcome = await _dispatcher.DispatchAsync(run, ConfigPath);
 
@@ -298,16 +301,18 @@ public class RunModeDispatcherTests : IDisposable
             e.Subject == $"andy.containers.events.run.{run.Id}.failed");
     }
 
-    private (Run run, Workspace workspace) SeedRunAndWorkspace(RunMode mode)
+    // Seed a Running container row and a run whose WorkspaceRef.WorkspaceId
+    // carries that container's id directly (the post-workspace-removal shape).
+    private (Run run, Container container) SeedRunAndContainer(RunMode mode)
     {
-        var workspace = new Workspace
+        var container = new Container
         {
             Id = Guid.NewGuid(),
-            Name = "ws-" + mode.ToString().ToLowerInvariant(),
+            Name = "ctr-" + mode.ToString().ToLowerInvariant(),
             OwnerId = "u",
-            DefaultContainerId = Guid.NewGuid(),
+            Status = ContainerStatus.Running,
         };
-        _db.Workspaces.Add(workspace);
+        _db.Containers.Add(container);
 
         var run = new Run
         {
@@ -317,10 +322,10 @@ public class RunModeDispatcherTests : IDisposable
             EnvironmentProfileId = Guid.NewGuid(),
             CorrelationId = Guid.NewGuid(),
             Status = RunStatus.Pending,
-            WorkspaceRef = new WorkspaceRef { WorkspaceId = workspace.Id },
+            WorkspaceRef = new WorkspaceRef { WorkspaceId = container.Id },
         };
         _db.Runs.Add(run);
         _db.SaveChanges();
-        return (run, workspace);
+        return (run, container);
     }
 }

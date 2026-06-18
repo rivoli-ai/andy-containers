@@ -116,7 +116,33 @@ public class HeadlessConfigBuilderTests
         var act = () => _builder.Build(run, spec);
 
         act.Should().Throw<ArgumentException>()
-            .WithMessage("*Provider*", "schema enum closes at anthropic|openai|google|cerebras|local");
+            .WithMessage("*Provider*",
+                "schema enum closes at anthropic|openai|openrouter|google|cerebras|groq|local");
+    }
+
+    // Every provider in the andy-cli headless-config.v1 schema enum must BUILD
+    // (no producer-vs-schema drift). openrouter + groq regressed here while
+    // present in the schema, breaking the OpenRouter setup at config-build time.
+    [Theory]
+    [InlineData("anthropic")]
+    [InlineData("openai")]
+    [InlineData("openrouter")]
+    [InlineData("google")]
+    [InlineData("cerebras")]
+    [InlineData("groq")]
+    [InlineData("local")]
+    public void Build_SchemaEnumProvider_Succeeds(string provider)
+    {
+        var run = SeedRun();
+        var spec = TriageAgent() with
+        {
+            Model = new AgentSpecModel { Provider = provider, Id = "some-model-id" },
+        };
+
+        var config = _builder.Build(run, spec);
+
+        config.Model.Provider.Should().Be(provider,
+            "every provider in the schema's model.provider enum must be accepted by the builder");
     }
 
     [Fact]

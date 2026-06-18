@@ -35,6 +35,21 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // run's output stream is marked terminal on every exit path.
     private readonly IRunOutputBus? _outputBus;
 
+    // #2231. Optional per-run model-scoped proxy-token mint. The container's
+    // create-time OPENAI_API_KEY is scoped only to the container-default
+    // model slugs (Proxy:HeadlessModelSlugs, e.g. "deepseek-v4-flash") — it
+    // does NOT know which model THIS run's agent will actually request. When
+    // the planner assigns any other model (e.g. "openrouter/qwen3-coder"),
+    // andy-models' proxy 403s every completion: "token was not minted for
+    // model 'X'. Token-scoped slugs: deepseek-v4-flash." We re-mint a token
+    // scoped to the run's ACTUAL model.id (read from the headless config) and
+    // override OPENAI_API_KEY for the andy-cli process only. Optional so the
+    // existing test surface (and any deployment with no proxy) is unchanged —
+    // a null service / null base-url / mint failure leaves the container's
+    // own OPENAI_API_KEY in place (pre-#2231 behaviour).
+    private readonly IProxyTokenService? _proxyTokenService;
+    private readonly Microsoft.Extensions.Configuration.IConfiguration? _configuration;
+
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
     // and exits with code 4 (→ RunEventKind.Timeout) when its CTS fires.
     // We let it have a head start before our outer ExecAsync ceiling so
@@ -56,7 +71,9 @@ public sealed class HeadlessRunner : IHeadlessRunner
         ILogger<HeadlessRunner> logger,
         IOutputArtifactCollector? artifactCollector = null,
         IInputArtifactStager? inputStager = null,
-        IRunOutputBus? outputBus = null)
+        IRunOutputBus? outputBus = null,
+        IProxyTokenService? proxyTokenService = null,
+        Microsoft.Extensions.Configuration.IConfiguration? configuration = null)
     {
         _containers = containers;
         _db = db;
@@ -66,6 +83,8 @@ public sealed class HeadlessRunner : IHeadlessRunner
         _artifactCollector = artifactCollector;
         _inputStager = inputStager;
         _outputBus = outputBus;
+        _proxyTokenService = proxyTokenService;
+        _configuration = configuration;
     }
 
     public async Task<HeadlessRunOutcome> StartAsync(Run run, string configPath, CancellationToken ct = default)
@@ -154,10 +173,23 @@ public sealed class HeadlessRunner : IHeadlessRunner
         var inContainerConfigPath = $"/tmp/andy-runs/{run.Id}/config.json";
         var stageDir = $"/tmp/andy-runs/{run.Id}";
         var configB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(configJson));
+
+        // #2231. Mint a proxy token scoped to THIS run's actual model and
+        // override OPENAI_API_KEY for the andy-cli process. The container's
+        // create-time key is scoped only to the container-default slugs, so
+        // a run on any other model would 403 at the proxy. Prefixing the
+        // andy-cli invocation with `OPENAI_API_KEY='<jwt>'` overrides the
+        // env for that one process without touching the container's own env
+        // (which other tools / shells in the container still rely on). The
+        // assignment is wrapped in the same single command so a failed mint
+        // (→ null) just leaves the container default in place. Best-effort:
+        // no proxy service / no base url / mint failure → no prefix.
+        var modelKeyPrefix = await BuildModelKeyOverrideAsync(run, configJson, containerId, execToken);
+
         var command =
             $"mkdir -p {ShellEscape(stageDir)} && "
             + $"printf %s {ShellEscape(configB64)} | base64 -d > {ShellEscape(inContainerConfigPath)} && "
-            + $"andy-cli run --headless --config {ShellEscape(inContainerConfigPath)}";
+            + $"{modelKeyPrefix}andy-cli run --headless --config {ShellEscape(inContainerConfigPath)}";
         var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
 
         // F4.1 (#1934). Resolve the literal run-scoped token so the
@@ -235,9 +267,88 @@ public sealed class HeadlessRunner : IHeadlessRunner
             "Run {RunId} exited with code {ExitCode} → {Kind}/{Status} after {Duration}s",
             run.Id, result.ExitCode, kind, status, durationSeconds);
 
+        // #2204. A non-zero exec used to surface only the raw stderr (and
+        // *nothing* when stderr was empty — e.g. an exit-code-127 "andy-cli:
+        // not found" that writes to a swallowed stream), so the user saw a
+        // bare "Run <id> ended with Failed." with zero diagnostic content.
+        // Enrich the reason with the exit code AND a bounded slice of the
+        // container's stderr/stdout so the cause travels all the way to
+        // andy-tasks → Conductor. The [AC-HEADLESS-EXIT] code is greppable
+        // per the project rule that user-facing errors carry a unique code.
         return await TerminateAsync(run, kind, status,
             exitCode: result.ExitCode, durationSeconds: durationSeconds,
-            error: status == RunStatus.Succeeded ? null : Truncate(result.StdErr, 500), ct);
+            error: status == RunStatus.Succeeded
+                ? null
+                : BuildExitFailureReason(result),
+            ct);
+    }
+
+    // #2204 / #2232. Compose the actionable failure reason carried on
+    // Run.Error and out over the run-event wire. Always names the exit code;
+    // appends a bounded slice of the container's stderr (falling back to
+    // stdout when stderr is empty, so an exit-127 that logs to stdout isn't
+    // silently dropped).
+    //
+    // #2232: the slice is taken from the TAIL, not the HEAD. andy-cli's first
+    // output is the ToolRegistry "Registered tool ..." banner; the ACTUAL
+    // error (a key-resolution failure, a model 4xx, a stack trace) lands at
+    // the END. Truncating from the start surfaced registration noise instead
+    // of the cause, so the user saw "Registered tool read_file..." rather
+    // than why the run failed. We keep the last ~25 lines / last 500 chars,
+    // bounded so a chatty agent can't bloat the event payload.
+    private static string BuildExitFailureReason(ExecResult result)
+    {
+        const int maxChars = 500;
+        const int maxLines = 25;
+        var stderr = result.StdErr?.Trim();
+        var stdout = result.StdOut?.Trim();
+
+        string detail;
+        if (!string.IsNullOrEmpty(stderr))
+        {
+            detail = $" — {Tail(stderr, maxLines, maxChars)}";
+        }
+        else if (!string.IsNullOrEmpty(stdout))
+        {
+            // No stderr (common for exit-127 / missing-binary shells, but also
+            // for agents that log everything to stdout) — the useful line is
+            // the tail of stdout; surface it rather than nothing.
+            detail = $" — (no stderr) {Tail(stdout, maxLines, maxChars)}";
+        }
+        else
+        {
+            detail = " — no output captured";
+        }
+
+        return $"[AC-HEADLESS-EXIT] andy-cli run failed: exit code {result.ExitCode}{detail}";
+    }
+
+    // #2232. Return the TAIL of a multi-line output, bounded to the last
+    // `maxLines` lines AND the last `maxChars` characters (whichever is
+    // tighter). A leading ellipsis marks that earlier output (the banner)
+    // was dropped. The real error sits at the end of andy-cli's output, so
+    // this is the slice the user actually needs.
+    private static string Tail(string value, int maxLines, int maxChars)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        // Take the last N non-empty-trimmed lines first so we don't spend the
+        // char budget on trailing blank lines, then apply the char ceiling.
+        var lines = value.Replace("\r\n", "\n").Split('\n');
+        var startLine = Math.Max(0, lines.Length - maxLines);
+        var tail = string.Join("\n", lines, startLine, lines.Length - startLine).Trim();
+        var droppedLines = startLine > 0;
+
+        if (tail.Length > maxChars)
+        {
+            tail = tail[^maxChars..];
+            return "..." + tail;
+        }
+
+        return droppedLines ? "..." + tail : tail;
     }
 
     // AQ2 (rivoli-ai/andy-cli#47) exit-code contract. Keep this mapping in
@@ -377,6 +488,110 @@ public sealed class HeadlessRunner : IHeadlessRunner
             _logger.LogWarning(ex,
                 "Run {RunId} could not transition {From} → {To}: {Message}",
                 run.Id, run.Status, next, ex.Message);
+        }
+    }
+
+    // #2231. Build the `OPENAI_API_KEY='<jwt>' ` prefix that overrides the
+    // andy-cli process's model credential with a token scoped to the run's
+    // ACTUAL model. Returns an empty string (no override) whenever we can't
+    // or shouldn't re-mint — so the container's own create-time key stays in
+    // effect and behaviour is identical to pre-#2231:
+    //   * no IProxyTokenService wired (tests, no-proxy deployments)
+    //   * AndyModels:BaseUrl unset (MintForContainerAsync would throw)
+    //   * the config carries no usable model.id
+    //   * the mint round-trip fails (logged; never aborts the run — the
+    //     container default still works for default-model runs)
+    // The minted JWT is single-quote-escaped into the command; a shell
+    // metacharacter in a JWT is impossible (it's base64url + dots), but we
+    // escape defensively so the contract matches ShellEscape everywhere else.
+    private async Task<string> BuildModelKeyOverrideAsync(
+        Run run, string configJson, Guid containerId, CancellationToken ct)
+    {
+        if (_proxyTokenService is null)
+        {
+            return string.Empty;
+        }
+
+        var modelId = TryExtractModelId(configJson);
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            _logger.LogDebug(
+                "#2231: Run {RunId} config has no usable model.id; leaving the container-default OPENAI_API_KEY in place.",
+                run.Id);
+            return string.Empty;
+        }
+
+        // AndyModels:BaseUrl is the same config key AndyModelsOptions binds.
+        // Without it MintForContainerAsync throws ProxyTokenException, so skip
+        // the round-trip and keep the container default rather than failing the
+        // run on a missing-config that the create path already tolerated.
+        var modelsBaseUrl = _configuration?[$"{AndyModelsOptions.SectionName}:BaseUrl"];
+        if (string.IsNullOrWhiteSpace(modelsBaseUrl))
+        {
+            _logger.LogDebug(
+                "#2231: AndyModels:BaseUrl is not configured; cannot re-mint a model-scoped proxy token for Run {RunId} (model {Model}).",
+                run.Id, modelId);
+            return string.Empty;
+        }
+
+        // The mint's subjectId must match the container owner the create-time
+        // mint used (andy-models attributes the token to a subject). Load the
+        // container row for its OwnerId; fall back to a stable literal if the
+        // row is somehow gone (the run still has the container id).
+        var container = await _db.Containers.FindAsync(new object[] { containerId }, ct).ConfigureAwait(false);
+        var subjectId = string.IsNullOrWhiteSpace(container?.OwnerId) ? "headless" : container!.OwnerId;
+
+        try
+        {
+            var minted = await _proxyTokenService
+                .MintForContainerAsync(containerId.ToString(), subjectId, new[] { modelId }, ct)
+                .ConfigureAwait(false);
+            if (minted is null || string.IsNullOrWhiteSpace(minted.Jwt))
+            {
+                _logger.LogWarning(
+                    "#2231: model-scoped proxy-token mint returned null for Run {RunId} (model {Model}); the run will use the container-default key and may 403 if the model differs.",
+                    run.Id, modelId);
+                return string.Empty;
+            }
+
+            _logger.LogInformation(
+                "#2231: minted model-scoped proxy token {TokenId} for Run {RunId} (model {Model}); overriding OPENAI_API_KEY for the andy-cli process.",
+                minted.TokenId, run.Id, modelId);
+            return $"OPENAI_API_KEY={ShellEscape(minted.Jwt)} ";
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // A mint failure must NOT abort the run — the container's own key
+            // still works for default-model runs, and a non-default model that
+            // 403s now surfaces (post-#2232) a clear tail error rather than a
+            // silently-dropped reason. Logged greppably for triage.
+            _logger.LogWarning(ex,
+                "#2231: could not mint model-scoped proxy token for Run {RunId} (model {Model}); falling back to the container-default OPENAI_API_KEY. Reason: {Reason}",
+                run.Id, modelId, ex.Message);
+            return string.Empty;
+        }
+    }
+
+    // #2231. Pull `model.id` out of the headless config JSON. The config is
+    // the snake_case wire shape HeadlessConfigBuilder emitted; deserialise
+    // with the same options so `model.id` resolves regardless of casing
+    // policy. Returns null on any parse failure (the caller treats that as
+    // "no override").
+    private static string? TryExtractModelId(string configJson)
+    {
+        try
+        {
+            var config = JsonSerializer.Deserialize<HeadlessRunConfig>(configJson, HeadlessConfigJson.Options);
+            var id = config?.Model?.Id;
+            return string.IsNullOrWhiteSpace(id) ? null : id.Trim();
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 
@@ -547,9 +762,4 @@ public sealed class HeadlessRunner : IHeadlessRunner
     private static string ShellEscape(string value)
         => "'" + value.Replace("'", "'\\''") + "'";
 
-    private static string? Truncate(string? value, int max)
-    {
-        if (string.IsNullOrEmpty(value)) return null;
-        return value.Length <= max ? value : value[..max] + "...";
-    }
 }

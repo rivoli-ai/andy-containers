@@ -144,6 +144,19 @@ public class ContainerScreenshotWorker : BackgroundService
                 {
                     _logger.LogDebug("Screenshot capture timed out for container {Name}", container.Name);
                 }
+                catch (Exception ex) when (ContainerMissingDetection.IsContainerMissing(ex))
+                {
+                    // rivoli-ai/conductor#2204. The backing container was
+                    // deleted out-of-band; ContainerStatusSyncWorker owns
+                    // reconciling the record (it flips it to Failed after
+                    // a bounded number of consecutive misses, which also
+                    // removes it from this worker's Running query). A
+                    // warning here printed one full stack trace per cycle,
+                    // forever — debug only.
+                    _logger.LogDebug(
+                        "Container {Name} ({ExternalId}) not found on provider during screenshot capture; status sync will reconcile",
+                        container.Name, container.ExternalId);
+                }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to capture screenshot for container {Name} ({Id})",

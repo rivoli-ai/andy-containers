@@ -138,6 +138,42 @@ public static class DataSeeder
             "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc; } || true"
         });
 
+    // andy-cli-dev: "Pre-installed Andy CLI environment". The HeadlessRunner
+    // (AP6) execs `andy-cli run --headless --config <path>` INSIDE this
+    // container, so andy-cli MUST be a runnable command on PATH — otherwise
+    // every headless run dies with exit 127 ("andy-cli: not found") in ~0.1s.
+    // ADR-0003 declares andy-cli a hard dependency the agent container is
+    // expected to ship; the original `ScriptsJson` (base packages only)
+    // installed nothing andy-cli-related, which IS that bug.
+    //
+    // andy-cli is a self-contained .NET 8 app published from the PUBLIC repo
+    // rivoli-ai/andy-cli with `AssemblyName=andy-cli`. There is no published
+    // NuGet package or GitHub release to pull, so the install matches the
+    // existing toolchain-install pattern (DotnetScriptsJson / full-stack
+    // Dockerfile): install the .NET 8 SDK, clone+publish the CLI from source,
+    // and symlink the apphost into /usr/local/bin. libicu is required or the
+    // SDK FailFasts on first invocation ("Couldn't find a valid ICU package").
+    private static string AndyCliScriptsJson { get; } = JsonSerializer.Serialize(
+        new Dictionary<string, string>
+        {
+            ["post_create"] = PostCreateScript + " && " +
+            // .NET 8 SDK needs libicu present or it aborts before doing anything.
+            "apt-get install -y -qq libicu-dev >/dev/null 2>&1 && " +
+            // .NET 8 SDK (official install script — no Microsoft-repo registration).
+            "curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir /usr/share/dotnet >/dev/null 2>&1 && " +
+            "ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
+            "echo 'export DOTNET_ROOT=/usr/share/dotnet' >> /root/.bashrc && " +
+            "echo 'export PATH=$PATH:/usr/share/dotnet:/root/.dotnet/tools' >> /root/.bashrc && " +
+            // Build andy-cli from public source and put the apphost on PATH so
+            // `andy-cli run --headless …` (HeadlessRunner.cs) resolves.
+            "git clone --depth 1 https://github.com/rivoli-ai/andy-cli.git /opt/andy-cli-src >/dev/null 2>&1 && " +
+            "/usr/share/dotnet/dotnet publish /opt/andy-cli-src/src/Andy.Cli/Andy.Cli.csproj -c Release -o /opt/andy-cli >/dev/null 2>&1 && " +
+            "ln -sf /opt/andy-cli/andy-cli /usr/local/bin/andy-cli && " +
+            // Fail the post-create chain loudly if andy-cli still isn't runnable
+            // — a silent miss here is exactly the exit-127 bug we're fixing.
+            "command -v andy-cli >/dev/null 2>&1"
+        });
+
     public static async Task SeedAsync(ContainersDbContext db)
     {
         if (await db.Providers.AnyAsync())
@@ -289,7 +325,7 @@ public static class DataSeeder
                 IsPublished = true,
                 Tags = ["andy-cli", "dotnet", "ai"],
                 DefaultResources = """{"cpuCores":2,"memoryMb":4096,"diskGb":20}""",
-                Scripts = ScriptsJson
+                Scripts = AndyCliScriptsJson
             },
             new ContainerTemplate
             {
@@ -726,7 +762,7 @@ public static class DataSeeder
             ["dotnet-8-vscode"] = DotnetScriptsJson,
             ["python-3.12-vscode"] = PythonScriptsJson,
             ["angular-18-vscode"] = NodeScriptsJson,
-            ["andy-cli-dev"] = ScriptsJson,
+            ["andy-cli-dev"] = AndyCliScriptsJson,
             ["dotnet-10-cli"] = Dotnet10ScriptsJson,
             ["dotnet-8-alpine"] = DotnetAlpineScriptsJson,
             ["dotnet-8-desktop"] = DesktopScriptsJson,

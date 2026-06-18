@@ -78,6 +78,31 @@ internal static class GitCredentialInjector
             anyCredentialPart = true;
         }
 
+        // rivoli-ai/conductor#2242. `git push` authenticates via the
+        // credential.helper store written above, but `gh pr create` /
+        // `gh pr view` (the PR-author agent + the PR-deliverable verifier)
+        // read the token from GH_TOKEN / GITHUB_TOKEN, NOT ~/.git-credentials.
+        // Export the GitHub PAT/OAuth token as both env vars in the login
+        // shell so the GitHub CLI is authenticated without an interactive
+        // `gh auth login`. Pick the first PAT/OAuth credential EXPLICITLY
+        // scoped to github.com — a PR is opened against GitHub, so a non-github
+        // (or ambiguous hostless) credential must not leak into GH_TOKEN.
+        var ghToken = credentials.FirstOrDefault(c =>
+            c.CredentialType is GitCredentialType.PersonalAccessToken or GitCredentialType.OAuthToken
+            && IsGitHubHost(c.GitHost));
+        if (ghToken is not null)
+        {
+            // Single-quoted heredoc on .bashrc so the token round-trips
+            // intact and isn't re-expanded on each shell start. Guard with a
+            // grep so re-provisioning doesn't append duplicate exports.
+            var quotedToken = ShellSingleQuote(ghToken.PlaintextToken);
+            inner.AppendLine("touch ~/.bashrc");
+            inner.AppendLine(
+                "grep -q 'export GH_TOKEN=' ~/.bashrc 2>/dev/null || " +
+                $"printf 'export GH_TOKEN={quotedToken}\\nexport GITHUB_TOKEN={quotedToken}\\n' >> ~/.bashrc");
+            anyCredentialPart = true;
+        }
+
         // SSH key per DeployKey credential.
         var sshConfigStanzas = new List<string>();
         var keyFileWrites = new List<string>();
@@ -128,6 +153,27 @@ internal static class GitCredentialInjector
         var escapedInner = inner.ToString().Replace("'", "'\\''");
         return $"su - {containerUser} -c '{escapedInner}'";
     }
+
+    /// <summary>
+    /// True when the credential is EXPLICITLY scoped to <c>github.com</c>.
+    /// A hostless credential is intentionally NOT exported as a GH token: it
+    /// can't form a git-credentials line either (it's skipped there), and
+    /// guessing it's a GitHub token would leak it into GH_TOKEN ambiguously.
+    /// Anything scoped to a different host (e.g. <c>gitlab.com</c>) is excluded.
+    /// </summary>
+    private static bool IsGitHubHost(string? gitHost) =>
+        !string.IsNullOrWhiteSpace(gitHost)
+        && gitHost.Trim().Equals("github.com", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// POSIX single-quote a value for safe embedding in a shell command:
+    /// wrap in single quotes, escaping any embedded single quote via the
+    /// standard <c>'\''</c> dance. Defensive against tokens with shell
+    /// metacharacters (the printf is itself re-escaped by the outer
+    /// <c>su - user -c '…'</c> wrapper in <see cref="BuildInjectionScript"/>).
+    /// </summary>
+    private static string ShellSingleQuote(string value) =>
+        "'" + value.Replace("'", "'\\''") + "'";
 
     /// <summary>
     /// Builds one git-credentials line per RFC-style format:

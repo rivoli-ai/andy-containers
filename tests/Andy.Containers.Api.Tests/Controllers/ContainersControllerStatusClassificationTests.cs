@@ -52,7 +52,8 @@ public class ContainersControllerStatusClassificationTests : IDisposable
             orgMembership.Object,
             new Mock<IGitDiffService>().Object,
             new Mock<IPortDiscoveryService>().Object,
-            new Mock<IContainerLifecycleBus>().Object)
+            new Mock<IContainerLifecycleBus>().Object,
+            new Mock<IRunOutputBus>().Object)
         {
             ControllerContext = new ControllerContext
             {

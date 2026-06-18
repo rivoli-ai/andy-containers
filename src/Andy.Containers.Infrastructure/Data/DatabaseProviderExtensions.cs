@@ -69,6 +69,12 @@ public static class DatabaseProviderExtensions
                 {
                     sqlite.MigrationsAssembly(migrationsAssembly);
                 });
+                // Embedded SQLite is hit concurrently by a hot reconciliation
+                // read loop and by writes (e.g. ensure-pull bookkeeping). Apply
+                // WAL + busy_timeout on every connection so writers wait for the
+                // lock instead of failing immediately with "database is locked"
+                // (the /api/images/ensure-pull 502). See the interceptor doc.
+                options.AddInterceptors(new SqlitePragmaConnectionInterceptor());
                 break;
 
             case DatabaseProvider.PostgreSql:

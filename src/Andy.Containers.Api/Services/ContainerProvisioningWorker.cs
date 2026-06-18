@@ -228,37 +228,86 @@ public class ContainerProvisioningWorker : BackgroundService
             // already succeeded by this point, so the worst case is
             // that subsequent manual clones fall back to the pre-#1046
             // behaviour and prompt for auth.
-            if (!string.IsNullOrEmpty(job.OwnerId))
+            // rivoli-ai/conductor#2242. Merge the user's registered credentials
+            // with a platform-level GitHub PAT fallback from andy-settings
+            // (`sourceControl.github.pat`) when the user has NO github.com
+            // credential of their own. Without this, a PR-author agent in a
+            // task container has no credential.helper / GH_TOKEN, so `git push`
+            // + `gh pr create` are impossible and the PR-deliverable verifier
+            // fails with [PR-VERIFY-001]. The injector also exports GH_TOKEN so
+            // the GitHub CLI authenticates (git push uses the helper store).
+            try
             {
-                try
+                var credentials = new List<DecryptedGitCredential>();
+                if (!string.IsNullOrEmpty(job.OwnerId))
                 {
                     var credentialService = scope.ServiceProvider.GetRequiredService<IGitCredentialService>();
-                    var credentials = await credentialService.ListWithDecryptedTokensAsync(job.OwnerId, stoppingToken);
-                    var injectionScript = GitCredentialInjector.BuildInjectionScript(job.ContainerUser, credentials);
-                    if (injectionScript is not null)
+                    credentials.AddRange(
+                        await credentialService.ListWithDecryptedTokensAsync(job.OwnerId, stoppingToken));
+                }
+
+                var fallbackInjected = false;
+                if (!credentials.Any(c => IsGitHubCredential(c)))
+                {
+                    var secretResolver = scope.ServiceProvider.GetRequiredService<ISourceControlSecretResolver>();
+                    string? pat = null;
+                    try
                     {
-                        var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
-                        var credResult = await containerService.ExecAsync(job.ContainerId, injectionScript, TimeSpan.FromMinutes(1), stoppingToken);
-                        if (credResult.ExitCode != 0)
-                        {
-                            _logger.LogWarning(
-                                "Git credential injection exited with {ExitCode} for container {ContainerId}: {StdErr}",
-                                credResult.ExitCode, job.ContainerId, credResult.StdErr);
-                        }
-                        else
-                        {
-                            _logger.LogInformation(
-                                "Materialised {Count} git credential(s) into container {ContainerId} as user {User}",
-                                credentials.Count, job.ContainerId, job.ContainerUser);
-                        }
+                        pat = await secretResolver.GetGitHubPatAsync(stoppingToken);
+                    }
+                    catch (Exception secretEx)
+                    {
+                        _logger.LogWarning(secretEx,
+                            "Failed to resolve sourceControl.github.pat from andy-settings for container {ContainerId} — proceeding without a GitHub fallback credential.",
+                            job.ContainerId);
+                    }
+
+                    var fallback = BuildGitHubFallbackCredential(pat);
+                    if (fallback is not null)
+                    {
+                        credentials.Add(fallback);
+                        fallbackInjected = true;
+                        _logger.LogInformation(
+                            "Using andy-settings sourceControl.github.pat as the GitHub credential fallback for container {ContainerId}.",
+                            job.ContainerId);
                     }
                 }
-                catch (Exception credEx)
+
+                var injectionScript = GitCredentialInjector.BuildInjectionScript(job.ContainerUser, credentials);
+                if (injectionScript is not null)
                 {
-                    _logger.LogWarning(credEx,
-                        "Failed to materialise git credentials into container {ContainerId} — manual `git clone` from inside the container will fall back to interactive auth.",
+                    var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
+                    var credResult = await containerService.ExecAsync(job.ContainerId, injectionScript, TimeSpan.FromMinutes(1), stoppingToken);
+                    if (credResult.ExitCode != 0)
+                    {
+                        _logger.LogWarning(
+                            "Git credential injection exited with {ExitCode} for container {ContainerId}: {StdErr}",
+                            credResult.ExitCode, job.ContainerId, credResult.StdErr);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "Materialised {Count} git credential(s) into container {ContainerId} as user {User} (settings-PAT fallback: {Fallback})",
+                            credentials.Count, job.ContainerId, job.ContainerUser, fallbackInjected);
+                    }
+                }
+                else
+                {
+                    // No credential at all reached the container. A `git push` /
+                    // `gh pr create` from inside will fail. Surface it loudly so
+                    // the PR-deliverable failure ([PR-VERIFY-001]) is explainable
+                    // and the user knows to set sourceControl.github.pat.
+                    _logger.LogWarning(
+                        "No git credential available for container {ContainerId} (no user credential and no sourceControl.github.pat). " +
+                        "git push / gh pr create will fail; set the sourceControl.github.pat secret (a PAT with 'repo' scope) to enable PR creation.",
                         job.ContainerId);
                 }
+            }
+            catch (Exception credEx)
+            {
+                _logger.LogWarning(credEx,
+                    "Failed to materialise git credentials into container {ContainerId} — manual `git clone` / `git push` from inside the container will fall back to interactive auth.",
+                    job.ContainerId);
             }
 
             // Install code assistant after post-create scripts.
@@ -546,6 +595,51 @@ public class ContainerProvisioningWorker : BackgroundService
         {
             _logger.LogError(ex, "Failed to recover stuck containers on startup");
         }
+    }
+
+    /// <summary>
+    /// rivoli-ai/conductor#2242. True when a decrypted credential can authenticate
+    /// GitHub HTTPS: a PAT/OAuth token scoped to github.com (or host-agnostic).
+    /// Used to decide whether the andy-settings PAT fallback is needed.
+    /// </summary>
+    private static bool IsGitHubCredential(DecryptedGitCredential c) =>
+        c.CredentialType is GitCredentialType.PersonalAccessToken or GitCredentialType.OAuthToken
+        && (string.IsNullOrWhiteSpace(c.GitHost)
+            || c.GitHost.Trim().Equals("github.com", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// rivoli-ai/conductor#2242. Synthesize the github.com fallback credential
+    /// from the andy-settings <c>sourceControl.github.pat</c> value, or null when
+    /// no PAT is configured. Extracted as a pure function so the fallback shape
+    /// (host=github.com, PAT type, well-known label) is unit-testable without DI.
+    /// </summary>
+    internal static DecryptedGitCredential? BuildGitHubFallbackCredential(string? pat) =>
+        string.IsNullOrWhiteSpace(pat)
+            ? null
+            : new DecryptedGitCredential(
+                Id: Guid.Empty,
+                Label: "sourceControl.github.pat",
+                GitHost: "github.com",
+                CredentialType: GitCredentialType.PersonalAccessToken,
+                PlaintextToken: pat!);
+
+    /// <summary>
+    /// rivoli-ai/conductor#2242. Pure credential-merge decision used by the
+    /// provisioning worker: the user's registered credentials, plus the
+    /// andy-settings GitHub PAT fallback ONLY when the user has no github.com
+    /// credential of their own. Mirrors the runtime wiring so the
+    /// "fallback iff no user github cred" contract is testable directly.
+    /// </summary>
+    internal static IReadOnlyList<DecryptedGitCredential> ResolveContainerCredentials(
+        IReadOnlyList<DecryptedGitCredential> userCredentials, string? settingsPat)
+    {
+        var merged = new List<DecryptedGitCredential>(userCredentials);
+        if (!merged.Any(IsGitHubCredential))
+        {
+            var fallback = BuildGitHubFallbackCredential(settingsPat);
+            if (fallback is not null) merged.Add(fallback);
+        }
+        return merged;
     }
 
     private static string GenerateWelcomeBannerScript(ContainerProvisionJob job)

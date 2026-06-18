@@ -34,7 +34,8 @@ public class ContainersControllerPortsTests : IDisposable
             new Mock<IGitCloneService>().Object, new Mock<IGitCredentialService>().Object,
             new Mock<IGitRepositoryProbeService>().Object, orgMembership.Object,
             new Mock<IGitDiffService>().Object, _mockPorts.Object,
-            new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object);
+            new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object,
+            new Mock<Andy.Containers.Storage.IRunOutputBus>().Object);
     }
 
     public void Dispose() => _db.Dispose();

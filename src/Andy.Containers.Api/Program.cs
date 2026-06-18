@@ -451,6 +451,57 @@ try
     {
         builder.Services.AddSingleton<IAndyAgentsClient, StubAndyAgentsClient>();
     }
+
+    // rivoli-ai/conductor#2242. andy-settings HTTP client for the source-control
+    // GitHub PAT fallback (sourceControl.github.pat) injected into task
+    // containers when the user has no per-host git credential. Registered only
+    // when AndySettings:ApiBaseUrl is set so dev / embedded mode (no settings
+    // instance) does NOT fail at startup — the credential-injection step then
+    // falls back to the user's own registered credentials (the pre-#2242
+    // posture), mirroring the AndyAgents / AndyDocs wiring.
+    builder.Services.Configure<AndySettingsOptions>(
+        builder.Configuration.GetSection(AndySettingsOptions.SectionName));
+    var settingsBaseUrl = builder.Configuration[$"{AndySettingsOptions.SectionName}:ApiBaseUrl"];
+    if (!string.IsNullOrWhiteSpace(settingsBaseUrl))
+    {
+        var settingsOptions = builder.Configuration
+            .GetSection(AndySettingsOptions.SectionName)
+            .Get<AndySettingsOptions>() ?? new AndySettingsOptions();
+        var settingsBuilder = builder.Services.AddHttpClient(AndySettingsHttpClient.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri(settingsBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = settingsOptions.Timeout;
+        });
+        var settingsAuthority = builder.Configuration["AndyAuth:Authority"];
+        if (!string.IsNullOrWhiteSpace(settingsAuthority))
+        {
+            var audience = settingsOptions.Audience;
+            settingsBuilder.AddHttpMessageHandler(sp =>
+            {
+                var tokens = sp.GetRequiredService<IServiceTokenService>();
+                var logger = sp.GetService<ILogger<ServiceBearerHandler>>();
+                return new ServiceBearerHandler(
+                    async ct =>
+                    {
+                        try
+                        {
+                            return await tokens.GetAccessTokenAsync(audience, ct);
+                        }
+                        catch (ServiceTokenException)
+                        {
+                            return null;
+                        }
+                    },
+                    logger);
+            });
+        }
+        builder.Services.AddSingleton<ISourceControlSecretResolver, AndySettingsHttpClient>();
+    }
+    else
+    {
+        builder.Services.AddSingleton<ISourceControlSecretResolver, NullSourceControlSecretResolver>();
+    }
+
     builder.Services.AddSingleton<IHeadlessConfigBuilder, HeadlessConfigBuilder>();
     builder.Services.AddSingleton<IHeadlessConfigWriter, HeadlessConfigWriter>();
     builder.Services.AddScoped<IRunConfigurator, RunConfigurator>();
