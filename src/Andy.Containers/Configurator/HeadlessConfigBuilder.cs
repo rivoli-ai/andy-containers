@@ -25,7 +25,31 @@ public sealed class HeadlessConfigBuilder : IHeadlessConfigBuilder
     };
 
     private const string DefaultWorkspaceRoot = "/workspace";
-    private const string DefaultOutputFile = "/workspace/.andy-run/output.json";
+
+    // rivoli-ai/conductor#2250. The agent's final prose report (andy-cli's
+    // `result.Response`, written verbatim to `output.file`) was historically
+    // parked at `/workspace/.andy-run/output.json` — a path NO collector ever
+    // scans. FilesystemOutputArtifactCollector only walks its OutputsRoot
+    // (`/workspace/.andy/outputs`), so the summary was written to disk inside
+    // the container and then dropped on the floor: it never reached andy-docs,
+    // never rode the RunEventPayload OutputArtifacts list, and never surfaced
+    // in Conductor's task detail.
+    //
+    // Pointing the output file INTO the collected outputs root, under a
+    // well-known name, means the existing #320 collector picks it up, uploads
+    // it to andy-docs, and emits it as a RunOutputArtifact with a DocsRef —
+    // with ZERO new collection/upload/event code. Conductor keys off the
+    // `RunSummaryFileName` to render it as the run's summary card rather than a
+    // generic artifact row. Kept as `.md` because the report is prose, not a
+    // structured JSON document (andy-cli writes the raw LLM response text).
+    //
+    // NOTE: the literal `/workspace/.andy/outputs` is duplicated from
+    // FilesystemOutputArtifactCollector.OutputsRoot (API project) — the core
+    // lib can't reference the API project, so the linkage is enforced by
+    // HeadlessConfigBuilderTests.OutputFile_LandsUnderCollectedOutputsRoot.
+    public const string RunSummaryFileName = "run-summary.md";
+    private const string DefaultOutputFile =
+        DefaultWorkspaceRoot + "/.andy/outputs/" + RunSummaryFileName;
     private const string DefaultStream = "stdout";
 
     public HeadlessRunConfig Build(Run run, AgentSpec agent)

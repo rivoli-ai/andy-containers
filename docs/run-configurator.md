@@ -81,7 +81,7 @@ Unknown transports (anything other than `"mcp"` or `"cli"`) throw at the builder
 
 | Output field | Source | Notes |
 |---|---|---|
-| `output.file` | constant `"/workspace/.andy-run/output.json"` | Path andy-cli atomically writes the agent's structured response to. Read by Conductor / consumers. |
+| `output.file` | constant `"/workspace/.andy/outputs/run-summary.md"` | Path andy-cli atomically writes the agent's final prose report to. **Lands under the collected outputs root** (`FilesystemOutputArtifactCollector.OutputsRoot`) so the terminal-event artifact collector picks it up, uploads it to andy-docs, and emits it as a `RunOutputArtifact` with a `DocsRef` — surfacing the summary in Conductor's task detail (rivoli-ai/conductor#2250). Before #2250 it was parked at `/workspace/.andy-run/output.json`, which no collector scanned, so the report was written and then dropped. |
 | `output.stream` | constant `"stdout"` | Where structured events are emitted (parsed by AP6). |
 
 ### Event sink (`HeadlessEventSink`)

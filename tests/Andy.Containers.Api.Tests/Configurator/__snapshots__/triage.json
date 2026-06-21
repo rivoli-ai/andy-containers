@@ -33,7 +33,7 @@
     "branch": "main"
   },
   "output": {
-    "file": "/workspace/.andy-run/output.json",
+    "file": "/workspace/.andy/outputs/run-summary.md",
     "stream": "stdout"
   },
   "event_sink": {
