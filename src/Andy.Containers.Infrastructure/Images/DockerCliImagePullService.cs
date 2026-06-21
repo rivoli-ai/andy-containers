@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Andy.Containers.Abstractions.Images;
 using Andy.Containers.Configuration;
+using Andy.Containers.Infrastructure.Registries.Local;
 using Andy.Containers.Models.ImageManagement;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -33,17 +34,20 @@ public sealed class DockerCliImagePullService : IImagePullService
     private readonly IOptions<RegistryConfigurationOptions> _registryConfig;
     private readonly ILogger<DockerCliImagePullService> _logger;
     private readonly DockerCliImagePullOptions _options;
+    private readonly PushTargetHostOptions _pushTargetOptions;
 
     public DockerCliImagePullService(
         IEnumerable<IRegistryAdapter> registryAdapters,
         IOptions<RegistryConfigurationOptions> registryConfig,
         ILogger<DockerCliImagePullService> logger,
-        IOptions<DockerCliImagePullOptions>? options = null)
+        IOptions<DockerCliImagePullOptions>? options = null,
+        IOptions<PushTargetHostOptions>? pushTargetOptions = null)
     {
         _registryAdapters = registryAdapters;
         _registryConfig = registryConfig;
         _logger = logger;
         _options = options?.Value ?? new DockerCliImagePullOptions();
+        _pushTargetOptions = pushTargetOptions?.Value ?? new PushTargetHostOptions();
     }
 
     public async Task<EnsurePullResponse> EnsurePullAsync(
@@ -92,11 +96,18 @@ public sealed class DockerCliImagePullService : IImagePullService
         // not a URL.
         var sourceRef = $"{request.SourceRegistry.TrimEnd('/')}/{request.SourceRepository}:{request.SourceTag}";
         var destHost = ExtractHost(destRegistryEntry.Url);
-        var destRef = $"{destHost}/{destRepo}:{destTag}";
+        // Docker Desktop loopback gap: `docker push` runs inside the
+        // Docker Desktop VM, where `localhost` is the VM, not the host
+        // running zot. Rewrite the destination authority to a
+        // VM-reachable host (host.docker.internal) on Docker Desktop;
+        // on Linux the daemon shares the host network so it's left as
+        // configured. See PushTargetHostResolver.
+        var destResolution = PushTargetHostResolver.Resolve(destHost, _pushTargetOptions);
+        var destRef = $"{destResolution.TargetAuthority}/{destRepo}:{destTag}";
 
-        await RunDockerAsync("Pull", new[] { "pull", sourceRef }, ct);
-        await RunDockerAsync("Tag", new[] { "tag", sourceRef, destRef }, ct);
-        await RunDockerAsync("Push", new[] { "push", destRef }, ct);
+        await RunDockerAsync("Pull", new[] { "pull", sourceRef }, ct, destResolution);
+        await RunDockerAsync("Tag", new[] { "tag", sourceRef, destRef }, ct, destResolution);
+        await RunDockerAsync("Push", new[] { "push", destRef }, ct, destResolution);
 
         // Re-probe to read the authoritative digest the destination
         // recorded post-push. Parsing it from `docker push` stderr
@@ -184,7 +195,11 @@ public sealed class DockerCliImagePullService : IImagePullService
         }
     }
 
-    private async Task RunDockerAsync(string operationCode, string[] arguments, CancellationToken ct)
+    private async Task RunDockerAsync(
+        string operationCode,
+        string[] arguments,
+        CancellationToken ct,
+        PushTargetHostResolution? pushResolution = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -224,6 +239,23 @@ public sealed class DockerCliImagePullService : IImagePullService
         if (process.ExitCode != 0)
         {
             var combined = stdout + (string.IsNullOrWhiteSpace(stderr) ? string.Empty : Environment.NewLine + stderr);
+
+            // Loud, actionable Docker Desktop diagnostics on the push
+            // step — a bare Go networking timeout is useless to a human.
+            var hint = pushResolution is { } resolution
+                ? RegistryPushFailureDiagnostics.BuildHint(resolution.TargetAuthority, combined, resolution.WasRewritten)
+                : null;
+
+            if (hint is not null)
+            {
+                _logger.LogError(
+                    "ImagePull.{OpCode}.DockerDesktopMisconfig: {Hint}", operationCode, hint);
+                throw new ImagePullException(
+                    code: $"ensure_pull_docker_desktop_unreachable.{operationCode}",
+                    message: $"docker exited with code {process.ExitCode} during {operationCode.ToLowerInvariant()}: {Truncate(stderr, 200)}\n\n{hint}",
+                    capturedOutput: combined);
+            }
+
             throw new ImagePullException(
                 code: $"ensure_pull_docker_nonzero_exit_{process.ExitCode}.{operationCode}",
                 message: $"docker exited with code {process.ExitCode} during {operationCode.ToLowerInvariant()}: {Truncate(stderr, 200)}",

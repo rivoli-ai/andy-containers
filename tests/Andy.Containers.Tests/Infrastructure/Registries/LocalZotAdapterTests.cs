@@ -41,7 +41,15 @@ public class LocalZotAdapterTests
                 }),
         });
         var uploader = new RecordingUploader();
-        var adapter = NewAdapter(stub, uploader);
+        // Pin the no-rewrite (Linux/native daemon) baseline so this
+        // assertion is OS-independent — the Docker Desktop rewrite is
+        // exercised separately by
+        // PushAsync_DockerDesktop_RewritesRemoteRefToHostDockerInternal.
+        var adapter = NewAdapter(stub, uploader, pushTargetOptions: new PushTargetHostOptions
+        {
+            Mode = PushTargetHostRewriteMode.Auto,
+            IsDockerDesktopOverride = false,
+        });
         var artifact = MakeArtifact(localRef: "andy-build:tmp-123", specHash: "sha256:spec");
 
         var reference = await adapter.PushAsync(artifact, "foo/bar", "v1", CancellationToken.None);
@@ -230,13 +238,101 @@ public class LocalZotAdapterTests
         adapter.RegistryId.Should().Be("team-zot");
     }
 
+    // Docker Desktop loopback gap (rivoli-ai/andy-containers). On Docker
+    // Desktop the push/tag target must be host.docker.internal so the
+    // `docker push` running inside the VM can reach the host's zot. The
+    // HTTP client (post-push HEAD) still uses localhost. This test
+    // proves the adapter rewrites the remote ref it hands the uploader,
+    // while the HEAD it issues stays on localhost (the stub is keyed by
+    // path only, so a wrong-host HEAD wouldn't even be routed).
+    [Fact]
+    public async Task PushAsync_DockerDesktop_RewritesRemoteRefToHostDockerInternal()
+    {
+        var stub = new StubHandler(new Dictionary<string, StubHandler.Response>
+        {
+            ["HEAD /v2/foo/bar/manifests/v1"] = new(
+                HttpStatusCode.OK,
+                Headers: new Dictionary<string, string>
+                {
+                    ["Docker-Content-Digest"] = "sha256:abc123",
+                }),
+        });
+        var uploader = new RecordingUploader();
+        var adapter = NewAdapter(stub, uploader, pushTargetOptions: new PushTargetHostOptions
+        {
+            Mode = PushTargetHostRewriteMode.Auto,
+            IsDockerDesktopOverride = true,
+        });
+
+        await adapter.PushAsync(
+            MakeArtifact(localRef: "andy-build:tmp-123", specHash: "sha256:spec"),
+            "foo/bar", "v1", CancellationToken.None);
+
+        uploader.Pushed.Should().ContainSingle()
+            .Which.Should().Be(("andy-build:tmp-123", "host.docker.internal:5050/foo/bar:v1"));
+    }
+
+    [Fact]
+    public async Task PushAsync_Linux_KeepsLocalhostRemoteRef()
+    {
+        var stub = new StubHandler(new Dictionary<string, StubHandler.Response>
+        {
+            ["HEAD /v2/foo/bar/manifests/v1"] = new(
+                HttpStatusCode.OK,
+                Headers: new Dictionary<string, string>
+                {
+                    ["Docker-Content-Digest"] = "sha256:abc123",
+                }),
+        });
+        var uploader = new RecordingUploader();
+        var adapter = NewAdapter(stub, uploader, pushTargetOptions: new PushTargetHostOptions
+        {
+            Mode = PushTargetHostRewriteMode.Auto,
+            IsDockerDesktopOverride = false,
+        });
+
+        await adapter.PushAsync(
+            MakeArtifact(localRef: "andy-build:tmp-123", specHash: "sha256:spec"),
+            "foo/bar", "v1", CancellationToken.None);
+
+        uploader.Pushed.Should().ContainSingle()
+            .Which.Should().Be(("andy-build:tmp-123", "localhost:5050/foo/bar:v1"));
+    }
+
+    [Fact]
+    public async Task PushAsync_WrapsDockerDesktopUnreachable_WithActionableHint()
+    {
+        var stub = new StubHandler(new Dictionary<string, StubHandler.Response>());
+        var uploader = new ThrowingUploader(new RegistryUploadException(
+            code: "DockerCliUploader.Push.NonZeroExit1",
+            message: "docker exited with code 1",
+            capturedOutput:
+                "Get \"http://host.docker.internal:5050/v2/\": net/http: request canceled " +
+                "while waiting for connection (Client.Timeout exceeded while awaiting headers)"));
+        var adapter = NewAdapter(stub, uploader, pushTargetOptions: new PushTargetHostOptions
+        {
+            Mode = PushTargetHostRewriteMode.Auto,
+            IsDockerDesktopOverride = true,
+        });
+
+        var act = async () => await adapter.PushAsync(
+            MakeArtifact(localRef: "x", specHash: "sha256:y"),
+            "foo/bar", "v1", CancellationToken.None);
+
+        (await act.Should().ThrowAsync<RegistryUploadException>()
+            .Where(e => e.Code == "LocalZotAdapter.Push.DockerDesktopUnreachable"))
+            .Which.Message.Should().Contain("insecure-registries");
+    }
+
     private static LocalZotAdapter NewAdapter(
         StubHandler handler,
         IRegistryUploader uploader,
-        string registryId = "local-zot")
+        string registryId = "local-zot",
+        PushTargetHostOptions? pushTargetOptions = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5050") };
-        return new LocalZotAdapter(http, uploader, NullLogger<LocalZotAdapter>.Instance, registryId);
+        return new LocalZotAdapter(
+            http, uploader, NullLogger<LocalZotAdapter>.Instance, registryId, pushTargetOptions);
     }
 
     private static BuildArtifact MakeArtifact(string localRef, string specHash)
@@ -260,6 +356,19 @@ public class LocalZotAdapterTests
             Pushed.Add((localReference, remoteReference));
             return Task.CompletedTask;
         }
+    }
+
+    /// <summary>
+    /// Uploader that always throws a supplied exception — exercises the
+    /// adapter's Docker Desktop failure-wrapping path.
+    /// </summary>
+    private sealed class ThrowingUploader : IRegistryUploader
+    {
+        private readonly RegistryUploadException _ex;
+        public ThrowingUploader(RegistryUploadException ex) { _ex = ex; }
+
+        public Task PushAsync(string localReference, string remoteReference, CancellationToken ct)
+            => throw _ex;
     }
 
     /// <summary>
