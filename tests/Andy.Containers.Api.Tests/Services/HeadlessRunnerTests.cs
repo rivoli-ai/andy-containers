@@ -451,6 +451,63 @@ public class HeadlessRunnerTests : IDisposable
         captured.Should().Contain($"andy-cli run --headless --config '/tmp/andy-runs/{run.Id}/config.json'");
     }
 
+    // conductor MSB1003 / andy-tasks#383. The repo is cloned DIRECTLY into the
+    // workspace root (/workspace/Andy.Cli.sln exists), but the exec endpoint
+    // runs `sh -c "<command>"` with NO WorkingDir — so without an explicit
+    // `cd` andy-cli runs from the image's default WORKDIR, not the checkout.
+    // andy-cli relies on its process CWD being the checkout root, so the
+    // dispatched coding-agent command MUST be prefixed with `cd '/workspace' &&`
+    // before the andy-cli invocation (mirroring andy-tasks#383's verifier fix).
+    // This test FAILS against the old code (no `cd`) and passes with the fix.
+    [Fact]
+    public async Task StartAsync_CdsIntoWorkspaceRoot_BeforeRunningAndyCli()
+    {
+        var run = SeedRun();
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await _runner.StartAsync(run, _configPath);
+
+        captured.Should().NotBeNull();
+        // The `cd` must land immediately before the andy-cli invocation so the
+        // agent's process CWD is the checkout root.
+        captured.Should().Contain("cd '/workspace' && andy-cli run --headless",
+            "the dispatched agent must run with CWD at the checkout root");
+    }
+
+    // conductor MSB1003. The `cd` and the #2231 model-key override compose:
+    // the OPENAI_API_KEY assignment must stay attached to the andy-cli process
+    // and the whole thing must run under the `cd`.
+    [Fact]
+    public async Task StartAsync_CdsIntoWorkspaceRoot_BeforeModelScopedKeyAndAndyCli()
+    {
+        var run = SeedRun();
+        SeedContainer(run.ContainerId!.Value, ownerId: "owner-42");
+        const string modelId = "openrouter/qwen3-coder";
+        var configPath = WriteRealConfigWithModel(modelId);
+
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        var proxy = new RecordingProxyTokenService("jwt-scoped-to-qwen");
+        var runner = MakeRunnerWithProxy(proxy, modelsBaseUrlConfigured: true);
+
+        await runner.StartAsync(run, configPath);
+
+        captured.Should().NotBeNull();
+        captured.Should().Contain("cd '/workspace' && OPENAI_API_KEY='jwt-scoped-to-qwen' andy-cli run --headless",
+            "the model-key override and andy-cli must both run under the workspace `cd`");
+        File.Delete(configPath);
+    }
+
     // ----- #2231 model-scoped OPENAI_API_KEY override -----
 
     // #2231. THE bug GOAL-23 hit: the container's create-time OPENAI_API_KEY
