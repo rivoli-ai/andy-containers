@@ -18,6 +18,20 @@ public interface IContainerService
     Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct = default);
 
     /// <summary>
+    /// Working-dir-aware exec overload (exec working-dir feature). When
+    /// <paramref name="workingDir"/> is non-empty the command runs in that
+    /// directory inside the container (the repo checkout, e.g.
+    /// <c>/workspace</c>) — Docker via its native <c>WorkingDir</c>, other
+    /// providers via a <c>cd '&lt;dir&gt;' &amp;&amp; </c> wrap. A null/empty
+    /// <paramref name="workingDir"/> is byte-identical to
+    /// <see cref="ExecAsync(Guid, string, TimeSpan, CancellationToken)"/>,
+    /// so existing callers (and andy-tasks' own cd-prefix workaround) are
+    /// unaffected. The default delegates to the no-working-dir overload.
+    /// </summary>
+    Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct = default)
+        => ExecAsync(containerId, command, timeout, ct);
+
+    /// <summary>
     /// F4.1 (rivoli-ai/conductor#1934). Streaming variant of
     /// <see cref="ExecAsync(Guid, string, TimeSpan, CancellationToken)"/>:
     /// the same exec, but each stdout/stderr line is surfaced to
@@ -25,6 +39,10 @@ public interface IContainerService
     /// until the process exits. Returns the same terminal
     /// <see cref="ExecResult"/> (with the full buffered stdout/stderr)
     /// so existing callers keep their exit-code + final-output contract.
+    ///
+    /// <paramref name="workingDir"/> carries the same first-class working
+    /// directory as the buffered overload (exec working-dir feature);
+    /// null/empty ⇒ no working directory (pre-existing behaviour).
     /// </summary>
     /// <remarks>
     /// Honours decision #17 (no new Docker-Engine verb beyond the
@@ -41,10 +59,11 @@ public interface IContainerService
         string command,
         TimeSpan timeout,
         Action<ExecOutputChunk> onLine,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? workingDir = null)
     {
         ArgumentNullException.ThrowIfNull(onLine);
-        var result = await ExecAsync(containerId, command, timeout, ct);
+        var result = await ExecAsync(containerId, command, timeout, workingDir, ct);
         foreach (var line in SplitLines(result.StdOut))
         {
             onLine(new ExecOutputChunk(ExecStreamKind.Stdout, line));

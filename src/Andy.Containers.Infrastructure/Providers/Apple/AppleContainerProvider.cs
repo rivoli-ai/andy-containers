@@ -183,11 +183,18 @@ public class AppleContainerProvider : IInfrastructureProvider
         return await ExecAsync(externalId, command, TimeSpan.FromSeconds(30), ct);
     }
 
-    public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
+    public Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
+        => ExecAsync(externalId, command, timeout, workingDir: null, ct);
+
+    public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct)
     {
+        // Apple's `container exec` carries no native working-dir flag, so we
+        // wrap the command with `cd '<dir>' && ` (exec working-dir feature).
+        // Null/empty workingDir ⇒ command unchanged (pre-existing behaviour).
+        var effectiveCommand = ExecWorkingDir.Wrap(command, workingDir);
         // Use ArgumentList to avoid shell quoting issues with ProcessStartInfo.Arguments.
         // Apple `container exec` syntax: container exec <id> <command> [args...]
-        var result = await RunCliWithArgsAsync(["exec", externalId, "sh", "-c", command], ct, timeout);
+        var result = await RunCliWithArgsAsync(["exec", externalId, "sh", "-c", effectiveCommand], ct, timeout);
         return new ExecResult
         {
             ExitCode = result.ExitCode,

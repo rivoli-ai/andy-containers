@@ -148,4 +148,48 @@ public class DockerProviderTests : IAsyncLifetime
         // is already gone.
         _externalId = null;
     }
+
+    // exec working-dir feature. The exec endpoint historically ran
+    // `sh -c "<command>"` with NO working directory, so every command ran in
+    // the image's default WORKDIR rather than the repo checkout. This proves
+    // the first-class WorkingDir field routes through Docker's native `-w`:
+    //   * WorkingDir = "/tmp" ⇒ `pwd` reports /tmp (command ran THERE).
+    //   * WorkingDir = null   ⇒ `pwd` reports the image WORKDIR (here `/`),
+    //                            byte-identical to the historical behaviour.
+    [Fact]
+    public async Task Exec_WithWorkingDir_RunsCommandInThatDirectory_NullLeavesImageWorkdir()
+    {
+        var spec = new ContainerSpec
+        {
+            Name = $"workingdir-test-{Guid.NewGuid().ToString()[..8]}",
+            ImageReference = "alpine:latest",
+            Resources = new ResourceSpec { CpuCores = 1, MemoryMb = 64 }
+        };
+        var created = await _provider.CreateContainerAsync(spec, CancellationToken.None);
+        _externalId = created.ExternalId;
+
+        // 1. A non-empty WorkingDir runs the command in that directory.
+        var inTmp = await _provider.ExecAsync(
+            _externalId!, "pwd", TimeSpan.FromSeconds(30), workingDir: "/tmp", CancellationToken.None);
+        inTmp.ExitCode.Should().Be(0);
+        inTmp.StdOut!.Trim().Should().Be("/tmp",
+            "a non-empty WorkingDir must run the command in that directory via docker exec -w");
+
+        // 2. Null WorkingDir ⇒ the image's default WORKDIR (alpine: `/`),
+        //    i.e. NO `cd`/`-w` applied — byte-identical to the pre-feature
+        //    behaviour that existing callers rely on.
+        var noDir = await _provider.ExecAsync(
+            _externalId!, "pwd", TimeSpan.FromSeconds(30), workingDir: null, CancellationToken.None);
+        noDir.ExitCode.Should().Be(0);
+        noDir.StdOut!.Trim().Should().Be("/",
+            "a null WorkingDir must leave the image's default WORKDIR untouched");
+
+        // 3. The legacy no-working-dir overload is identical to (2).
+        var legacy = await _provider.ExecAsync(_externalId!, "pwd", CancellationToken.None);
+        legacy.StdOut!.Trim().Should().Be(noDir.StdOut!.Trim(),
+            "the new overload with null workingDir must match the legacy overload exactly");
+
+        await _provider.DestroyContainerAsync(_externalId!, CancellationToken.None);
+        _externalId = null;
+    }
 }

@@ -189,24 +189,22 @@ public sealed class HeadlessRunner : IHeadlessRunner
         // conductor MSB1003 / andy-tasks#383. The repo is cloned DIRECTLY into
         // the workspace root (GitCloneService: `cp -a {tmp}/. {target}/`,
         // TargetPath defaults to /workspace), so e.g. /workspace/Andy.Cli.sln
-        // exists. But the exec endpoint runs `sh -c "<command>"` with NO
-        // WorkingDir (the ExecRequest wire shape is {Command, TimeoutSeconds}
-        // only), so andy-cli would otherwise run from the image's default
-        // WORKDIR — NOT the checkout root. andy-cli is normally invoked from
-        // inside the cloned repo and relies on its process CWD being the
-        // checkout, so a missing `cd` makes the agent operate against the wrong
-        // directory (tooling that resolves paths relative to CWD fails). The
-        // companion fix andy-tasks#383 already prefixes the VERIFIER command
-        // with `cd '/workspace' && `; this is the same fix for the dispatched
-        // coding-agent run. Single chokepoint: we prepend exactly one `cd`,
-        // and only the andy-cli sub-command runs under it — the mkdir/stage
-        // steps stay CWD-agnostic (they use absolute /tmp paths).
+        // exists. andy-cli is normally invoked from inside the cloned repo and
+        // relies on its process CWD being the checkout, so running from the
+        // image's default WORKDIR makes the agent operate against the wrong
+        // directory (tooling that resolves paths relative to CWD fails).
+        //
+        // #360 worked around this by prefixing `cd '<root>' && ` onto the
+        // andy-cli sub-command. This now uses the FIRST-CLASS WorkingDir field
+        // on the exec contract instead (Docker native `-w`, cd-wrap elsewhere),
+        // so the whole exec runs under the checkout root via a single
+        // mechanism. The mkdir/stage steps stay correct because they use
+        // absolute /tmp paths — they don't care what the CWD is.
         var workspaceRoot = ResolveWorkspaceRoot(configJson);
 
         var command =
             $"mkdir -p {ShellEscape(stageDir)} && "
             + $"printf %s {ShellEscape(configB64)} | base64 -d > {ShellEscape(inContainerConfigPath)} && "
-            + $"cd {ShellEscape(workspaceRoot)} && "
             + $"{modelKeyPrefix}andy-cli run --headless --config {ShellEscape(inContainerConfigPath)}";
         var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
 
@@ -228,15 +226,17 @@ public sealed class HeadlessRunner : IHeadlessRunner
             if (_outputBus is not null)
             {
                 // Mid-run live feed: publish each line as it lands,
-                // redacted, tagged with its stream kind.
+                // redacted, tagged with its stream kind. The agent runs in the
+                // checkout root via the first-class WorkingDir field (#360
+                // migration), not a `cd` prefix.
                 result = await _containers.ExecStreamingAsync(
                     containerId, command, execTimeout,
                     chunk => PublishOutputLine(run.Id, chunk, knownToken),
-                    execToken);
+                    execToken, workspaceRoot);
             }
             else
             {
-                result = await _containers.ExecAsync(containerId, command, execTimeout, execToken);
+                result = await _containers.ExecAsync(containerId, command, execTimeout, workspaceRoot, execToken);
             }
         }
         catch (OperationCanceledException) when (execToken.IsCancellationRequested)

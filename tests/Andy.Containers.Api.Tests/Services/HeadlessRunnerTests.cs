@@ -242,7 +242,7 @@ public class HeadlessRunnerTests : IDisposable
         var run = SeedRun();
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("docker daemon unreachable"));
 
         var outcome = await _runner.StartAsync(run, _configPath);
@@ -269,7 +269,7 @@ public class HeadlessRunnerTests : IDisposable
         var run = SeedRun();
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException("exec timeout"));
 
         var outcome = await _runner.StartAsync(run, _configPath, CancellationToken.None);
@@ -289,7 +289,7 @@ public class HeadlessRunnerTests : IDisposable
         cts.Cancel();
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException(cts.Token));
 
         var outcome = await _runner.StartAsync(run, _configPath, cts.Token);
@@ -310,8 +310,8 @@ public class HeadlessRunnerTests : IDisposable
         var spawnedTcs = new TaskCompletionSource<bool>();
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns<Guid, string, TimeSpan, CancellationToken>(async (_, _, _, token) =>
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, string, TimeSpan, string?, CancellationToken>(async (_, _, _, _, token) =>
             {
                 spawnedTcs.TrySetResult(true);
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
@@ -370,7 +370,7 @@ public class HeadlessRunnerTests : IDisposable
         outcome.Error.Should().Contain("ContainerId");
 
         _containers.Verify(c => c.ExecAsync(
-            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         var entry = await _db.OutboxEntries.SingleAsync();
@@ -438,8 +438,8 @@ public class HeadlessRunnerTests : IDisposable
         string? captured = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, _, _) => captured = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         await _runner.StartAsync(run, _configPath);
@@ -451,50 +451,65 @@ public class HeadlessRunnerTests : IDisposable
         captured.Should().Contain($"andy-cli run --headless --config '/tmp/andy-runs/{run.Id}/config.json'");
     }
 
-    // conductor MSB1003 / andy-tasks#383. The repo is cloned DIRECTLY into the
-    // workspace root (/workspace/Andy.Cli.sln exists), but the exec endpoint
-    // runs `sh -c "<command>"` with NO WorkingDir — so without an explicit
-    // `cd` andy-cli runs from the image's default WORKDIR, not the checkout.
-    // andy-cli relies on its process CWD being the checkout root, so the
-    // dispatched coding-agent command MUST be prefixed with `cd '/workspace' &&`
-    // before the andy-cli invocation (mirroring andy-tasks#383's verifier fix).
-    // This test FAILS against the old code (no `cd`) and passes with the fix.
+    // conductor MSB1003 / andy-tasks#383 / #360 → exec working-dir feature. The
+    // repo is cloned DIRECTLY into the workspace root (/workspace/Andy.Cli.sln
+    // exists). andy-cli relies on its process CWD being the checkout root, so
+    // the agent must run THERE, not in the image's default WORKDIR.
+    //
+    // #360 originally prefixed `cd '/workspace' && ` onto the andy-cli
+    // sub-command. This is now the FIRST-CLASS WorkingDir field on the exec
+    // contract: the runner passes WorkingDir = /workspace and the command
+    // carries NO `cd` prefix. This test FAILS against the #360 code (which
+    // emitted a `cd` and left workingDir null) and passes with the migration.
     [Fact]
-    public async Task StartAsync_CdsIntoWorkspaceRoot_BeforeRunningAndyCli()
+    public async Task StartAsync_RunsAndyCliInWorkspaceRoot_ViaWorkingDirNotCdPrefix()
     {
         var run = SeedRun();
-        string? captured = null;
+        string? capturedCmd = null;
+        string? capturedWorkingDir = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, wd, _) =>
+            {
+                capturedCmd = cmd;
+                capturedWorkingDir = wd;
+            })
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         await _runner.StartAsync(run, _configPath);
 
-        captured.Should().NotBeNull();
-        // The `cd` must land immediately before the andy-cli invocation so the
-        // agent's process CWD is the checkout root.
-        captured.Should().Contain("cd '/workspace' && andy-cli run --headless",
-            "the dispatched agent must run with CWD at the checkout root");
+        capturedCmd.Should().NotBeNull();
+        // The agent runs in the checkout root via the first-class WorkingDir
+        // field — no `cd` prefix on the command any more (#360 migration).
+        capturedWorkingDir.Should().Be("/workspace",
+            "the dispatched agent must run with CWD at the checkout root via the first-class field");
+        capturedCmd.Should().NotContain("cd '/workspace'",
+            "the `cd` prefix is replaced by the WorkingDir field");
+        capturedCmd.Should().Contain("andy-cli run --headless");
     }
 
-    // conductor MSB1003. The `cd` and the #2231 model-key override compose:
-    // the OPENAI_API_KEY assignment must stay attached to the andy-cli process
-    // and the whole thing must run under the `cd`.
+    // conductor MSB1003 / #360 migration. The #2231 model-key override still
+    // composes with the run: OPENAI_API_KEY stays attached to the andy-cli
+    // process; the working directory is the first-class field, not a `cd`.
     [Fact]
-    public async Task StartAsync_CdsIntoWorkspaceRoot_BeforeModelScopedKeyAndAndyCli()
+    public async Task StartAsync_RunsAndyCliInWorkspaceRoot_WithModelScopedKey_ViaWorkingDir()
     {
         var run = SeedRun();
         SeedContainer(run.ContainerId!.Value, ownerId: "owner-42");
         const string modelId = "openrouter/qwen3-coder";
         var configPath = WriteRealConfigWithModel(modelId);
 
-        string? captured = null;
+        string? capturedCmd = null;
+        string? capturedWorkingDir = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, wd, _) =>
+            {
+                capturedCmd = cmd;
+                capturedWorkingDir = wd;
+            })
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var proxy = new RecordingProxyTokenService("jwt-scoped-to-qwen");
@@ -502,9 +517,12 @@ public class HeadlessRunnerTests : IDisposable
 
         await runner.StartAsync(run, configPath);
 
-        captured.Should().NotBeNull();
-        captured.Should().Contain("cd '/workspace' && OPENAI_API_KEY='jwt-scoped-to-qwen' andy-cli run --headless",
-            "the model-key override and andy-cli must both run under the workspace `cd`");
+        capturedCmd.Should().NotBeNull();
+        capturedWorkingDir.Should().Be("/workspace",
+            "the agent runs in the checkout root via the first-class WorkingDir field");
+        capturedCmd.Should().NotContain("cd '/workspace'");
+        capturedCmd.Should().Contain("OPENAI_API_KEY='jwt-scoped-to-qwen' andy-cli run --headless",
+            "the model-key override must stay attached to the andy-cli process");
         File.Delete(configPath);
     }
 
@@ -532,8 +550,8 @@ public class HeadlessRunnerTests : IDisposable
         string? captured = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, _, _) => captured = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var proxy = new RecordingProxyTokenService("jwt-scoped-to-qwen");
@@ -566,8 +584,8 @@ public class HeadlessRunnerTests : IDisposable
         string? captured = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, _, _) => captured = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         // Default _runner has no proxy service.
@@ -593,8 +611,8 @@ public class HeadlessRunnerTests : IDisposable
         string? captured = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, _, _) => captured = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var proxy = new RecordingProxyTokenService("unused");
@@ -621,8 +639,8 @@ public class HeadlessRunnerTests : IDisposable
         string? captured = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, _, _) => captured = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var proxy = new RecordingProxyTokenService("unused") { ThrowOnMint = true };
@@ -684,8 +702,8 @@ public class HeadlessRunnerTests : IDisposable
         TimeSpan? capturedTimeout = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, _, t, _) => capturedTimeout = t)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, _, t, _, _) => capturedTimeout = t)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         await _runner.StartAsync(run, configPath);
@@ -708,8 +726,8 @@ public class HeadlessRunnerTests : IDisposable
         string? spawnCommand = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => spawnCommand = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, _, _) => spawnCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var outcome = await _runner.StartAsync(run, missingPath);
@@ -732,8 +750,8 @@ public class HeadlessRunnerTests : IDisposable
         TimeSpan? capturedTimeout = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, _, t, _) => capturedTimeout = t)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, _, t, _, _) => capturedTimeout = t)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         await _runner.StartAsync(run, configPath);
@@ -914,9 +932,12 @@ public class HeadlessRunnerTests : IDisposable
 
     private void SetupExec(Guid containerId, int exitCode, string? stdOut = null, string? stdErr = null)
     {
+        // The runner now spawns andy-cli through the working-dir-aware overload
+        // (exec working-dir feature / #360 migration), passing WorkingDir =
+        // checkout root instead of a `cd` prefix.
         _containers
             .Setup(c => c.ExecAsync(
-                containerId, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                containerId, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ExecResult
             {
                 ExitCode = exitCode,
@@ -966,8 +987,8 @@ public class HeadlessRunnerTests : IDisposable
         string? spawnCommand = null;
         _containers
             .Setup(c => c.ExecAsync(
-                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => spawnCommand = cmd)
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, string?, CancellationToken>((_, cmd, _, _, _) => spawnCommand = cmd)
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var docId = Guid.NewGuid();

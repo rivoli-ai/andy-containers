@@ -449,11 +449,18 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
         return await ExecAsync(externalId, command, TimeSpan.FromSeconds(30), ct);
     }
 
-    public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
+    public Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
+        => ExecAsync(externalId, command, timeout, workingDir: null, ct);
+
+    public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct)
     {
         var exec = await _client.Exec.ExecCreateContainerAsync(externalId, new ContainerExecCreateParameters
         {
             Cmd = ["sh", "-c", command],
+            // Native Docker working directory (`docker exec -w`). Null/empty
+            // (the default) leaves the image's WORKDIR in effect — byte-
+            // identical to the historical no-working-dir behaviour.
+            WorkingDir = string.IsNullOrWhiteSpace(workingDir) ? null : workingDir.Trim(),
             AttachStdout = true,
             AttachStderr = true
         }, ct);
@@ -482,7 +489,8 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     /// </summary>
     public async Task<ExecResult> ExecStreamingAsync(
         string externalId, string command, TimeSpan timeout,
-        Action<ExecOutputChunk> onLine, CancellationToken ct)
+        Action<ExecOutputChunk> onLine, CancellationToken ct,
+        string? workingDir = null)
     {
         ArgumentNullException.ThrowIfNull(onLine);
 
@@ -493,6 +501,9 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
         var exec = await _client.Exec.ExecCreateContainerAsync(externalId, new ContainerExecCreateParameters
         {
             Cmd = ["sh", "-c", command],
+            // Native Docker working directory (`docker exec -w`). Null/empty
+            // ⇒ image WORKDIR (pre-existing behaviour).
+            WorkingDir = string.IsNullOrWhiteSpace(workingDir) ? null : workingDir.Trim(),
             AttachStdout = true,
             AttachStderr = true,
         }, token);

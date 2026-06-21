@@ -1000,13 +1000,18 @@ public class ContainerOrchestrationService : IContainerService
         return await infra.ExecAsync(container.ExternalId!, command, ct);
     }
 
-    public async Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct)
+    public Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct)
+        => ExecAsync(containerId, command, timeout, workingDir: null, ct);
+
+    public async Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct)
     {
         using var activity = ActivitySources.Provisioning.StartActivity("ExecCommand");
         activity?.SetTag("andy.containers.id", containerId.ToString());
         activity?.SetTag("containerId", containerId.ToString()); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
         activity?.SetTag("andy.containers.timeout_seconds", timeout.TotalSeconds);
         activity?.SetTag("timeout", timeout.TotalSeconds); // deprecated; removed in Andy.Telemetry 0.3.0 (OT7 / #1265)
+        if (!string.IsNullOrWhiteSpace(workingDir))
+            activity?.SetTag("andy.containers.working_dir", workingDir);
 
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status is not (ContainerStatus.Running or ContainerStatus.Creating))
@@ -1015,7 +1020,7 @@ public class ContainerOrchestrationService : IContainerService
             throw new InvalidOperationException("Container has no external ID yet");
 
         var infra = _providerFactory.GetProvider(container.Provider!);
-        return await infra.ExecAsync(container.ExternalId!, command, timeout, ct);
+        return await infra.ExecAsync(container.ExternalId!, command, timeout, workingDir, ct);
     }
 
     // F4.1 (rivoli-ai/conductor#1934). Mid-run streaming exec. Resolves
@@ -1025,12 +1030,15 @@ public class ContainerOrchestrationService : IContainerService
     // the interface default (buffered, replayed at end).
     public async Task<ExecResult> ExecStreamingAsync(
         Guid containerId, string command, TimeSpan timeout,
-        Action<ExecOutputChunk> onLine, CancellationToken ct)
+        Action<ExecOutputChunk> onLine, CancellationToken ct,
+        string? workingDir = null)
     {
         ArgumentNullException.ThrowIfNull(onLine);
         using var activity = ActivitySources.Provisioning.StartActivity("ExecCommandStreaming");
         activity?.SetTag("andy.containers.id", containerId.ToString());
         activity?.SetTag("andy.containers.timeout_seconds", timeout.TotalSeconds);
+        if (!string.IsNullOrWhiteSpace(workingDir))
+            activity?.SetTag("andy.containers.working_dir", workingDir);
 
         var container = await GetContainerAsync(containerId, ct);
         if (container.Status is not (ContainerStatus.Running or ContainerStatus.Creating))
@@ -1039,7 +1047,7 @@ public class ContainerOrchestrationService : IContainerService
             throw new InvalidOperationException("Container has no external ID yet");
 
         var infra = _providerFactory.GetProvider(container.Provider!);
-        return await infra.ExecStreamingAsync(container.ExternalId!, command, timeout, onLine, ct);
+        return await infra.ExecStreamingAsync(container.ExternalId!, command, timeout, onLine, ct, workingDir);
     }
 
     public async Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct)

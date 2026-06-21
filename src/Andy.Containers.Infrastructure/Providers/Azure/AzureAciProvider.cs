@@ -238,6 +238,12 @@ public class AzureAciProvider : IInfrastructureProvider
         return await ExecAsync(externalId, command, TimeSpan.FromSeconds(30), ct);
     }
 
+    // ACI's exec is an interactive WebSocket session keyed on /bin/sh and does
+    // not honour an inline command, so a working-dir hint has nothing to wrap
+    // onto here; we delegate to the base overload for interface completeness.
+    public Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct)
+        => ExecAsync(externalId, command, timeout, ct);
+
     public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
     {
         var group = await GetContainerGroupAsync(externalId, ct);

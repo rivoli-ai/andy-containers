@@ -165,10 +165,18 @@ public class Ap6Aq3SmokeTests : IDisposable
         public Task<ExecResult> ExecAsync(Guid containerId, string command, CancellationToken ct = default)
             => ExecAsync(containerId, command, TimeSpan.FromMinutes(15), ct);
 
-        public async Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct = default)
+        public Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, CancellationToken ct = default)
+            => ExecAsync(containerId, command, timeout, workingDir: null, ct);
+
+        // The runner now spawns through the working-dir-aware overload
+        // (exec working-dir feature / #360 migration). We honour WorkingDir by
+        // wrapping the command with `cd '<dir>' && ` exactly like the
+        // non-Docker providers, so the host subprocess runs in the checkout
+        // root just as the real container exec would.
+        public async Task<ExecResult> ExecAsync(Guid containerId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct = default)
         {
-            // AP6's command shape (HeadlessRunner.cs:66) — the only one
-            // this smoke handles.
+            command = ExecWorkingDir.Wrap(command, workingDir);
+            // AP6's command shape — the only one this smoke handles.
             const string prefix = "andy-cli ";
             if (!command.StartsWith(prefix, StringComparison.Ordinal))
             {
