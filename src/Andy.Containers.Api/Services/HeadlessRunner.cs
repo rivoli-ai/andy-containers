@@ -186,9 +186,27 @@ public sealed class HeadlessRunner : IHeadlessRunner
         // no proxy service / no base url / mint failure → no prefix.
         var modelKeyPrefix = await BuildModelKeyOverrideAsync(run, configJson, containerId, execToken);
 
+        // conductor MSB1003 / andy-tasks#383. The repo is cloned DIRECTLY into
+        // the workspace root (GitCloneService: `cp -a {tmp}/. {target}/`,
+        // TargetPath defaults to /workspace), so e.g. /workspace/Andy.Cli.sln
+        // exists. But the exec endpoint runs `sh -c "<command>"` with NO
+        // WorkingDir (the ExecRequest wire shape is {Command, TimeoutSeconds}
+        // only), so andy-cli would otherwise run from the image's default
+        // WORKDIR — NOT the checkout root. andy-cli is normally invoked from
+        // inside the cloned repo and relies on its process CWD being the
+        // checkout, so a missing `cd` makes the agent operate against the wrong
+        // directory (tooling that resolves paths relative to CWD fails). The
+        // companion fix andy-tasks#383 already prefixes the VERIFIER command
+        // with `cd '/workspace' && `; this is the same fix for the dispatched
+        // coding-agent run. Single chokepoint: we prepend exactly one `cd`,
+        // and only the andy-cli sub-command runs under it — the mkdir/stage
+        // steps stay CWD-agnostic (they use absolute /tmp paths).
+        var workspaceRoot = ResolveWorkspaceRoot(configJson);
+
         var command =
             $"mkdir -p {ShellEscape(stageDir)} && "
             + $"printf %s {ShellEscape(configB64)} | base64 -d > {ShellEscape(inContainerConfigPath)} && "
+            + $"cd {ShellEscape(workspaceRoot)} && "
             + $"{modelKeyPrefix}andy-cli run --headless --config {ShellEscape(inContainerConfigPath)}";
         var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
 
@@ -573,6 +591,31 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 "#2231: could not mint model-scoped proxy token for Run {RunId} (model {Model}); falling back to the container-default OPENAI_API_KEY. Reason: {Reason}",
                 run.Id, modelId, ex.Message);
             return string.Empty;
+        }
+    }
+
+    // conductor MSB1003 / andy-tasks#383. The directory the dispatched
+    // coding-agent run must `cd` into before invoking andy-cli — the repo
+    // checkout root. The on-disk headless config carries the authoritative
+    // value at `workspace.root` (HeadlessConfigBuilder sets it from the
+    // container's ContainerGitRepository.TargetPath, default "/workspace").
+    // We honour that so a non-default TargetPath would still land us in the
+    // right place; we fall back to the same DefaultWorkspaceRoot constant when
+    // the config can't be parsed or doesn't pin a root (e.g. the bare "{}"
+    // configs the runner's standalone test surface uses).
+    private const string DefaultWorkspaceRoot = "/workspace";
+
+    private static string ResolveWorkspaceRoot(string configJson)
+    {
+        try
+        {
+            var config = JsonSerializer.Deserialize<HeadlessRunConfig>(configJson, HeadlessConfigJson.Options);
+            var root = config?.Workspace?.Root;
+            return string.IsNullOrWhiteSpace(root) ? DefaultWorkspaceRoot : root.Trim();
+        }
+        catch (Exception)
+        {
+            return DefaultWorkspaceRoot;
         }
     }
 
