@@ -43,7 +43,7 @@ public class HeadlessConfigBuilderTests
         config.Workspace.Root.Should().Be("/workspace");
         config.Workspace.Branch.Should().Be("main", "branch flows from Run.WorkspaceRef.Branch");
 
-        config.Output.File.Should().Be("/workspace/.andy-run/output.json");
+        config.Output.File.Should().Be("/workspace/.andy/outputs/run-summary.md");
         config.Output.Stream.Should().Be("stdout");
 
         config.EventSink!.NatsSubject.Should().Be(
@@ -54,6 +54,30 @@ public class HeadlessConfigBuilderTests
         config.Boundaries.Should().Equal("read-only");
         config.Limits.MaxIterations.Should().Be(50);
         config.Limits.TimeoutSeconds.Should().Be(300);
+    }
+
+    // rivoli-ai/conductor#2250. The summary drop: andy-cli writes its prose
+    // report to config.Output.File, but the collector only walks
+    // FilesystemOutputArtifactCollector.OutputsRoot. If the output file does
+    // not land under that root the report is written into the container and
+    // never collected/uploaded/surfaced — exactly the bug this fix closes.
+    // This guard fails against the old `/workspace/.andy-run/output.json`
+    // default (which is NOT under OutputsRoot) and passes against the new one.
+    [Fact]
+    public void OutputFile_LandsUnderCollectedOutputsRoot()
+    {
+        var config = _builder.Build(SeedRun(), TriageAgent());
+
+        var outputsRoot =
+            Andy.Containers.Api.Services.FilesystemOutputArtifactCollector.OutputsRoot;
+
+        config.Output.File.Should().StartWith(outputsRoot + "/",
+            "the agent's summary report must land under the path the artifact " +
+            "collector scans, or it never reaches andy-docs / Conductor (#2250)");
+        config.Output.File.Should().EndWith(
+            "/" + HeadlessConfigBuilder.RunSummaryFileName,
+            "Conductor keys off the well-known summary file name to render the " +
+            "run-summary card rather than a generic artifact row");
     }
 
     [Fact]
