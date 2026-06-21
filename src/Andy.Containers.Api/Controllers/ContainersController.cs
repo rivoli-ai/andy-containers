@@ -318,7 +318,14 @@ public class ContainersController : ControllerBase
         if (container is null) return ContainerNotFound(id);
         if (!CanAccess(container)) return Forbid();
 
-        var result = await _containerService.ExecAsync(id, request.Command, ct);
+        // Backward compatible: with no WorkingDir we take the exact same
+        // default-timeout path as before. A WorkingDir routes through the
+        // working-dir-aware overload (Docker native -w / cd wrap elsewhere)
+        // honouring the request's TimeoutSeconds.
+        var result = string.IsNullOrWhiteSpace(request.WorkingDir)
+            ? await _containerService.ExecAsync(id, request.Command, ct)
+            : await _containerService.ExecAsync(
+                id, request.Command, TimeSpan.FromSeconds(request.TimeoutSeconds), request.WorkingDir, ct);
         return Ok(result);
     }
 
@@ -964,6 +971,16 @@ public class ExecRequest
 {
     public required string Command { get; set; }
     public int TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Optional working directory inside the container the command runs in
+    /// (the repo checkout, e.g. <c>/workspace</c>) — exec working-dir feature.
+    /// Honoured via Docker's native <c>WorkingDir</c> (<c>docker exec -w</c>)
+    /// or a <c>cd '&lt;dir&gt;' &amp;&amp; </c> wrap on providers without a
+    /// native flag. Null/empty ⇒ the image's default WORKDIR (the historical
+    /// behaviour), so existing callers are unaffected.
+    /// </summary>
+    public string? WorkingDir { get; set; }
 }
 
 public class ResizeRequest

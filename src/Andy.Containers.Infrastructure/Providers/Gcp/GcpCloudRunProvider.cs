@@ -226,10 +226,14 @@ public class GcpCloudRunProvider : IInfrastructureProvider
     }
 
     public Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
+        => ExecAsync(externalId, command, timeout, workingDir: null, ct);
+
+    public Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct)
     {
         // GCP Cloud Run does not have a native exec API.
         // SSH fallback is needed: the container image must include an SSH server,
         // and the provider connects via SSH.NET to execute commands.
+        // (The working-dir hint is moot until that exec path exists.)
         throw new NotSupportedException(
             "GCP Cloud Run does not support native exec. " +
             "Configure SSH in the container image and use the SSH endpoint for command execution.");

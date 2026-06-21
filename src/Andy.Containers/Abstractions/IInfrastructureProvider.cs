@@ -57,6 +57,20 @@ public interface IInfrastructureProvider
     Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct = default);
 
     /// <summary>
+    /// Working-dir-aware exec overload (exec working-dir feature). When
+    /// <paramref name="workingDir"/> is non-empty the command runs in that
+    /// directory — Docker uses its native <c>WorkingDir</c> (<c>docker exec
+    /// -w</c>), other providers wrap via <see cref="ExecWorkingDir.Wrap"/>.
+    /// A null/empty <paramref name="workingDir"/> is byte-identical to the
+    /// no-working-dir <see cref="ExecAsync(string, string, TimeSpan, CancellationToken)"/>
+    /// overload. The default implementation delegates to that overload (no
+    /// working dir), so providers that don't override it simply ignore the
+    /// hint — backward compatible by construction.
+    /// </summary>
+    Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct = default)
+        => ExecAsync(externalId, command, timeout, ct);
+
+    /// <summary>
     /// F4.1 (rivoli-ai/conductor#1934). Streaming exec: same exec/attach
     /// surface as <see cref="ExecAsync(string, string, TimeSpan, CancellationToken)"/>
     /// (decision #17 — no new Docker-Engine verb), but each stdout/stderr
@@ -64,16 +78,21 @@ public interface IInfrastructureProvider
     /// default delegates to the buffered overload and replays the final
     /// output line-by-line — correct for providers that can't stream
     /// incrementally; Docker overrides for a true live tail.
+    ///
+    /// <paramref name="workingDir"/> carries the same first-class working
+    /// directory as the buffered overload (exec working-dir feature);
+    /// null/empty ⇒ no working directory (pre-existing behaviour).
     /// </summary>
     async Task<ExecResult> ExecStreamingAsync(
         string externalId,
         string command,
         TimeSpan timeout,
         Action<ExecOutputChunk> onLine,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? workingDir = null)
     {
         ArgumentNullException.ThrowIfNull(onLine);
-        var result = await ExecAsync(externalId, command, timeout, ct);
+        var result = await ExecAsync(externalId, command, timeout, workingDir, ct);
         Replay(result.StdOut, ExecStreamKind.Stdout, onLine);
         Replay(result.StdErr, ExecStreamKind.Stderr, onLine);
         return result;

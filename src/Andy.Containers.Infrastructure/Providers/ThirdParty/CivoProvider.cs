@@ -186,8 +186,14 @@ public class CivoProvider : IInfrastructureProvider
         return ExecAsync(externalId, command, TimeSpan.FromSeconds(30), ct);
     }
 
-    public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
+    public Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, CancellationToken ct)
+        => ExecAsync(externalId, command, timeout, workingDir: null, ct);
+
+    public async Task<ExecResult> ExecAsync(string externalId, string command, TimeSpan timeout, string? workingDir, CancellationToken ct)
     {
+        // No native working-dir flag on this exec path — wrap via
+        // `cd '<dir>' && ` (exec working-dir feature). Null/empty ⇒ unchanged.
+        command = ExecWorkingDir.Wrap(command, workingDir);
         var (_, containerName) = ParseExternalId(externalId);
         var connInfo = await GetConnectionInfoAsync(externalId, ct);
 

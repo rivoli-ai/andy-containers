@@ -129,9 +129,9 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
         _containers
             .Setup(c => c.ExecStreamingAsync(
                 run.ContainerId!.Value, It.IsAny<string>(), It.IsAny<TimeSpan>(),
-                It.IsAny<Action<ExecOutputChunk>>(), It.IsAny<CancellationToken>()))
-            .Returns<Guid, string, TimeSpan, Action<ExecOutputChunk>, CancellationToken>(
-                async (_, _, _, onLine, _) =>
+                It.IsAny<Action<ExecOutputChunk>>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns<Guid, string, TimeSpan, Action<ExecOutputChunk>, CancellationToken, string?>(
+                async (_, _, _, onLine, _, _) =>
                 {
                     onLine(new ExecOutputChunk(ExecStreamKind.Stdout, "live-1"));
                     onLine(new ExecOutputChunk(ExecStreamKind.Stdout, "live-2"));
@@ -177,9 +177,9 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
         _containers
             .Setup(c => c.ExecStreamingAsync(
                 containerId, It.IsAny<string>(), It.IsAny<TimeSpan>(),
-                It.IsAny<Action<ExecOutputChunk>>(), It.IsAny<CancellationToken>()))
-            .Returns<Guid, string, TimeSpan, Action<ExecOutputChunk>, CancellationToken>(
-                (_, _, _, onLine, _) =>
+                It.IsAny<Action<ExecOutputChunk>>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns<Guid, string, TimeSpan, Action<ExecOutputChunk>, CancellationToken, string?>(
+                (_, _, _, onLine, _, _) =>
                 {
                     foreach (var (kind, line) in lines)
                     {

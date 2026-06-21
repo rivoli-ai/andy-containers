@@ -219,6 +219,41 @@ public class ContainersControllerTests : IDisposable
 
         var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
         okResult.Value.Should().Be(execResult);
+
+        // Backward compat: no WorkingDir ⇒ the byte-identical default-timeout
+        // overload, NOT the working-dir-aware one.
+        _mockService.Verify(s => s.ExecAsync(id, "echo hello", It.IsAny<CancellationToken>()), Times.Once);
+        _mockService.Verify(s => s.ExecAsync(
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    // exec working-dir feature. A request carrying WorkingDir routes through
+    // the working-dir-aware overload (Docker native -w / cd wrap downstream),
+    // passing the directory and honouring the request's TimeoutSeconds.
+    [Fact]
+    public async Task Exec_WithWorkingDir_RoutesThroughWorkingDirOverload()
+    {
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "test", OwnerId = "test-user" };
+        var execResult = new ExecResult { ExitCode = 0, StdOut = "/workspace" };
+        _mockService
+            .Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+        _mockService
+            .Setup(s => s.ExecAsync(id, "pwd", TimeSpan.FromSeconds(45), "/workspace", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(execResult);
+
+        var result = await _controller.Exec(
+            id, new ExecRequest { Command = "pwd", TimeoutSeconds = 45, WorkingDir = "/workspace" },
+            CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Subject.Value.Should().Be(execResult);
+        _mockService.Verify(
+            s => s.ExecAsync(id, "pwd", TimeSpan.FromSeconds(45), "/workspace", It.IsAny<CancellationToken>()),
+            Times.Once);
+        // The no-working-dir overload must NOT be used on this path.
+        _mockService.Verify(s => s.ExecAsync(id, "pwd", It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

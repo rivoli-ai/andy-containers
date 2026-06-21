@@ -81,8 +81,22 @@ public sealed class ContainersClient
     }
 
     public async Task<ExecResultDto> ExecAsync(string id, string command, CancellationToken ct = default)
+        => await ExecAsync(id, command, workingDir: null, ct);
+
+    /// <summary>
+    /// Runs <paramref name="command"/> inside the container. When
+    /// <paramref name="workingDir"/> is non-empty the command runs in that
+    /// directory (the repo checkout, e.g. <c>/workspace</c>) — exec working-dir
+    /// feature. Null/empty ⇒ the image's default WORKDIR (the historical
+    /// behaviour), and the field is omitted from the request body so the wire
+    /// shape is byte-identical to the pre-feature request.
+    /// </summary>
+    public async Task<ExecResultDto> ExecAsync(string id, string command, string? workingDir, CancellationToken ct = default)
     {
-        var r = await _http.PostAsJsonAsync($"api/containers/{id}/exec", new { command }, _json, ct);
+        object body = string.IsNullOrWhiteSpace(workingDir)
+            ? new { command }
+            : new { command, workingDir };
+        var r = await _http.PostAsJsonAsync($"api/containers/{id}/exec", body, _json, ct);
         await EnsureSuccessAsync(r, ct);
         return (await r.Content.ReadFromJsonAsync<ExecResultDto>(_json, ct))!;
     }
