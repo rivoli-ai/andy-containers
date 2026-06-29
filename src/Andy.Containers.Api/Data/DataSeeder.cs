@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Andy.Containers.Api.Services;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Models;
 using Microsoft.EntityFrameworkCore;
@@ -39,10 +40,12 @@ public static class DataSeeder
         "elif command -v pacman >/dev/null 2>&1; then " +
             "pacman -Sy --noconfirm git curl wget ca-certificates openssh dtach tmux; " +
         "fi; " +
-        // Install GitHub CLI (gh) — universal tarball approach works on all distros
-        "GHARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && " +
-        "curl -fsSL https://github.com/cli/cli/releases/latest/download/gh_$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | grep -o '\"tag_name\":\"v[^\"]*' | cut -d'v' -f2)_linux_${GHARCH}.tar.gz 2>/dev/null | " +
-        "tar xzf - --strip-components=1 -C /usr/local 2>/dev/null || true; " +
+        // Install GitHub CLI (gh) — reliable apt-keyring method (Debian/Ubuntu)
+        // with a tarball fallback. Shared verbatim with the run-dispatch
+        // ensure-gh step so the install logic can't diverge. The trailing
+        // `command -v gh` is the install's own check; swallow its exit here so
+        // a no-network provision doesn't abort the rest of post-create.
+        ContainerToolProvisioner.GitHubCliInstallScript + " || true; " +
         // Configure and start SSH (use ; not && so failures don't stop the chain)
         "mkdir -p /run/sshd; " +
         "sed -i 's/#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null; " +

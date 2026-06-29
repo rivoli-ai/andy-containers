@@ -167,6 +167,9 @@ try
     // (create-time) AND the headless runner (run-dispatch) so a
     // sourceControl.github.pat saved after a container exists still reaches it.
     builder.Services.AddScoped<IGitCredentialMaterializer, GitCredentialMaterializer>();
+    // Ensures the GitHub CLI (gh) is present in a container before the agent /
+    // verifier shell out to it (idempotent; covers existing + new containers).
+    builder.Services.AddScoped<IContainerToolProvisioner, ContainerToolProvisioner>();
     builder.Services.AddScoped<IGitCloneService, GitCloneService>();
     builder.Services.AddScoped<IGitRepositoryProbeService, GitRepositoryProbeService>();
     // F6.1 (rivoli-ai/conductor#1940): per-run branch + git-diff endpoint.

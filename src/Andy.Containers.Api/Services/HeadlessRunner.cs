@@ -54,6 +54,9 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // reaches a long-lived task container. Optional so standalone/test
     // constructions of the runner are unaffected.
     private readonly IGitCredentialMaterializer? _gitCredentialMaterializer;
+    // 2026-06-29. Ensures the GitHub CLI (gh) is present before the agent /
+    // verifier shell out to it. Optional for the same reason.
+    private readonly IContainerToolProvisioner? _toolProvisioner;
 
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
     // and exits with code 4 (→ RunEventKind.Timeout) when its CTS fires.
@@ -79,7 +82,8 @@ public sealed class HeadlessRunner : IHeadlessRunner
         IRunOutputBus? outputBus = null,
         IProxyTokenService? proxyTokenService = null,
         Microsoft.Extensions.Configuration.IConfiguration? configuration = null,
-        IGitCredentialMaterializer? gitCredentialMaterializer = null)
+        IGitCredentialMaterializer? gitCredentialMaterializer = null,
+        IContainerToolProvisioner? toolProvisioner = null)
     {
         _containers = containers;
         _db = db;
@@ -92,6 +96,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
         _proxyTokenService = proxyTokenService;
         _configuration = configuration;
         _gitCredentialMaterializer = gitCredentialMaterializer;
+        _toolProvisioner = toolProvisioner;
     }
 
     public async Task<HeadlessRunOutcome> StartAsync(Run run, string configPath, CancellationToken ct = default)
@@ -159,6 +164,24 @@ public sealed class HeadlessRunner : IHeadlessRunner
             {
                 _logger.LogWarning(ex,
                     "Git credential (re)materialisation failed for Run {RunId} / container {ContainerId}; git push / gh pr create may fail.",
+                    run.Id, containerId);
+            }
+        }
+
+        // 2026-06-29. Ensure the GitHub CLI is present before the agent (and
+        // later the verifier) shell out to `gh`. Idempotent + best-effort: a
+        // bare ubuntu image / a provisioning miss otherwise leaves `gh` absent,
+        // and `gh pr view` fails as the misleading [PR-VERIFY-002] "no open PR".
+        if (_toolProvisioner is not null)
+        {
+            try
+            {
+                await _toolProvisioner.EnsureGitHubCliAsync(containerId, execToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "GitHub CLI ensure failed for Run {RunId} / container {ContainerId}; gh pr create / gh pr view may fail.",
                     run.Id, containerId);
             }
         }
