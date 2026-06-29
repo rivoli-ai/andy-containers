@@ -134,9 +134,62 @@ public sealed class GitCredentialMaterializer : IGitCredentialMaterializer
             return new GitCredentialMaterializationResult(merged.Count, usedFallback, false);
         }
 
+        // The block above wraps its writes in `su - {containerUser}` and exports
+        // GH_TOKEN via ~/.bashrc — which only an INTERACTIVE LOGIN shell sources.
+        // But the PR-author agent and the PR verifier run `git`/`gh` via a bare,
+        // NON-login `sh -c` as the container's exec user (root in the agent
+        // images), so neither the containerUser's files nor the ~/.bashrc export
+        // are visible to them — gh reports "populate the GH_TOKEN environment
+        // variable" and the verifier fails [PR-VERIFY-001]. Deliver the GitHub
+        // credential ENV-INDEPENDENTLY to the exec user: git's credential-store
+        // (read via ~/.gitconfig, no env) and gh's own ~/.config/gh/hosts.yml
+        // (read unconditionally, no env). Idempotent (files overwritten).
+        var gitHub = merged.FirstOrDefault(ContainerProvisioningWorker.IsGitHubCredential);
+        if (gitHub is not null)
+        {
+            var rootScript = BuildExecUserGitHubAuthScript(gitHub.PlaintextToken);
+            var rootResult = await _containers.ExecAsync(containerId, rootScript, TimeSpan.FromMinutes(1), ct);
+            if (rootResult.ExitCode != 0)
+            {
+                _logger.LogWarning(
+                    "Env-independent gh/git credential setup for the exec user exited {ExitCode} in container {ContainerId}: {StdErr}",
+                    rootResult.ExitCode, containerId, rootResult.StdErr);
+            }
+        }
+
         _logger.LogInformation(
             "Materialised {Count} git credential(s) into container {ContainerId} as user {User} (settings-PAT fallback: {Fallback}).",
             merged.Count, containerId, containerUser, usedFallback);
         return new GitCredentialMaterializationResult(merged.Count, usedFallback, true);
     }
+
+    /// <summary>
+    /// Builds a script (run as the container's exec user — root in the agent
+    /// images) that authenticates BOTH <c>git</c> and <c>gh</c> for a
+    /// non-login <c>sh -c</c> invocation, with NO reliance on environment vars:
+    /// <list type="bullet">
+    /// <item><c>git</c>: <c>credential.helper store</c> + <c>$HOME/.git-credentials</c>
+    /// (git reads <c>~/.gitconfig</c> + the store file regardless of shell).</item>
+    /// <item><c>gh</c>: <c>$HOME/.config/gh/hosts.yml</c> (gh reads its config file
+    /// unconditionally — this is the env-independent equivalent of GH_TOKEN).</item>
+    /// </list>
+    /// </summary>
+    internal static string BuildExecUserGitHubAuthScript(string token)
+    {
+        var t = ShellSingleQuote(token);
+        return
+            "set -e; " +
+            "H=${HOME:-/root}; " +
+            "git config --global credential.helper store; " +
+            $"printf 'https://x-access-token:%s@github.com\\n' {t} > \"$H/.git-credentials\"; " +
+            "chmod 600 \"$H/.git-credentials\"; " +
+            "mkdir -p \"$H/.config/gh\"; " +
+            $"printf 'github.com:\\n    oauth_token: %s\\n    git_protocol: https\\n' {t} > \"$H/.config/gh/hosts.yml\"; " +
+            "chmod 600 \"$H/.config/gh/hosts.yml\"";
+    }
+
+    /// <summary>POSIX single-quote escaping: wrap in '…', rendering any
+    /// embedded single quote as the standard <c>'\''</c> sequence.</summary>
+    private static string ShellSingleQuote(string value)
+        => "'" + value.Replace("'", "'\\''") + "'";
 }

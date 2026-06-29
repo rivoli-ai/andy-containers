@@ -45,9 +45,9 @@ public class GitCredentialMaterializerTests
         secrets.Setup(s => s.GetGitHubPatAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("ghp_test_token_value");
 
-        string? injected = null;
+        var scripts = new List<string>();
         containers.Setup(c => c.ExecAsync(Container, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, TimeSpan, CancellationToken>((_, script, _, _) => injected = script)
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, script, _, _) => scripts.Add(script))
             .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var result = await sut.MaterializeAsync(Container, containerUser: "agent", ownerId: "andy-tasks-api");
@@ -56,13 +56,49 @@ public class GitCredentialMaterializerTests
         result.UsedSettingsPatFallback.Should().BeTrue();
         result.CredentialCount.Should().Be(1);
 
-        injected.Should().NotBeNull();
-        // The token must reach the container as BOTH the git credential.helper
-        // store (for `git push`) and GH_TOKEN (for `gh pr create`).
-        injected!.Should().Contain("ghp_test_token_value");
-        injected!.Should().Contain("export GH_TOKEN=");
-        injected!.Should().Contain("credential.helper store");
-        containers.Verify(c => c.ExecAsync(Container, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+        // The interactive (containerUser/login-shell) injection: git credential
+        // store + GH_TOKEN export in ~/.bashrc.
+        var login = scripts.FirstOrDefault(s => s.Contains("export GH_TOKEN="));
+        login.Should().NotBeNull();
+        login!.Should().Contain("ghp_test_token_value");
+        login!.Should().Contain("credential.helper store");
+    }
+
+    [Fact]
+    public async Task Also_delivers_env_independent_gh_and_git_auth_to_the_exec_user()
+    {
+        var (sut, _, secrets, containers) = Build();
+        secrets.Setup(s => s.GetGitHubPatAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("ghp_test_token_value");
+
+        var scripts = new List<string>();
+        containers.Setup(c => c.ExecAsync(Container, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, s, _, _) => scripts.Add(s))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        await sut.MaterializeAsync(Container, "agent", "andy-tasks-api");
+
+        // A second exec must deliver the credential the way a NON-login `sh -c`
+        // (the agent + verifier) actually reads it: gh's config file + git's
+        // credential store, NOT a ~/.bashrc GH_TOKEN export.
+        var envIndependent = scripts.FirstOrDefault(s => s.Contains(".config/gh/hosts.yml"));
+        envIndependent.Should().NotBeNull("gh reads ~/.config/gh/hosts.yml regardless of shell/env");
+        envIndependent!.Should().Contain("oauth_token:");
+        envIndependent!.Should().Contain("ghp_test_token_value");
+        envIndependent!.Should().Contain("credential.helper store");
+        envIndependent!.Should().Contain(".git-credentials");
+    }
+
+    [Fact]
+    public void ExecUser_auth_script_is_env_independent_and_safely_quoted()
+    {
+        var script = GitCredentialMaterializer.BuildExecUserGitHubAuthScript("tok'with'quote");
+        // No reliance on a login shell / GH_TOKEN export.
+        script.Should().Contain("hosts.yml");
+        script.Should().Contain("credential.helper store");
+        script.Should().NotContain("bashrc");
+        // The single-quote in the token is POSIX-escaped, not left to break the shell.
+        script.Should().Contain("'\\''");
     }
 
     [Fact]
