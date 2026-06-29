@@ -236,72 +236,17 @@ public class ContainerProvisioningWorker : BackgroundService
             // + `gh pr create` are impossible and the PR-deliverable verifier
             // fails with [PR-VERIFY-001]. The injector also exports GH_TOKEN so
             // the GitHub CLI authenticates (git push uses the helper store).
+            // Single-sourced with the run-dispatch path (HeadlessRunner) via
+            // IGitCredentialMaterializer, so the "user creds + sourceControl.
+            // github.pat fallback" contract can't diverge between create-time
+            // and run-time injection. Best-effort: a failure must not fail the
+            // container — the template clone already succeeded, and a missing
+            // credential only degrades subsequent manual clones / agent pushes.
             try
             {
-                var credentials = new List<DecryptedGitCredential>();
-                if (!string.IsNullOrEmpty(job.OwnerId))
-                {
-                    var credentialService = scope.ServiceProvider.GetRequiredService<IGitCredentialService>();
-                    credentials.AddRange(
-                        await credentialService.ListWithDecryptedTokensAsync(job.OwnerId, stoppingToken));
-                }
-
-                var fallbackInjected = false;
-                if (!credentials.Any(c => IsGitHubCredential(c)))
-                {
-                    var secretResolver = scope.ServiceProvider.GetRequiredService<ISourceControlSecretResolver>();
-                    string? pat = null;
-                    try
-                    {
-                        pat = await secretResolver.GetGitHubPatAsync(stoppingToken);
-                    }
-                    catch (Exception secretEx)
-                    {
-                        _logger.LogWarning(secretEx,
-                            "Failed to resolve sourceControl.github.pat from andy-settings for container {ContainerId} — proceeding without a GitHub fallback credential.",
-                            job.ContainerId);
-                    }
-
-                    var fallback = BuildGitHubFallbackCredential(pat);
-                    if (fallback is not null)
-                    {
-                        credentials.Add(fallback);
-                        fallbackInjected = true;
-                        _logger.LogInformation(
-                            "Using andy-settings sourceControl.github.pat as the GitHub credential fallback for container {ContainerId}.",
-                            job.ContainerId);
-                    }
-                }
-
-                var injectionScript = GitCredentialInjector.BuildInjectionScript(job.ContainerUser, credentials);
-                if (injectionScript is not null)
-                {
-                    var containerService = scope.ServiceProvider.GetRequiredService<IContainerService>();
-                    var credResult = await containerService.ExecAsync(job.ContainerId, injectionScript, TimeSpan.FromMinutes(1), stoppingToken);
-                    if (credResult.ExitCode != 0)
-                    {
-                        _logger.LogWarning(
-                            "Git credential injection exited with {ExitCode} for container {ContainerId}: {StdErr}",
-                            credResult.ExitCode, job.ContainerId, credResult.StdErr);
-                    }
-                    else
-                    {
-                        _logger.LogInformation(
-                            "Materialised {Count} git credential(s) into container {ContainerId} as user {User} (settings-PAT fallback: {Fallback})",
-                            credentials.Count, job.ContainerId, job.ContainerUser, fallbackInjected);
-                    }
-                }
-                else
-                {
-                    // No credential at all reached the container. A `git push` /
-                    // `gh pr create` from inside will fail. Surface it loudly so
-                    // the PR-deliverable failure ([PR-VERIFY-001]) is explainable
-                    // and the user knows to set sourceControl.github.pat.
-                    _logger.LogWarning(
-                        "No git credential available for container {ContainerId} (no user credential and no sourceControl.github.pat). " +
-                        "git push / gh pr create will fail; set the sourceControl.github.pat secret (a PAT with 'repo' scope) to enable PR creation.",
-                        job.ContainerId);
-                }
+                var materializer = scope.ServiceProvider.GetRequiredService<IGitCredentialMaterializer>();
+                await materializer.MaterializeAsync(
+                    job.ContainerId, job.ContainerUser, job.OwnerId, stoppingToken);
             }
             catch (Exception credEx)
             {
@@ -602,7 +547,7 @@ public class ContainerProvisioningWorker : BackgroundService
     /// GitHub HTTPS: a PAT/OAuth token scoped to github.com (or host-agnostic).
     /// Used to decide whether the andy-settings PAT fallback is needed.
     /// </summary>
-    private static bool IsGitHubCredential(DecryptedGitCredential c) =>
+    internal static bool IsGitHubCredential(DecryptedGitCredential c) =>
         c.CredentialType is GitCredentialType.PersonalAccessToken or GitCredentialType.OAuthToken
         && (string.IsNullOrWhiteSpace(c.GitHost)
             || c.GitHost.Trim().Equals("github.com", StringComparison.OrdinalIgnoreCase));

@@ -49,6 +49,11 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // own OPENAI_API_KEY in place (pre-#2231 behaviour).
     private readonly IProxyTokenService? _proxyTokenService;
     private readonly Microsoft.Extensions.Configuration.IConfiguration? _configuration;
+    // 2026-06-29. (Re)materialises git credentials into the container at run
+    // dispatch so a sourceControl.github.pat saved AFTER provisioning still
+    // reaches a long-lived task container. Optional so standalone/test
+    // constructions of the runner are unaffected.
+    private readonly IGitCredentialMaterializer? _gitCredentialMaterializer;
 
     // Outer-watchdog grace: AQ3 honours limits.timeout_seconds internally
     // and exits with code 4 (→ RunEventKind.Timeout) when its CTS fires.
@@ -73,7 +78,8 @@ public sealed class HeadlessRunner : IHeadlessRunner
         IInputArtifactStager? inputStager = null,
         IRunOutputBus? outputBus = null,
         IProxyTokenService? proxyTokenService = null,
-        Microsoft.Extensions.Configuration.IConfiguration? configuration = null)
+        Microsoft.Extensions.Configuration.IConfiguration? configuration = null,
+        IGitCredentialMaterializer? gitCredentialMaterializer = null)
     {
         _containers = containers;
         _db = db;
@@ -85,6 +91,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
         _outputBus = outputBus;
         _proxyTokenService = proxyTokenService;
         _configuration = configuration;
+        _gitCredentialMaterializer = gitCredentialMaterializer;
     }
 
     public async Task<HeadlessRunOutcome> StartAsync(Run run, string configPath, CancellationToken ct = default)
@@ -128,6 +135,33 @@ public sealed class HeadlessRunner : IHeadlessRunner
         // throw) wakes RunsController.Cancel's WaitForTerminalAsync.
         using var registration = _cancellation.Register(run.Id, ct);
         var execToken = registration.Token;
+
+        // 2026-06-29. (Re)materialise git credentials into the container BEFORE
+        // spawning the agent — NOT only at provisioning. A task container is
+        // one-per-workspace and long-lived; if the operator saved
+        // sourceControl.github.pat AFTER it was provisioned, the PAT never
+        // reached it and every PR-author run committed locally but failed to
+        // push ([PR-VERIFY-002]). The injection is idempotent and best-effort:
+        // a failure here must never block the run (the agent may still do work
+        // that doesn't need to push).
+        if (_gitCredentialMaterializer is not null)
+        {
+            try
+            {
+                var container = await _db.Containers.FindAsync(new object[] { containerId }, execToken);
+                if (container is not null)
+                {
+                    await _gitCredentialMaterializer.MaterializeAsync(
+                        containerId, container.ContainerUser, container.OwnerId, execToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Git credential (re)materialisation failed for Run {RunId} / container {ContainerId}; git push / gh pr create may fail.",
+                    run.Id, containerId);
+            }
+        }
 
         // EX.7 (rivoli-ai/andy-containers#328). Stage cross-container input
         // artifacts into /workspace/.andy/inputs/ BEFORE spawning andy-cli.

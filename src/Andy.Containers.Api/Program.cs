@@ -163,6 +163,10 @@ try
         .SetApplicationName("andy-containers")
         .PersistKeysToDbContext<ContainersDbContext>();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
+    // Shared git-credential materialiser: used by the provisioning worker
+    // (create-time) AND the headless runner (run-dispatch) so a
+    // sourceControl.github.pat saved after a container exists still reaches it.
+    builder.Services.AddScoped<IGitCredentialMaterializer, GitCredentialMaterializer>();
     builder.Services.AddScoped<IGitCloneService, GitCloneService>();
     builder.Services.AddScoped<IGitRepositoryProbeService, GitRepositoryProbeService>();
     // F6.1 (rivoli-ai/conductor#1940): per-run branch + git-diff endpoint.
