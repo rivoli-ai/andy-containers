@@ -163,7 +163,10 @@ public class ContainersController : ControllerBase
         try
         {
             var container = await _containerService.GetContainerAsync(id, ct);
-            if (!CanAccess(container))
+            // #366: read-scoped access (owner | admin | same-org member) so a
+            // human session can poll a goal-execution container owned by the
+            // goal owner. Write/lifecycle verbs keep strict owner-equality.
+            if (!await CanReadAsync(container, ct))
                 return Forbid();
 
             // SM.2.6: attach correlation id header to every 200 response so
@@ -883,6 +886,38 @@ public class ContainersController : ControllerBase
     {
         if (_currentUser.IsAdmin()) return true;
         return container.OwnerId == _currentUser.GetUserId();
+    }
+
+    /// <summary>
+    /// READ-only access check (rivoli-ai/andy-containers#366). Strict
+    /// owner-equality (<see cref="CanAccess"/>) is correct for write /
+    /// lifecycle verbs, but it 403s the human session that polls
+    /// <c>GET /api/containers/{id}</c> for a goal-execution container: those
+    /// containers are stamped (via the M2M on-behalf-of path, commit 5305232)
+    /// with the GOAL owner's id, which need not equal the id of the human
+    /// principal now signed in (a <c>dev-user</c> / fallback-claim mismatch,
+    /// or a teammate viewing the same goal). The UI must reflect system state,
+    /// so a non-owner who BELONGS TO THE SAME ORGANISATION as the container is
+    /// allowed to READ it.
+    ///
+    /// This deliberately mirrors the existing org-membership scoping already
+    /// used by the list endpoint (<c>List</c> / <c>Create</c> -&gt;
+    /// <c>IOrganizationMembershipService.IsMemberAsync</c>) and by
+    /// <c>ContainerAuthorizationService.CanAccessContainerAsync</c>, so a
+    /// container that is already visible in your fleet list by org-membership
+    /// can also be read individually. It does NOT over-expose: membership is
+    /// proven by the <c>org_id</c>/<c>org_ids</c> JWT claim or an andy-rbac
+    /// lookup, so a user with no shared organisation still 403s. Containers
+    /// with no <c>OrganizationId</c> remain owner/admin-only — there is no
+    /// broadening for them. Write / lifecycle verbs keep calling the strict
+    /// synchronous <see cref="CanAccess"/>.
+    /// </summary>
+    private async Task<bool> CanReadAsync(Container container, CancellationToken ct)
+    {
+        if (CanAccess(container)) return true;
+        if (container.OrganizationId.HasValue)
+            return await _orgMembership.IsMemberAsync(_currentUser.GetUserId(), container.OrganizationId.Value, ct);
+        return false;
     }
 
     /// <summary>
