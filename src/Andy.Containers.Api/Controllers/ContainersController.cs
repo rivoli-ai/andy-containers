@@ -204,9 +204,28 @@ public class ContainersController : ControllerBase
     [RequirePermission("container:write")]
     public async Task<IActionResult> Create([FromBody] CreateContainerRequest request, CancellationToken ct)
     {
-        request.OwnerId = _currentUser.GetUserId();
-        request.OwnerEmail = _currentUser.GetEmail();
-        request.OwnerPreferredUsername = _currentUser.GetDisplayName();
+        // On-behalf-of ownership: a trusted SERVICE caller (e.g. andy-tasks
+        // creating a goal-execution container via M2M) may set OwnerId to the
+        // originating human so that human can see + manage the container in the
+        // UI (CanAccess checks OwnerId == caller). Without this the container
+        // was stamped with the SERVICE principal's id and the human's session
+        // got 403 reading its own goal's container. A human caller can never
+        // spoof ownership — their OwnerId is always forced to their own id.
+        var requestedOwnerId = request.OwnerId;
+        if (_currentUser.IsServiceAccount() && !string.IsNullOrWhiteSpace(requestedOwnerId))
+        {
+            request.OwnerId = requestedOwnerId;
+            // The service does not carry the human's profile; leave email /
+            // username unset rather than stamping the service's own.
+            request.OwnerEmail = null;
+            request.OwnerPreferredUsername = null;
+        }
+        else
+        {
+            request.OwnerId = _currentUser.GetUserId();
+            request.OwnerEmail = _currentUser.GetEmail();
+            request.OwnerPreferredUsername = _currentUser.GetDisplayName();
+        }
         if (request.Source == CreationSource.Unknown)
             request.Source = CreationSource.RestApi;
         if (string.IsNullOrEmpty(request.ClientInfo) && HttpContext?.Request?.Headers.UserAgent.Count > 0)

@@ -149,6 +149,62 @@ public class ContainersControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_ServiceCaller_HonoursPassedOwnerId_OnBehalfOf()
+    {
+        // A trusted M2M service (e.g. andy-tasks) creating a goal-execution
+        // container on behalf of the goal's human owner: the passed OwnerId is
+        // honoured so the human owns + can read the container (CanAccess).
+        _mockCurrentUser.Setup(u => u.IsServiceAccount()).Returns(true);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("andy-tasks-api");
+
+        var request = new CreateContainerRequest { Name = "goal-container", OwnerId = "human-user-123" };
+        _mockService
+            .Setup(s => s.CreateContainerAsync(It.IsAny<CreateContainerRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Container { Id = Guid.NewGuid(), Name = "goal-container", OwnerId = "human-user-123" });
+
+        await _controller.Create(request, CancellationToken.None);
+
+        // The owner stamped on the container is the human, NOT the service.
+        request.OwnerId.Should().Be("human-user-123");
+    }
+
+    [Fact]
+    public async Task Create_HumanCaller_CannotSpoofOwnership_ForcedToOwnId()
+    {
+        // A human caller's OwnerId is always forced to their own id — they can
+        // never create a container owned by someone else.
+        _mockCurrentUser.Setup(u => u.IsServiceAccount()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("real-human");
+
+        var request = new CreateContainerRequest { Name = "c", OwnerId = "victim-user" };
+        _mockService
+            .Setup(s => s.CreateContainerAsync(It.IsAny<CreateContainerRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Container { Id = Guid.NewGuid(), Name = "c", OwnerId = "real-human" });
+
+        await _controller.Create(request, CancellationToken.None);
+
+        request.OwnerId.Should().Be("real-human");
+    }
+
+    [Fact]
+    public async Task Create_ServiceCaller_WithNoOwnerId_FallsBackToOwnId()
+    {
+        // A service call that does NOT pass an owner is still owned by the
+        // caller (no behaviour change for non-on-behalf-of service calls).
+        _mockCurrentUser.Setup(u => u.IsServiceAccount()).Returns(true);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("andy-tasks-api");
+
+        var request = new CreateContainerRequest { Name = "c", OwnerId = null };
+        _mockService
+            .Setup(s => s.CreateContainerAsync(It.IsAny<CreateContainerRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Container { Id = Guid.NewGuid(), Name = "c", OwnerId = "andy-tasks-api" });
+
+        await _controller.Create(request, CancellationToken.None);
+
+        request.OwnerId.Should().Be("andy-tasks-api");
+    }
+
+    [Fact]
     public async Task Start_ShouldCallServiceAndReturnContainer()
     {
         var id = Guid.NewGuid();
