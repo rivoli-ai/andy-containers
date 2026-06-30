@@ -1016,6 +1016,101 @@ public class HeadlessRunnerTests : IDisposable
         File.Delete(configPath);
     }
 
+    // ===== conductor#2273: per-task commit (durable artifact handoff) =====
+    // A SUCCESSFUL run must commit the agent's working-tree changes to the
+    // per-run branch so multi-task plan execution accumulates a real commit
+    // chain (and the final PR has something to push) instead of relying on an
+    // uncommitted tree surviving the next task's `git checkout -B`.
+
+    [Fact]
+    public async Task StartAsync_Success_CommitsWorkingTreeToPerRunBranch()
+    {
+        var run = SeedRun();
+        var containerId = run.ContainerId!.Value;
+        SeedClonedRepo(containerId, "/workspace");
+        var commands = CaptureExec(exitCode: 0, stdOut: "ok");
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded);
+        var commit = commands.Should()
+            .ContainSingle(c => c.Contains("git -C") && c.Contains("commit")).Subject;
+        commit.Should().Contain("add -A");
+        commit.Should().Contain("/workspace");
+        commit.Should().Contain($"andy run {run.Id}", "the commit message must identify the run");
+        // backup-spam strip (#2273 fix 3) is part of the same atomic command
+        commit.Should().Contain("*.backup.*");
+        commit.Should().Contain("-delete");
+    }
+
+    [Fact]
+    public async Task StartAsync_Failed_DoesNotCommit()
+    {
+        var run = SeedRun();
+        SeedClonedRepo(run.ContainerId!.Value, "/workspace");
+        var commands = CaptureExec(exitCode: 1, stdErr: "boom");
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Failed);
+        commands.Should().NotContain(c => c.Contains("git -C") && c.Contains("commit"),
+            "a failed run must not commit partial work");
+    }
+
+    [Fact]
+    public async Task StartAsync_Success_NoClonedRepos_DoesNotCommit()
+    {
+        var run = SeedRun();
+        var commands = CaptureExec(exitCode: 0, stdOut: "ok");
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded);
+        commands.Should().NotContain(c => c.Contains("commit"),
+            "with no cloned repos there is nothing to commit");
+    }
+
+    [Fact]
+    public async Task StartAsync_Success_OnlyCommitsClonedRepos()
+    {
+        var run = SeedRun();
+        var containerId = run.ContainerId!.Value;
+        SeedClonedRepo(containerId, "/workspace", GitCloneStatus.Cloned);
+        SeedClonedRepo(containerId, "/pending-repo", GitCloneStatus.Pending);
+        var commands = CaptureExec(exitCode: 0, stdOut: "ok");
+
+        await _runner.StartAsync(run, _configPath);
+
+        var commitCommands = commands.Where(c => c.Contains("git -C") && c.Contains("commit")).ToList();
+        commitCommands.Should().ContainSingle("only the Cloned repo is committed");
+        commitCommands[0].Should().Contain("/workspace");
+        commitCommands[0].Should().NotContain("/pending-repo");
+    }
+
+    private void SeedClonedRepo(Guid containerId, string targetPath, GitCloneStatus status = GitCloneStatus.Cloned)
+    {
+        _db.ContainerGitRepositories.Add(new ContainerGitRepository
+        {
+            Id = Guid.NewGuid(),
+            ContainerId = containerId,
+            Url = "https://example.com/repo.git",
+            TargetPath = targetPath,
+            CloneStatus = status,
+        });
+        _db.SaveChanges();
+    }
+
+    private List<string> CaptureExec(int exitCode, string? stdOut = null, string? stdErr = null)
+    {
+        var commands = new List<string>();
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => commands.Add(cmd))
+            .ReturnsAsync(new ExecResult { ExitCode = exitCode, StdOut = stdOut, StdErr = stdErr });
+        return commands;
+    }
+
     private static string WriteRealConfigWithInputs(params HeadlessInput[] inputs)
     {
         var path = Path.Combine(Path.GetTempPath(), $"ex7-test-{Guid.NewGuid():N}.json");

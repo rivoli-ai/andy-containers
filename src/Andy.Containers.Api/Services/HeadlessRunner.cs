@@ -7,6 +7,7 @@ using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Andy.Containers.Storage;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Andy.Containers.Api.Services;
@@ -70,6 +71,16 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // a defensive default — every well-formed config carries
     // limits.timeout_seconds.
     private static readonly TimeSpan FallbackExecTimeout = TimeSpan.FromMinutes(15);
+
+    // conductor#2273. Ceiling for the post-success per-task commit exec. The
+    // command is `find … -delete` + `git add -A` + `git commit`; even a large
+    // working tree stages and commits well within a minute.
+    private static readonly TimeSpan CommitTimeout = TimeSpan.FromSeconds(60);
+
+    // Sentinel echoed by the commit command when `git diff --cached` finds an
+    // empty index, so the runner can distinguish "nothing to commit" (benign)
+    // from "committed" without parsing git's localised output.
+    private const string NoChangesMarker = "__ANDY_NO_CHANGES_TO_COMMIT__";
 
     public HeadlessRunner(
         IContainerService containers,
@@ -341,6 +352,24 @@ public sealed class HeadlessRunner : IHeadlessRunner
         _logger.LogInformation(
             "Run {RunId} exited with code {ExitCode} → {Kind}/{Status} after {Duration}s",
             run.Id, result.ExitCode, kind, status, durationSeconds);
+
+        // conductor#2273 (robust artifact handoff). On a SUCCESSFUL run,
+        // commit the agent's working-tree changes to the per-run branch
+        // BEFORE we collect artifacts and terminate. Without this the
+        // multi-task plan only "works" because `git checkout -B` happens to
+        // preserve an uncommitted working tree from one task to the next —
+        // fragile (a conflicting checkout silently drops work) and it leaves
+        // the final PR branch with ZERO commits, so the PR-author task has
+        // nothing real to push. Committing turns the implicit FS-continuity
+        // into a durable, inspectable chain: each per-run branch is created
+        // at the prior branch's HEAD (RunBranchService `checkout -B`), so the
+        // commits accumulate and the PR carries the whole goal's history.
+        // Best-effort: a commit failure must never turn a Succeeded run into
+        // a Failed one (the FS-continuity fallback still holds).
+        if (status == RunStatus.Succeeded && run.ContainerId is { } commitContainerId)
+        {
+            await CommitRunWorkAsync(run, commitContainerId, ct);
+        }
 
         // #2204. A non-zero exec used to surface only the raw stderr (and
         // *nothing* when stderr was empty — e.g. an exit-code-127 "andy-cli:
@@ -853,6 +882,101 @@ public sealed class HeadlessRunner : IHeadlessRunner
         }
 
         return FallbackExecTimeout;
+    }
+
+    // conductor#2273 (robust artifact handoff). Commit the agent's
+    // working-tree changes to the per-run branch after a SUCCESSFUL run.
+    //
+    // Multi-task plan execution shares ONE container per goal and one
+    // `/workspace` working tree; today the only reason task N's output reaches
+    // task N+1 is that RunBranchService's `git checkout -B andy/run/<id>`
+    // happens to preserve an *uncommitted* tree across the per-run-branch
+    // reset. That is fragile (a conflicting checkout silently drops the work)
+    // and leaves the final PR-author branch with ZERO commits to push.
+    // Committing here makes accumulation explicit and durable: because each
+    // new per-run branch is created at the prior HEAD, the commits chain and
+    // the final PR carries the whole goal's history.
+    //
+    // Contract: best-effort and idempotent. No cloned repos, no changes, or a
+    // commit failure all leave the run Succeeded — the worst case degrades to
+    // the prior FS-continuity behaviour, never a false Failed.
+    private async Task CommitRunWorkAsync(Run run, Guid containerId, CancellationToken ct)
+    {
+        List<ContainerGitRepository> repos;
+        try
+        {
+            repos = await _db.ContainerGitRepositories
+                .Where(r => r.ContainerId == containerId && r.CloneStatus == GitCloneStatus.Cloned)
+                .OrderBy(r => r.CreatedAt)
+                .ToListAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Run {RunId}: could not enumerate cloned repos in container {ContainerId} for per-task commit; skipping.",
+                run.Id, containerId);
+            return;
+        }
+
+        if (repos.Count == 0)
+        {
+            return;
+        }
+
+        var message = $"andy run {run.Id}: task work checkpoint";
+
+        foreach (var repo in repos)
+        {
+            try
+            {
+                var q = GitCloneService.ShellQuote(repo.TargetPath);
+
+                // 1) Drop model-written safety copies (e.g.
+                //    "Foo.cs.backup.20260530212325", *.bak/*.orig/*.rej) so they
+                //    never reach the commit or the PR — mirrors andy-engine
+                //    SweBench's patch-hygiene exclusions for the same model habit.
+                // 2) Stage everything, then commit ONLY when the index is dirty
+                //    (`git diff --cached --quiet` exits 0 on a clean index, so the
+                //    `&& echo <marker>` arm fires and we skip the commit).
+                // 3) Inline `-c` identity: never mutate global git config, and
+                //    don't depend on the agent having configured user.name/email.
+                var command =
+                    $"find {q} -type f \\( -name '*.backup.*' -o -name '*.bak' -o -name '*.orig' -o -name '*.rej' \\) -not -path '*/.git/*' -delete 2>/dev/null; "
+                    + $"git -C {q} add -A && "
+                    + $"(git -C {q} diff --cached --quiet "
+                    + $"&& echo {ShellEscape(NoChangesMarker)} "
+                    + $"|| git -C {q} -c user.email='agent@andy.rivoli.ai' -c user.name='Andy Agent' commit -m {ShellEscape(message)} --no-verify)";
+
+                var result = await _containers.ExecAsync(containerId, command, CommitTimeout, ct);
+
+                if (result.ExitCode != 0)
+                {
+                    _logger.LogWarning(
+                        "Run {RunId}: per-task commit in repo {RepoPath} (container {ContainerId}) failed (exit {Exit}): {Err}",
+                        run.Id, repo.TargetPath, containerId, result.ExitCode, Tail(result.StdErr ?? string.Empty, 5, 400));
+                    continue;
+                }
+
+                if (result.StdOut?.Contains(NoChangesMarker, StringComparison.Ordinal) == true)
+                {
+                    _logger.LogInformation(
+                        "Run {RunId}: no working-tree changes to commit in repo {RepoPath}.",
+                        run.Id, repo.TargetPath);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Run {RunId}: committed task work to per-run branch in repo {RepoPath} (container {ContainerId}).",
+                        run.Id, repo.TargetPath, containerId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Run {RunId}: error committing task work in repo {RepoPath} (container {ContainerId}); skipping.",
+                    run.Id, repo.TargetPath, containerId);
+            }
+        }
     }
 
     // POSIX single-quote escape — safe for /bin/sh -c "...". Single quotes
