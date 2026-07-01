@@ -882,6 +882,15 @@ public class ContainersController : ControllerBase
     private bool CanAccess(Container container)
     {
         if (_currentUser.IsAdmin()) return true;
+        // A trusted M2M service (e.g. andy-tasks executing a goal plan) has
+        // already passed the action's [RequirePermission] gate. Owner-equality
+        // models HUMAN ownership ("containers the principal doesn't own are
+        // invisible", decision #17); a service principal acting on-behalf-of a
+        // human (OBO) must not be re-denied here, or andy-tasks 403s on /exec
+        // against the very goal-container it just created — the spawn worked,
+        // the verifier/next-task exec was forbidden a second later. Permission
+        // scoping remains the gate for what a service may do.
+        if (_currentUser.IsServiceAccount()) return true;
         return container.OwnerId == _currentUser.GetUserId();
     }
 

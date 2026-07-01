@@ -204,6 +204,72 @@ public class ContainersControllerTests : IDisposable
         request.OwnerId.Should().Be("andy-tasks-api");
     }
 
+    // --- CanAccess / exec authorization (the GOAL-39 exec 403) ---
+    // A goal-execution container is OBO-stamped OwnerId = the human. andy-tasks
+    // (a trusted M2M service) must be able to POST /exec on it; before the fix
+    // CanAccess was strict owner-equality and the service 403'd a second after
+    // spawning the run.
+
+    [Fact]
+    public async Task Exec_ServiceCaller_CanExecHumanOwnedContainer_NotForbidden()
+    {
+        // Regression for rivoli-ai GOAL-39: the trusted service that created
+        // the goal container on-behalf-of the human must pass CanAccess on exec.
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.IsServiceAccount()).Returns(true);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("andy-tasks-api");
+
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "goal", OwnerId = "human-user-123" };
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>())).ReturnsAsync(container);
+        _mockService
+            .Setup(s => s.ExecAsync(id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0, StdOut = "ok", StdErr = null });
+
+        var result = await _controller.Exec(id, new ExecRequest { Command = "echo hi" }, CancellationToken.None);
+
+        result.Should().NotBeOfType<ForbidResult>("a trusted service must exec a goal container it created");
+        result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task Exec_HumanCaller_CannotExecOthersContainer_Forbidden()
+    {
+        // Owner-equality MUST still hold for humans — a human may not exec a
+        // container owned by another human (decision #17).
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.IsServiceAccount()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("real-human");
+
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "goal", OwnerId = "another-human" };
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>())).ReturnsAsync(container);
+
+        var result = await _controller.Exec(id, new ExecRequest { Command = "echo hi" }, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>("humans cannot exec containers they do not own");
+    }
+
+    [Fact]
+    public async Task Exec_HumanCaller_CanExecOwnContainer_NotForbidden()
+    {
+        // Sanity: a human can still exec their own container.
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.IsServiceAccount()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("real-human");
+
+        var id = Guid.NewGuid();
+        var container = new Container { Id = id, Name = "mine", OwnerId = "real-human" };
+        _mockService.Setup(s => s.GetContainerAsync(id, It.IsAny<CancellationToken>())).ReturnsAsync(container);
+        _mockService
+            .Setup(s => s.ExecAsync(id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExecResult { ExitCode = 0, StdOut = "ok", StdErr = null });
+
+        var result = await _controller.Exec(id, new ExecRequest { Command = "echo hi" }, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+    }
+
     [Fact]
     public async Task Start_ShouldCallServiceAndReturnContainer()
     {
