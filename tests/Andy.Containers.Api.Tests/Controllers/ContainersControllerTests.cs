@@ -17,6 +17,7 @@ public class ContainersControllerTests : IDisposable
     private readonly Mock<IContainerService> _mockService;
     private readonly Mock<ICurrentUserService> _mockCurrentUser;
     private readonly Mock<IGitCloneService> _mockGitCloneService;
+    private readonly Mock<IOrganizationMembershipService> _mockOrgMembership;
     private readonly ContainersDbContext _db;
     private readonly ContainersController _controller;
 
@@ -29,12 +30,12 @@ public class ContainersControllerTests : IDisposable
         _mockCurrentUser.Setup(u => u.IsAuthenticated()).Returns(true);
         _mockGitCloneService = new Mock<IGitCloneService>();
         _db = InMemoryDbHelper.CreateContext();
-        var mockOrgMembership = new Mock<IOrganizationMembershipService>();
-        mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _mockOrgMembership = new Mock<IOrganizationMembershipService>();
+        _mockOrgMembership.Setup(o => o.IsMemberAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _mockOrgMembership.Setup(o => o.HasPermissionAsync(It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         var mockCredentialService = new Mock<IGitCredentialService>();
         var mockProbeService = new Mock<IGitRepositoryProbeService>();
-        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, mockOrgMembership.Object, new Mock<IGitDiffService>().Object, new Mock<IPortDiscoveryService>().Object, new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object, new Mock<Andy.Containers.Storage.IRunOutputBus>().Object);
+        _controller = new ContainersController(_mockService.Object, _mockCurrentUser.Object, _db, _mockGitCloneService.Object, mockCredentialService.Object, mockProbeService.Object, _mockOrgMembership.Object, new Mock<IGitDiffService>().Object, new Mock<IPortDiscoveryService>().Object, new Mock<Andy.Containers.Storage.IContainerLifecycleBus>().Object, new Mock<Andy.Containers.Storage.IRunOutputBus>().Object);
         // SM.2.6: the Get action writes X-Correlation-Id to Response.Headers;
         // supply a DefaultHttpContext so the header write doesn't NRE.
         _controller.ControllerContext = new ControllerContext
@@ -202,6 +203,118 @@ public class ContainersControllerTests : IDisposable
         await _controller.Create(request, CancellationToken.None);
 
         request.OwnerId.Should().Be("andy-tasks-api");
+    }
+
+    // ----------------------------------------------------------------------
+    // #366: GET /api/containers/{id} read-scoped access. A goal-execution
+    // container is owned by the goal owner (M2M on-behalf-of), so the human
+    // session polling it is frequently NOT the owner. Read is broadened to
+    // same-organisation membership; write/lifecycle stay owner/admin-only.
+    // ----------------------------------------------------------------------
+
+    private void ArrangeGet(Container container) =>
+        _mockService
+            .Setup(s => s.GetContainerAsync(container.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(container);
+
+    [Fact]
+    public async Task Get_Owner_NonAdmin_Returns200()
+    {
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("human-owner");
+        var container = new Container { Id = Guid.NewGuid(), Name = "c", OwnerId = "human-owner" };
+        ArrangeGet(container);
+
+        var result = await _controller.Get(container.Id, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.StatusCode.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task Get_Admin_Returns200()
+    {
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(true);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("some-admin");
+        var container = new Container { Id = Guid.NewGuid(), Name = "c", OwnerId = "someone-else" };
+        ArrangeGet(container);
+
+        var result = await _controller.Get(container.Id, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.StatusCode.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task Get_HumanReadsM2mCreatedContainer_SameOrgMember_Returns200()
+    {
+        // The #366 bug: a goal-execution container is owned by the goal owner
+        // ("andy-tasks-api" / a different human id than the current session),
+        // but it carries the org. The human polling it is a member of that org
+        // but NOT the owner and NOT an admin. On the old strict owner-equality
+        // CanAccess this returned 403; with read-scoped org membership it's 200.
+        var orgId = Guid.NewGuid();
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("human-viewer");
+        _mockOrgMembership
+            .Setup(o => o.IsMemberAsync("human-viewer", orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var container = new Container
+        {
+            Id = Guid.NewGuid(),
+            Name = "goal-container",
+            OwnerId = "andy-tasks-api",
+            OrganizationId = orgId,
+        };
+        ArrangeGet(container);
+
+        var result = await _controller.Get(container.Id, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.StatusCode.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task Get_UnrelatedUser_NotMember_Returns403()
+    {
+        // A non-owner, non-admin who is NOT a member of the container's org is
+        // still forbidden — the broadening never exposes to unrelated users.
+        var orgId = Guid.NewGuid();
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("stranger");
+        _mockOrgMembership
+            .Setup(o => o.IsMemberAsync("stranger", orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var container = new Container
+        {
+            Id = Guid.NewGuid(),
+            Name = "goal-container",
+            OwnerId = "andy-tasks-api",
+            OrganizationId = orgId,
+        };
+        ArrangeGet(container);
+
+        var result = await _controller.Get(container.Id, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+    }
+
+    [Fact]
+    public async Task Get_NonOwner_OrglessContainer_Returns403()
+    {
+        // A container with no OrganizationId has no membership to fall back on,
+        // so a non-owner non-admin stays owner/admin-only (403). No broadening.
+        _mockCurrentUser.Setup(u => u.IsAdmin()).Returns(false);
+        _mockCurrentUser.Setup(u => u.GetUserId()).Returns("human-viewer");
+        var container = new Container
+        {
+            Id = Guid.NewGuid(),
+            Name = "goal-container",
+            OwnerId = "andy-tasks-api",
+            OrganizationId = null,
+        };
+        ArrangeGet(container);
+
+        var result = await _controller.Get(container.Id, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
     }
 
     [Fact]
