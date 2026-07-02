@@ -123,6 +123,11 @@ try
     builder.Services.AddSingleton<ContainerProvisioningQueue>();
     builder.Services.AddHostedService<ContainerProvisioningWorker>();
 
+    // rivoli-ai/andy-tasks#390. Warm the pre-baked agent image
+    // (andy-agent-cli:latest) at startup so the FIRST workspace
+    // container doesn't pay the one-time image build either.
+    builder.Services.AddHostedService<AgentCliImageWarmer>();
+
     // Provider health check background worker
     builder.Services.AddHostedService<ProviderHealthCheckWorker>();
 

@@ -148,4 +148,26 @@ public class DockerProviderTests : IAsyncLifetime
         // is already gone.
         _externalId = null;
     }
+
+    /// <summary>
+    /// rivoli-ai/andy-tasks#390. The startup warmer's seam: EnsureLocalImageAsync
+    /// must leave the pre-baked agent image present in the local daemon (building
+    /// it from images/agent-cli/Dockerfile when missing) and be a fast no-op when
+    /// the image already exists. Run twice so at least the second call exercises
+    /// the inspect-short-circuit regardless of prior local state.
+    /// </summary>
+    [DockerCliFact(Timeout = 1_200_000)]
+    public async Task EnsureLocalImageAsync_AgentCliImage_IsPresentAfterCall()
+    {
+        await _provider.EnsureLocalImageAsync(
+            Andy.Containers.Validation.LocalImages.AgentCli, CancellationToken.None);
+
+        // Second call must short-circuit on inspect (fast no-op).
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await _provider.EnsureLocalImageAsync(
+            Andy.Containers.Validation.LocalImages.AgentCli, CancellationToken.None);
+        sw.Stop();
+        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10),
+            "an already-present image must not trigger a rebuild");
+    }
 }

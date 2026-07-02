@@ -147,18 +147,20 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
         if (!imageExists)
         {
-            // For andy-desktop-* images, build from local Dockerfiles
-            if (spec.ImageReference.StartsWith("andy-desktop-"))
+            // For locally-built fixture images (andy-desktop-*, and the
+            // andy-tasks#390 pre-baked agent image andy-agent-cli:latest),
+            // build from the repo's local Dockerfiles instead of pulling.
+            if (Andy.Containers.Validation.LocalImages.IsLocallyBuilt(spec.ImageReference))
             {
-                _logger.LogInformation("Building local desktop image {Image}", spec.ImageReference);
+                _logger.LogInformation("Building local image {Image}", spec.ImageReference);
                 try
                 {
-                    await BuildDesktopImageAsync(spec.ImageReference, ct);
+                    await BuildLocalImageAsync(spec.ImageReference, ct);
                     imageExists = true;
                 }
                 catch (Exception buildEx)
                 {
-                    _logger.LogWarning(buildEx, "Failed to build desktop image {Image}", spec.ImageReference);
+                    _logger.LogWarning(buildEx, "Failed to build local image {Image}", spec.ImageReference);
                 }
             }
 
@@ -829,28 +831,73 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     }
 
     /// <summary>
-    /// Builds a desktop image from local Dockerfiles using docker CLI.
+    /// Ensures a locally-built fixture image (andy-desktop-*, or the
+    /// andy-tasks#390 pre-baked <c>andy-agent-cli:latest</c> agent image)
+    /// exists in the local Docker daemon, building it from the repo's
+    /// Dockerfile when missing. Used by the startup warmer so the FIRST
+    /// workspace container doesn't pay the image build either.
     /// </summary>
-    private async Task BuildDesktopImageAsync(string imageReference, CancellationToken ct)
+    public async Task EnsureLocalImageAsync(string imageReference, CancellationToken ct)
     {
-        var imageName = imageReference.Replace(":latest", "").Replace("andy-", "");
-
-        // Search upward for the images/ directory
-        string? buildDir = null;
-        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-        while (dir != null)
+        try
         {
-            var candidate = Path.Combine(dir.FullName, "images", imageName);
-            if (Directory.Exists(candidate)) { buildDir = candidate; break; }
-            dir = dir.Parent;
+            await _client.Images.InspectImageAsync(imageReference, ct);
+            return; // already present — nothing to do
         }
+        catch (DockerImageNotFoundException)
+        {
+            // fall through to build
+        }
+
+        await BuildLocalImageAsync(imageReference, ct);
+    }
+
+    /// <summary>
+    /// Maps a locally-built image reference to its <c>images/&lt;name&gt;</c>
+    /// build-context directory name, e.g. <c>andy-agent-cli:latest</c> →
+    /// <c>agent-cli</c> and <c>andy-desktop-python:latest</c> →
+    /// <c>desktop-python</c>. Pure so tests can pin the mapping.
+    /// </summary>
+    internal static string ImageBuildContextName(string imageReference) =>
+        imageReference.Replace(":latest", "").Replace("andy-", "");
+
+    /// <summary>
+    /// Locates the build-context directory for a locally-built image by
+    /// probing upward from both the process CWD (dev: repo checkout) and
+    /// <see cref="AppContext.BaseDirectory"/> (deployed daemon: the publish
+    /// output, which carries <c>images/agent-cli/Dockerfile</c> as content).
+    /// </summary>
+    internal static string? FindImageBuildDirectory(string contextName)
+    {
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var dir = new DirectoryInfo(start);
+            while (dir != null)
+            {
+                var candidate = Path.Combine(dir.FullName, "images", contextName);
+                if (Directory.Exists(candidate)) return candidate;
+                dir = dir.Parent;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Builds a locally-built fixture image from the repo's Dockerfiles
+    /// using the docker CLI.
+    /// </summary>
+    private async Task BuildLocalImageAsync(string imageReference, CancellationToken ct)
+    {
+        var imageName = ImageBuildContextName(imageReference);
+
+        var buildDir = FindImageBuildDirectory(imageName);
 
         if (buildDir == null)
             throw new InvalidOperationException($"Build directory not found for {imageReference}");
 
         var scriptsDir = Path.Combine(Path.GetDirectoryName(buildDir)!, "..", "scripts", "container");
 
-        _logger.LogInformation("Building desktop image {Image} from {Dir}", imageReference, buildDir);
+        _logger.LogInformation("Building local image {Image} from {Dir}", imageReference, buildDir);
 
         // rivoli-ai/andy-containers#126. Validate the image reference up-
         // front so a malformed value fails with a clear operator-facing
@@ -889,10 +936,10 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
         if (process.ExitCode != 0)
         {
-            _logger.LogError("Desktop image build failed: {Stderr}", stderr[..Math.Min(500, stderr.Length)]);
+            _logger.LogError("Local image build failed: {Stderr}", stderr[..Math.Min(500, stderr.Length)]);
             throw new InvalidOperationException($"Failed to build {imageReference}");
         }
 
-        _logger.LogInformation("Desktop image {Image} built successfully", imageReference);
+        _logger.LogInformation("Local image {Image} built successfully", imageReference);
     }
 }

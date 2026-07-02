@@ -79,6 +79,16 @@
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest"
              Link="config\environments\global\%(Filename)%(Extension)" />
+    <!-- rivoli-ai/andy-tasks#390. Bundle the pre-baked agent image's
+         Dockerfile so a DEPLOYED daemon (publish output, no repo checkout)
+         can still build andy-agent-cli:latest -
+         DockerInfrastructureProvider.FindImageBuildDirectory probes
+         AppContext.BaseDirectory/images/agent-cli in addition to the CWD
+         repo walk. Guarded by AgentCliImageArtifactTests. -->
+    <Content Include="..\..\images\agent-cli\Dockerfile"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest"
+             Link="images\agent-cli\Dockerfile" />
   </ItemGroup>
 
 </Project>
