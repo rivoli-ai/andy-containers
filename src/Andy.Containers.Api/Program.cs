@@ -123,6 +123,16 @@ try
     builder.Services.AddSingleton<ContainerProvisioningQueue>();
     builder.Services.AddHostedService<ContainerProvisioningWorker>();
 
+    // rivoli-ai/andy-tasks#390. Warm the pre-baked agent image
+    // (LocalImages.AgentCli, revision-tagged) at startup so the FIRST workspace
+    // container doesn't pay the one-time image build either.
+    builder.Services.AddHostedService<AgentCliImageWarmer>();
+
+    // Reclaim per-run config/NuGet trees left by daemon crashes or force-
+    // cancelled execs. Live owner PIDs and a retention boundary protect
+    // active runs; normal terminal paths still clean immediately.
+    builder.Services.AddHostedService<HeadlessRunCacheReclaimer>();
+
     // Provider health check background worker
     builder.Services.AddHostedService<ProviderHealthCheckWorker>();
 

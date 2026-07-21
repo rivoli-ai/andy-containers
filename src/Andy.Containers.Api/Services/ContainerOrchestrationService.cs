@@ -713,17 +713,35 @@ public class ContainerOrchestrationService : IContainerService
             ? template.GuiType
             : (profile.Kind == EnvironmentKind.Desktop ? "vnc" : "none");
 
+        // rivoli-ai/andy-tasks#390. The pre-baked agent image
+        // revision-tagged `andy-agent-cli` is built locally by the DOCKER provider
+        // (from images/agent-cli/Dockerfile) and never exists in a
+        // registry. A non-Docker provider (Apple Containers, cloud) can
+        // neither build nor pull it, so provisioning would abort with
+        // ImageNotFound. Fall back to the legacy ubuntu base there — the
+        // template's post_create script detects the missing binary and
+        // source-builds andy-cli exactly as it did before the pre-bake.
+        var providerAdjustedImage = ResolveEffectiveImageForProvider(effectiveImage, provider.Type);
+        if (providerAdjustedImage != effectiveImage)
+        {
+            _logger.LogInformation(
+                "Provider {Provider} ({Type}) cannot build local image {Image}; falling back to {Fallback} (post_create source-builds andy-cli).",
+                provider.Code, provider.Type, effectiveImage, providerAdjustedImage);
+            effectiveImage = providerAdjustedImage;
+        }
+
         // rivoli-ai/andy-containers#125. Strict mode: refuse to
         // provision against a mutable tag. The flag is opt-in
         // (default false) so dev workflows that rely on `:latest`
         // still work; production deploys flip it on and pin every
-        // template to `@sha256:...`. Locally-built `andy-desktop-*`
-        // images are exempt — they're built from the repo's own
+        // template to `@sha256:...`. Locally-built images
+        // (andy-desktop-*, revision-tagged andy-agent-cli — see LocalImages)
+        // are exempt — they're built from the repo's own
         // Dockerfiles and never pulled from a registry, so a
         // substitution attacker can't reach them.
         var requireDigestPin = _configuration.GetValue<bool?>("Containers:Image:RequireDigestPin") ?? false;
         if (requireDigestPin
-            && !effectiveImage.StartsWith("andy-desktop-", StringComparison.Ordinal)
+            && !Andy.Containers.Validation.LocalImages.IsLocallyBuilt(effectiveImage)
             && !Andy.Containers.Validation.OciReferenceValidator.IsDigestPinned(effectiveImage))
         {
             throw new ArgumentException(
@@ -1092,6 +1110,27 @@ public class ContainerOrchestrationService : IContainerService
         _logger.LogInformation("Container {ContainerId} resized to {CpuCores} CPU, {MemoryMb}MB RAM",
             containerId, resources.CpuCores, resources.MemoryMb);
     }
+
+    /// <summary>
+    /// rivoli-ai/andy-tasks#390. Pure provider-aware image decision: the
+    /// pre-baked revision-tagged <c>andy-agent-cli</c> image only exists on providers
+    /// that can BUILD it locally (Docker). Everywhere else, provision from
+    /// the legacy ubuntu base and let the template's post_create fallback
+    /// source-build andy-cli (the pre-#390 behaviour). Desktop fixture
+    /// images are NOT adjusted — non-Docker desktop provisioning already
+    /// failed before this change and silently swapping the image would hide
+    /// that, whereas the agent image is the default plan-execution template
+    /// and MUST keep working on every provider.
+    /// </summary>
+    internal static string ResolveEffectiveImageForProvider(
+        string effectiveImage, ProviderType providerType) =>
+        Andy.Containers.Validation.LocalImages.IsAgentCli(effectiveImage)
+            ? providerType == ProviderType.Docker
+                // Normalise legacy `:latest` references to the immutable
+                // revision tag selected by this andy-containers release.
+                ? Andy.Containers.Validation.LocalImages.AgentCli
+                : Andy.Containers.Validation.LocalImages.AgentCliFallbackBase
+            : effectiveImage;
 
     /// <summary>
     /// Merges a template's JSON-encoded default environment variables into the

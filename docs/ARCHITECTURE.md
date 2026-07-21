@@ -1038,8 +1038,9 @@ Every agent run gets an isolated git branch so its changes can be reviewed in
 isolation:
 
 1. **Branch lifecycle.** At dispatch, after the container is selected and repos
-   are cloned, `RunBranchService` runs `git checkout -B andy/run/{runId}` in
-   each *cloned* repo (off the workspace's `GitBranch` base) via
+   are cloned, `RunBranchService` creates `andy/run/{runId}` from the current
+   workspace base when absent, or checks out the existing branch without
+   resetting it on retry, in each *cloned* repo via
    `IInfrastructureProvider.ExecAsync` -- the same exec surface §16.3 uses. The
    branch name is persisted to `Run.WorkspaceRef.Branch` (no schema migration --
    the field already exists). Best-effort per repo; a `RunBranchCheckedOut`

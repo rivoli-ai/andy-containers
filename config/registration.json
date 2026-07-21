@@ -33,7 +33,8 @@
         "scp:urn:andy-containers-api",
         "scp:urn:andy-models-api",
         "scp:urn:andy-agents-api",
-        "scp:urn:andy-settings-api"
+        "scp:urn:andy-settings-api",
+        "scp:urn:andy-docs-api"
       ]
     },
     "webClient": {

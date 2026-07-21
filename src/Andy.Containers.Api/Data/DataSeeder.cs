@@ -141,6 +141,25 @@ public static class DataSeeder
             "echo 'export PATH=$PATH:/root/.dotnet:/root/.dotnet/tools' >> /root/.bashrc; } || true"
         });
 
+    // rivoli-ai/andy-tasks#390. The per-container RUNTIME half of the generic
+    // PostCreateScript, for containers whose image already pre-bakes every
+    // package install (images/agent-cli/Dockerfile): fix /etc/hosts, generate
+    // host keys + start sshd, set the root password, and keep .bash_profile
+    // sourcing .bashrc. Everything here is sub-second — no apt, no downloads,
+    // no compilers.
+    private const string PrebakedAgentRuntimeScript =
+        "grep -q localhost /etc/hosts 2>/dev/null || " +
+            "{ echo '127.0.0.1 localhost' >> /etc/hosts && echo '::1 localhost' >> /etc/hosts; }; " +
+        "export LANG=C.UTF-8 LC_ALL=C.UTF-8; " +
+        "mkdir -p /run/sshd; " +
+        "sed -i 's/#\\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null; " +
+        "sed -i 's/#\\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null; " +
+        "echo 'root:container' | chpasswd 2>/dev/null; " +
+        "ssh-keygen -A 2>/dev/null; " +
+        "/usr/sbin/sshd 2>/dev/null || true; " +
+        "grep -q bashrc /root/.bash_profile 2>/dev/null || " +
+            "echo '[ -f ~/.bashrc ] && . ~/.bashrc' >> /root/.bash_profile";
+
     // andy-cli-dev: "Pre-installed Andy CLI environment". The HeadlessRunner
     // (AP6) execs `andy-cli run --headless --config <path>` INSIDE this
     // container, so andy-cli MUST be a runnable command on PATH — otherwise
@@ -149,29 +168,49 @@ public static class DataSeeder
     // expected to ship; the original `ScriptsJson` (base packages only)
     // installed nothing andy-cli-related, which IS that bug.
     //
-    // andy-cli is a self-contained .NET 8 app published from the PUBLIC repo
-    // rivoli-ai/andy-cli with `AssemblyName=andy-cli`. There is no published
-    // NuGet package or GitHub release to pull, so the install matches the
-    // existing toolchain-install pattern (DotnetScriptsJson / full-stack
-    // Dockerfile): install the .NET 8 SDK, clone+publish the CLI from source,
-    // and symlink the apphost into /usr/local/bin. libicu is required or the
+    // rivoli-ai/andy-tasks#390. The template's base image is now the
+    // PRE-BAKED revision-tagged agent image (LocalImages.AgentCli, built lazily
+    // from images/agent-cli/Dockerfile by the Docker provider and warmed at
+    // startup by AgentCliImageWarmer), which already carries the base
+    // packages, gh, the .NET 8 SDK, and a published andy-cli on PATH plus
+    // the /etc/andy/prebaked marker. On that image post_create takes the
+    // FAST PATH — runtime-only per-container steps — and finishes in
+    // seconds. This is the fix for provisioning compiling andy-cli from
+    // source inside EVERY container (>5 minutes), which blew andy-tasks'
+    // Workspaces:AndyContainers:ProvisionReadyTimeout on every cold plan
+    // execution.
+    //
+    // The FALLBACK branch keeps the legacy behaviour for containers that
+    // land on a plain base image (non-Docker providers can't build the
+    // local image — ContainerOrchestrationService falls back to
+    // ubuntu:24.04): install the .NET 8 SDK, clone+publish andy-cli from
+    // the PUBLIC repo rivoli-ai/andy-cli (`AssemblyName=andy-cli` — there
+    // is still no published NuGet package or GitHub release to pull), and
+    // symlink the apphost into /usr/local/bin. libicu is required or the
     // SDK FailFasts on first invocation ("Couldn't find a valid ICU package").
     private static string AndyCliScriptsJson { get; } = JsonSerializer.Serialize(
         new Dictionary<string, string>
         {
-            ["post_create"] = PostCreateScript + " && " +
-            // .NET 8 SDK needs libicu present or it aborts before doing anything.
-            "apt-get install -y -qq libicu-dev >/dev/null 2>&1 && " +
-            // .NET 8 SDK (official install script — no Microsoft-repo registration).
-            "curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir /usr/share/dotnet >/dev/null 2>&1 && " +
-            "ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
-            "echo 'export DOTNET_ROOT=/usr/share/dotnet' >> /root/.bashrc && " +
-            "echo 'export PATH=$PATH:/usr/share/dotnet:/root/.dotnet/tools' >> /root/.bashrc && " +
-            // Build andy-cli from public source and put the apphost on PATH so
-            // `andy-cli run --headless …` (HeadlessRunner.cs) resolves.
-            "git clone --depth 1 https://github.com/rivoli-ai/andy-cli.git /opt/andy-cli-src >/dev/null 2>&1 && " +
-            "/usr/share/dotnet/dotnet publish /opt/andy-cli-src/src/Andy.Cli/Andy.Cli.csproj -c Release -o /opt/andy-cli >/dev/null 2>&1 && " +
-            "ln -sf /opt/andy-cli/andy-cli /usr/local/bin/andy-cli && " +
+            ["post_create"] =
+            // FAST PATH (pre-baked image): runtime-only per-container setup.
+            "if [ -f /etc/andy/prebaked ] && command -v andy-cli >/dev/null 2>&1; then " +
+                PrebakedAgentRuntimeScript + "; " +
+            "else " +
+                // FALLBACK (plain base image): the legacy full install chain.
+                PostCreateScript + " && " +
+                // .NET 8 SDK needs libicu present or it aborts before doing anything.
+                "apt-get install -y -qq libicu-dev >/dev/null 2>&1 && " +
+                // .NET 8 SDK (official install script — no Microsoft-repo registration).
+                "curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir /usr/share/dotnet >/dev/null 2>&1 && " +
+                "ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet 2>/dev/null && " +
+                "echo 'export DOTNET_ROOT=/usr/share/dotnet' >> /root/.bashrc && " +
+                "echo 'export PATH=$PATH:/usr/share/dotnet:/root/.dotnet/tools' >> /root/.bashrc && " +
+                // Build andy-cli from public source and put the apphost on PATH so
+                // `andy-cli run --headless …` (HeadlessRunner.cs) resolves.
+                "git clone --depth 1 https://github.com/rivoli-ai/andy-cli.git /opt/andy-cli-src >/dev/null 2>&1 && " +
+                "/usr/share/dotnet/dotnet publish /opt/andy-cli-src/src/Andy.Cli/Andy.Cli.csproj -c Release -o /opt/andy-cli >/dev/null 2>&1 && " +
+                "ln -sf /opt/andy-cli/andy-cli /usr/local/bin/andy-cli; " +
+            "fi && " +
             // Fail the post-create chain loudly if andy-cli still isn't runnable
             // — a silent miss here is exactly the exit-127 bug we're fixing.
             "command -v andy-cli >/dev/null 2>&1"
@@ -322,7 +361,10 @@ public static class DataSeeder
                 Name = "Andy CLI Development",
                 Description = "Pre-installed Andy CLI environment",
                 Version = "1.0.0",
-                BaseImage = "ubuntu:24.04",
+                // rivoli-ai/andy-tasks#390: pre-baked agent image (built
+                // locally from images/agent-cli/Dockerfile) so containers
+                // reach Ready in seconds instead of compiling andy-cli.
+                BaseImage = Andy.Containers.Validation.LocalImages.AgentCli,
                 CatalogScope = CatalogScope.Global,
                 IdeType = IdeType.CodeServer,
                 IsPublished = true,
@@ -776,7 +818,9 @@ public static class DataSeeder
             ["conductor-terminal-claude-code"] = NodeScriptsJson,
         };
 
-        // Also fix base images for desktop templates (they may have been seeded with ubuntu:24.04)
+        // Also fix base images for templates whose image reference changed
+        // after first seed (desktop templates may have been seeded with
+        // ubuntu:24.04; andy-cli-dev upgrades to the #390 pre-baked image).
         var imagesByCode = new Dictionary<string, string>
         {
             ["dotnet-8-desktop"] = "andy-desktop-dotnet:latest",
@@ -784,6 +828,10 @@ public static class DataSeeder
             ["dotnet-8-alpine-desktop"] = "andy-desktop-alpine-dotnet8:latest",
             ["dotnet-10-alpine-desktop"] = "andy-desktop-alpine-dotnet10:latest",
             ["devpilot-desktop"] = "andy-devpilot-desktop:latest",
+            // rivoli-ai/andy-tasks#390: existing DBs move to the pre-baked
+            // agent image on upgrade (the post_create fast path requires it
+            // for the seconds-not-minutes provision).
+            ["andy-cli-dev"] = Andy.Containers.Validation.LocalImages.AgentCli,
         };
 
         var updated = false;

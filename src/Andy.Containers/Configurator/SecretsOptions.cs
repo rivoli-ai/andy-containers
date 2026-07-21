@@ -2,10 +2,10 @@ namespace Andy.Containers.Configurator;
 
 /// <summary>
 /// AP10 (rivoli-ai/andy-containers#112). Per-deployment secrets-scope
-/// settings consumed by <see cref="RunConfigurator"/> when it injects
-/// the <c>ANDY_PROXY_URL</c> and <c>ANDY_MCP_URL</c> env vars into the
-/// agent's environment. <see cref="ITokenIssuer"/> mints
-/// <c>ANDY_TOKEN</c> separately.
+/// settings consumed by the trusted headless runner when it injects
+/// <c>ANDY_PROXY_URL</c> and <c>ANDY_MCP_URL</c> into the andy-cli process
+/// environment. <see cref="ITokenIssuer"/> mints <c>ANDY_TOKEN</c>
+/// immediately before launch.
 /// </summary>
 /// <remarks>
 /// Bound from the <c>Secrets</c> section of <c>appsettings.json</c>:
@@ -16,7 +16,7 @@ namespace Andy.Containers.Configurator;
 /// }
 /// </code>
 /// Defaults are deliberately localhost-shaped — production deployments
-/// must override. The configurator skips injecting an env var whose
+/// must override. The runner skips injecting an env var whose
 /// value is null/empty so a half-configured environment surfaces as a
 /// missing var rather than a misleading "localhost" injection.
 /// </remarks>

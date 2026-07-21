@@ -57,12 +57,19 @@ public sealed class RunBranchService : IRunBranchService
         {
             try
             {
-                // `git checkout -B` is idempotent: creates the branch if it
-                // doesn't exist, resets it to the current HEAD (the cloned
-                // base) if a prior dispatch already made it. Avoids a hard
-                // failure on retry. `--` ends option parsing.
+                // Retry without moving an existing run branch. `checkout -B`
+                // would reset its ref to the caller's current HEAD and can
+                // discard checkpoint commits from an earlier attempt. A new
+                // branch is created from the current (configured base) HEAD;
+                // an existing branch is merely checked out, preserving its
+                // accumulated ancestry. The later checkpoint command verifies
+                // the exact attached branch again immediately before staging.
+                var q = GitCloneService.ShellQuote(repo.TargetPath);
+                var branch = GitCloneService.ShellQuote(branchName);
+                var branchRef = GitCloneService.ShellQuote($"refs/heads/{branchName}");
                 var command =
-                    $"git -C {GitCloneService.ShellQuote(repo.TargetPath)} checkout -B {GitCloneService.ShellQuote(branchName)}";
+                    $"if git -C {q} show-ref --verify --quiet {branchRef}; then "
+                    + $"git -C {q} checkout {branch}; else git -C {q} checkout -b {branch}; fi";
 
                 var result = await _containerService.ExecAsync(containerId, command, CheckoutTimeout, ct);
 

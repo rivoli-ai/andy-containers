@@ -109,7 +109,13 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
     public async Task<ContainerProvisionResult> CreateContainerAsync(ContainerSpec spec, CancellationToken ct)
     {
-        _logger.LogInformation("Creating Docker container {Name} from {Image}", spec.Name, spec.ImageReference);
+        // Existing templates may still persist the old mutable `:latest`
+        // spelling. Canonicalise again at the provider boundary so direct
+        // provider callers cannot accidentally reuse stale legacy content.
+        var imageReference = Andy.Containers.Validation.LocalImages.IsAgentCli(spec.ImageReference)
+            ? Andy.Containers.Validation.LocalImages.AgentCli
+            : spec.ImageReference;
+        _logger.LogInformation("Creating Docker container {Name} from {Image}", spec.Name, imageReference);
 
         var containerName = spec.Name.ToLowerInvariant().Replace(' ', '-');
 
@@ -136,71 +142,77 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             _logger.LogWarning(ex, "Failed to check for existing container {Name}", containerName);
         }
 
-        // Check if image exists locally first
+        // Locally-built images have a stronger contract than registry images:
+        // they must be present in THIS daemon and must never silently fall
+        // through to a mutable registry pull when a local build fails.
         bool imageExists = false;
-        try
+        if (Andy.Containers.Validation.LocalImages.IsLocallyBuilt(imageReference))
         {
-            await _client.Images.InspectImageAsync(spec.ImageReference, ct);
-            imageExists = true;
+            try
+            {
+                await EnsureLocalImageAsync(imageReference, ct);
+                imageExists = true;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception buildEx)
+            {
+                _logger.LogError(buildEx, "Failed to ensure local image {Image}", imageReference);
+                throw new InvalidOperationException(
+                    $"Locally-built image '{imageReference}' could not be built and verified.",
+                    buildEx);
+            }
         }
-        catch { }
+        else
+        {
+            try
+            {
+                await _client.Images.InspectImageAsync(imageReference, ct);
+                imageExists = true;
+            }
+            catch (DockerImageNotFoundException)
+            {
+                // fall through to registry pull
+            }
+        }
 
         if (!imageExists)
         {
-            // For andy-desktop-* images, build from local Dockerfiles
-            if (spec.ImageReference.StartsWith("andy-desktop-"))
+            // Registry-backed image: pull only after a confirmed local miss.
+            try
             {
-                _logger.LogInformation("Building local desktop image {Image}", spec.ImageReference);
+                await _client.Images.CreateImageAsync(
+                    new ImagesCreateParameters { FromImage = imageReference },
+                    null,
+                    new Progress<JSONMessage>(m => _logger.LogDebug("Pull: {Status}", m.Status)),
+                    ct);
+
+                // rivoli-ai/andy-containers#125. Audit-log the resolved
+                // RepoDigests after a successful pull so operators see
+                // exactly which content-addressed blob the daemon accepted.
                 try
                 {
-                    await BuildDesktopImageAsync(spec.ImageReference, ct);
-                    imageExists = true;
+                    var inspect = await _client.Images.InspectImageAsync(imageReference, ct);
+                    var resolvedDigest = inspect.RepoDigests is { Count: > 0 }
+                        ? inspect.RepoDigests[0]
+                        : "(no repo digest reported)";
+                    _logger.LogInformation(
+                        "Pulled image {Image}; resolved digest: {Digest}",
+                        imageReference, resolvedDigest);
                 }
-                catch (Exception buildEx)
+                catch (Exception inspectEx)
                 {
-                    _logger.LogWarning(buildEx, "Failed to build desktop image {Image}", spec.ImageReference);
+                    // Best-effort; never fail provisioning because the audit
+                    // lookup did not pan out.
+                    _logger.LogDebug(inspectEx,
+                        "Could not inspect resolved digest for {Image}", imageReference);
                 }
             }
-
-            // Try pulling from registry if not a local build or build failed
-            if (!imageExists)
+            catch (Exception ex)
             {
-                try
-                {
-                    await _client.Images.CreateImageAsync(
-                        new ImagesCreateParameters { FromImage = spec.ImageReference },
-                        null,
-                        new Progress<JSONMessage>(m => _logger.LogDebug("Pull: {Status}", m.Status)),
-                        ct);
-
-                    // rivoli-ai/andy-containers#125. Audit-log the resolved
-                    // RepoDigests after a successful pull so operators see
-                    // exactly which content-addressed blob the daemon
-                    // accepted. Lets a deploy detect tag-mutation
-                    // (different digest for the same tag across pulls)
-                    // even when RequireDigestPin isn't set.
-                    try
-                    {
-                        var inspect = await _client.Images.InspectImageAsync(spec.ImageReference, ct);
-                        var resolvedDigest = inspect.RepoDigests is { Count: > 0 }
-                            ? inspect.RepoDigests[0]
-                            : "(no repo digest reported)";
-                        _logger.LogInformation(
-                            "Pulled image {Image}; resolved digest: {Digest}",
-                            spec.ImageReference, resolvedDigest);
-                    }
-                    catch (Exception inspectEx)
-                    {
-                        // Best-effort; never fail provisioning because the
-                        // audit lookup didn't pan out.
-                        _logger.LogDebug(inspectEx,
-                            "Could not inspect resolved digest for {Image}", spec.ImageReference);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to pull image {Image}, trying local", spec.ImageReference);
-                }
+                _logger.LogWarning(ex, "Failed to pull image {Image}", imageReference);
             }
         }
 
@@ -232,7 +244,7 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
-            Image = spec.ImageReference,
+            Image = imageReference,
             Name = containerName,
             Cmd = cmd,
             Env = spec.EnvironmentVariables?.Select(kv => $"{kv.Key}={kv.Value}").ToList(),
@@ -829,28 +841,138 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     }
 
     /// <summary>
-    /// Builds a desktop image from local Dockerfiles using docker CLI.
+    /// Ensures a locally-built fixture image (andy-desktop-*, or the
+    /// andy-tasks#390 revision-tagged pre-baked agent image)
+    /// exists in the local Docker daemon, building it from the repo's
+    /// Dockerfile when missing. Used by the startup warmer so the FIRST
+    /// workspace container doesn't pay the image build either.
     /// </summary>
-    private async Task BuildDesktopImageAsync(string imageReference, CancellationToken ct)
+    public async Task EnsureLocalImageAsync(string imageReference, CancellationToken ct)
     {
-        var imageName = imageReference.Replace(":latest", "").Replace("andy-", "");
-
-        // Search upward for the images/ directory
-        string? buildDir = null;
-        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-        while (dir != null)
+        if (!Andy.Containers.Validation.LocalImages.IsLocallyBuilt(imageReference))
         {
-            var candidate = Path.Combine(dir.FullName, "images", imageName);
-            if (Directory.Exists(candidate)) { buildDir = candidate; break; }
-            dir = dir.Parent;
+            throw new ArgumentException(
+                $"Image '{imageReference}' is not a supported locally-built image.",
+                nameof(imageReference));
         }
+
+        imageReference = Andy.Containers.Validation.LocalImages.IsAgentCli(imageReference)
+            ? Andy.Containers.Validation.LocalImages.AgentCli
+            : imageReference;
+
+        try
+        {
+            var existing = await _client.Images.InspectImageAsync(imageReference, ct);
+            var actualRevision = existing.Config?.Labels is { } labels
+                && labels.TryGetValue("org.opencontainers.image.revision", out var revision)
+                ? revision
+                : null;
+            if (MatchesExpectedLocalImageIdentity(imageReference, actualRevision))
+            {
+                _logger.LogDebug(
+                    "Reusing local image {Image} ({ImageId}); expected revision {ExpectedRevision}, actual {ActualRevision}.",
+                    imageReference, existing.ID,
+                    Andy.Containers.Validation.LocalImages.IsAgentCli(imageReference)
+                        ? Andy.Containers.Validation.LocalImages.AgentCliGitRevision
+                        : "tag identity",
+                    actualRevision ?? "unlabelled");
+                return;
+            }
+
+            _logger.LogWarning(
+                "Local image {Image} has stale identity (expected revision {ExpectedRevision}, actual {ActualRevision}); rebuilding.",
+                imageReference,
+                Andy.Containers.Validation.LocalImages.AgentCliGitRevision,
+                actualRevision ?? "unlabelled");
+        }
+        catch (DockerImageNotFoundException)
+        {
+            // fall through to build
+        }
+
+        var buildKey = $"{_endpoint}\n{imageReference}";
+        _logger.LogInformation(
+            "Local image {Image} is missing on Docker endpoint {Endpoint}; joining single-flight build.",
+            imageReference, _endpoint);
+        try
+        {
+            var result = await LocalImageBuildCoordinator.RunAsync(
+                buildKey,
+                buildCt => BuildLocalImageAsync(imageReference, buildCt),
+                ct);
+            _logger.LogInformation(
+                "Local image {Image} single-flight completed ({Disposition}) after waiting {Elapsed:F1}s.",
+                imageReference,
+                result.StartedBuild ? "started build" : "joined build",
+                result.WaitDuration.TotalSeconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Local image {Image} single-flight failed on Docker endpoint {Endpoint}; a later caller may retry.",
+                imageReference, _endpoint);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Maps a locally-built image reference to its <c>images/&lt;name&gt;</c>
+    /// build-context directory name, e.g. <c>andy-agent-cli:3f08f5bb340e</c> →
+    /// <c>agent-cli</c> and <c>andy-desktop-python:latest</c> →
+    /// <c>desktop-python</c>. Pure so tests can pin the mapping.
+    /// </summary>
+    internal static string ImageBuildContextName(string imageReference)
+    {
+        if (Andy.Containers.Validation.LocalImages.IsAgentCli(imageReference))
+        {
+            return "agent-cli";
+        }
+
+        var withoutPrefix = imageReference.StartsWith("andy-", StringComparison.Ordinal)
+            ? imageReference["andy-".Length..]
+            : imageReference;
+        var tagSeparator = withoutPrefix.LastIndexOf(':');
+        var lastSlash = withoutPrefix.LastIndexOf('/');
+        return tagSeparator > lastSlash ? withoutPrefix[..tagSeparator] : withoutPrefix;
+    }
+
+    /// <summary>
+    /// Locates the build-context directory for a locally-built image by
+    /// probing upward from both the process CWD (dev: repo checkout) and
+    /// <see cref="AppContext.BaseDirectory"/> (deployed daemon: the publish
+    /// output, which carries <c>images/agent-cli/Dockerfile</c> as content).
+    /// </summary>
+    internal static string? FindImageBuildDirectory(string contextName)
+    {
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var dir = new DirectoryInfo(start);
+            while (dir != null)
+            {
+                var candidate = Path.Combine(dir.FullName, "images", contextName);
+                if (Directory.Exists(candidate)) return candidate;
+                dir = dir.Parent;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Builds a locally-built fixture image from the repo's Dockerfiles
+    /// using the docker CLI.
+    /// </summary>
+    private async Task BuildLocalImageAsync(string imageReference, CancellationToken ct)
+    {
+        var imageName = ImageBuildContextName(imageReference);
+
+        var buildDir = FindImageBuildDirectory(imageName);
 
         if (buildDir == null)
             throw new InvalidOperationException($"Build directory not found for {imageReference}");
 
         var scriptsDir = Path.Combine(Path.GetDirectoryName(buildDir)!, "..", "scripts", "container");
 
-        _logger.LogInformation("Building desktop image {Image} from {Dir}", imageReference, buildDir);
+        _logger.LogInformation("Building local image {Image} from {Dir}", imageReference, buildDir);
 
         // rivoli-ai/andy-containers#126. Validate the image reference up-
         // front so a malformed value fails with a clear operator-facing
@@ -869,30 +991,134 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        psi.ArgumentList.Add("buildx");
-        psi.ArgumentList.Add("build");
-        psi.ArgumentList.Add("-t");
-        psi.ArgumentList.Add(imageReference);
-        if (Directory.Exists(scriptsDir))
+        foreach (var argument in BuildLocalImageArguments(
+            imageReference,
+            buildDir,
+            Directory.Exists(scriptsDir) ? Path.GetFullPath(scriptsDir) : null,
+            _endpoint))
         {
-            psi.ArgumentList.Add("--build-context");
-            psi.ArgumentList.Add($"scripts={Path.GetFullPath(scriptsDir)}");
+            psi.ArgumentList.Add(argument);
         }
-        psi.ArgumentList.Add(buildDir);
 
-        var process = new System.Diagnostics.Process { StartInfo = psi };
+        using var process = new System.Diagnostics.Process { StartInfo = psi };
+        using var buildTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        buildTimeout.CancelAfter(TimeSpan.FromMinutes(30));
+        var buildToken = buildTimeout.Token;
 
         process.Start();
-        _ = await process.StandardOutput.ReadToEndAsync(ct);
-        var stderr = await process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
+        // Drain both redirected streams concurrently. Waiting for one stream
+        // to close before reading the other can deadlock when BuildKit fills
+        // the other pipe during a long build.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+
+        try
+        {
+            await process.WaitForExitAsync(buildToken);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch (Exception killEx)
+            {
+                _logger.LogDebug(killEx, "Could not terminate cancelled local image build for {Image}", imageReference);
+            }
+
+            await Task.WhenAll(stdoutTask, stderrTask);
+            throw;
+        }
+
+        var outputs = await Task.WhenAll(stdoutTask, stderrTask);
+        var stdout = outputs[0];
+        var stderr = outputs[1];
 
         if (process.ExitCode != 0)
         {
-            _logger.LogError("Desktop image build failed: {Stderr}", stderr[..Math.Min(500, stderr.Length)]);
+            _logger.LogError("Local image build failed: {Stderr}", stderr[..Math.Min(500, stderr.Length)]);
             throw new InvalidOperationException($"Failed to build {imageReference}");
         }
 
-        _logger.LogInformation("Desktop image {Image} built successfully", imageReference);
+        // `buildx build` can exit zero without exporting its result. `--load`
+        // is explicit below, and this inspect is the post-condition that keeps
+        // the warmer from claiming an unusable cache-only result is ready.
+        try
+        {
+            var inspect = await _client.Images.InspectImageAsync(imageReference, buildToken);
+            var actualRevision = inspect.Config?.Labels is { } labels
+                && labels.TryGetValue("org.opencontainers.image.revision", out var revision)
+                ? revision
+                : null;
+            if (!MatchesExpectedLocalImageIdentity(imageReference, actualRevision))
+            {
+                throw new InvalidOperationException(
+                    $"Built image '{imageReference}' has revision label '{actualRevision ?? "<missing>"}', "
+                    + $"expected '{Andy.Containers.Validation.LocalImages.AgentCliGitRevision}'.");
+            }
+            _logger.LogInformation(
+                "Local image {Image} built and loaded successfully as {ImageId}",
+                imageReference, inspect.ID);
+        }
+        catch (DockerImageNotFoundException ex)
+        {
+            _logger.LogError(
+                "Buildx exited successfully but image {Image} is not loaded. Stdout tail: {Stdout}",
+                imageReference,
+                stdout.Length <= 500 ? stdout : stdout[^500..]);
+            throw new InvalidOperationException(
+                $"Buildx completed but did not load image '{imageReference}' into Docker.", ex);
+        }
     }
+
+    /// <summary>Pure argument construction for regression tests.</summary>
+    internal static IReadOnlyList<string> BuildLocalImageArguments(
+        string imageReference,
+        string buildDirectory,
+        string? scriptsDirectory,
+        string dockerEndpoint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dockerEndpoint);
+        var arguments = new List<string>
+        {
+            // The Docker.DotNet client and Buildx CLI must target the same
+            // daemon. Without this global option, Buildx silently uses the
+            // operator's default context and --load exports to the wrong
+            // daemon for configured TCP/non-default Unix endpoints.
+            "--host",
+            dockerEndpoint,
+            "buildx",
+            "build",
+            "--load",
+            "-t",
+            imageReference,
+        };
+
+        if (Andy.Containers.Validation.LocalImages.IsAgentCli(imageReference))
+        {
+            arguments.Add("--build-arg");
+            arguments.Add($"ANDY_CLI_GIT_REF={Andy.Containers.Validation.LocalImages.AgentCliGitRevision}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(scriptsDirectory))
+        {
+            arguments.Add("--build-context");
+            arguments.Add($"scripts={scriptsDirectory}");
+        }
+
+        arguments.Add(buildDirectory);
+        return arguments;
+    }
+
+    /// <summary>Pure identity decision used by existing-image and post-build validation.</summary>
+    internal static bool MatchesExpectedLocalImageIdentity(string imageReference, string? actualRevision) =>
+        !Andy.Containers.Validation.LocalImages.IsAgentCli(imageReference)
+        || string.Equals(
+            actualRevision,
+            Andy.Containers.Validation.LocalImages.AgentCliGitRevision,
+            StringComparison.Ordinal);
 }
