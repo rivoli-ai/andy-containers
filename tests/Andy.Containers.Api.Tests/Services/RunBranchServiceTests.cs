@@ -46,7 +46,11 @@ public class RunBranchServiceTests : IDisposable
 
         run.WorkspaceRef!.Branch.Should().Be($"andy/run/{run.Id}");
         _exec.Verify(s => s.ExecAsync(containerId,
-            It.Is<string>(c => c.Contains("checkout -B") && c.Contains($"andy/run/{run.Id}") && c.Contains("/workspace/repo")),
+            It.Is<string>(c => c.Contains("show-ref --verify --quiet")
+                && c.Contains("checkout -b")
+                && !c.Contains("checkout -B")
+                && c.Contains($"andy/run/{run.Id}")
+                && c.Contains("/workspace/repo")),
             It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 

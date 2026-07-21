@@ -43,6 +43,11 @@ public class HeadlessRunnerTests : IDisposable
         _tokens
             .Setup(t => t.RevokeAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        _tokens
+            .Setup(t => t.MintAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RunToken(
+                "andy-run.test-runtime-token",
+                DateTimeOffset.UtcNow.AddHours(1)));
         _runner = new HeadlessRunner(
             _containers.Object, _db, _cancellation, _tokens.Object,
             NullLogger<HeadlessRunner>.Instance);
@@ -268,9 +273,10 @@ public class HeadlessRunnerTests : IDisposable
         // cancellation (Cancelled) — this is the watchdog path.
         var run = SeedRun();
         _containers
-            .Setup(c => c.ExecAsync(
+            .SetupSequence(c => c.ExecAsync(
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new OperationCanceledException("exec timeout"));
+            .ThrowsAsync(new OperationCanceledException("exec timeout"))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var outcome = await _runner.StartAsync(run, _configPath, CancellationToken.None);
 
@@ -279,6 +285,10 @@ public class HeadlessRunnerTests : IDisposable
 
         var entry = await _db.OutboxEntries.SingleAsync();
         entry.Subject.Should().EndWith(".timeout");
+        _containers.Verify(c => c.ExecAsync(
+            run.ContainerId!.Value,
+            It.Is<string>(command => command.Contains($"find '/tmp/andy-runs/{run.Id}' -depth -delete")),
+            TimeSpan.FromSeconds(30), CancellationToken.None), Times.Once);
     }
 
     [Fact]
@@ -288,9 +298,10 @@ public class HeadlessRunnerTests : IDisposable
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         _containers
-            .Setup(c => c.ExecAsync(
+            .SetupSequence(c => c.ExecAsync(
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new OperationCanceledException(cts.Token));
+            .ThrowsAsync(new OperationCanceledException(cts.Token))
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
 
         var outcome = await _runner.StartAsync(run, _configPath, cts.Token);
 
@@ -311,8 +322,12 @@ public class HeadlessRunnerTests : IDisposable
         _containers
             .Setup(c => c.ExecAsync(
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns<Guid, string, TimeSpan, CancellationToken>(async (_, _, _, token) =>
+            .Returns<Guid, string, TimeSpan, CancellationToken>(async (_, command, _, token) =>
             {
+                if (command.StartsWith("if [ -d '/tmp/andy-runs/", StringComparison.Ordinal))
+                {
+                    return new ExecResult { ExitCode = 0 };
+                }
                 spawnedTcs.TrySetResult(true);
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
                 throw new InvalidOperationException("delay should have thrown");
@@ -339,6 +354,10 @@ public class HeadlessRunnerTests : IDisposable
 
         var entry = await _db.OutboxEntries.SingleAsync();
         entry.Subject.Should().EndWith(".cancelled");
+        _containers.Verify(c => c.ExecAsync(
+            run.ContainerId!.Value,
+            It.Is<string>(command => command.Contains($"find '/tmp/andy-runs/{run.Id}' -depth -delete")),
+            TimeSpan.FromSeconds(30), CancellationToken.None), Times.Once);
     }
 
     [Fact]
@@ -400,9 +419,8 @@ public class HeadlessRunnerTests : IDisposable
     [Fact]
     public async Task StartAsync_NoContainerId_StillRevokesToken()
     {
-        // Configurator already minted the token before AP5 failed to
-        // assign a container; we still need to revoke so the token
-        // doesn't outlive the run row.
+        // Termination remains idempotent even when AP5 failed before the
+        // launch boundary had a chance to mint the token.
         var run = SeedRunWithoutContainer();
 
         await _runner.StartAsync(run, _configPath);
@@ -447,8 +465,120 @@ public class HeadlessRunnerTests : IDisposable
         captured.Should().NotBeNull();
         // Stage step: base64-decode the config into the in-container path.
         captured.Should().Contain($"base64 -d > '/tmp/andy-runs/{run.Id}/config.json'");
+        captured.Should().Contain($"> '/tmp/andy-runs/{run.Id}/.owner-pid'",
+            "the orphan reclaimer needs a live-process marker for active-run exclusion");
         // Run step: andy-cli against the single-quote-escaped in-container path.
         captured.Should().Contain($"andy-cli run --headless --config '/tmp/andy-runs/{run.Id}/config.json'");
+        // The isolated NuGet/config tree is reclaimed in the same exec while
+        // preserving andy-cli's original exit code.
+        captured.Should().Contain("andy_run_exit=$?");
+        captured.Should().Contain($"find '/tmp/andy-runs/{run.Id}' -depth -delete");
+        captured.Should().EndWith("exit $andy_run_exit");
+    }
+
+    [Fact]
+    public async Task StartAsync_StagesRuntimeBranch_NotStaleConfiguredBaseBranch()
+    {
+        // The controller writes config before dispatch. Dispatch then checks
+        // out and persists andy/run/{runId}; the launch copy must reflect that
+        // authoritative runtime branch or andy-cli rejects the mismatch.
+        var run = SeedRun();
+        var runtimeBranch = $"andy/run/{run.Id}";
+        run.WorkspaceRef.Branch = runtimeBranch;
+        await _db.SaveChangesAsync();
+
+        var configPath = Path.Combine(Path.GetTempPath(), $"branch-test-{Guid.NewGuid():N}.json");
+        File.WriteAllText(configPath, HeadlessConfigJson.Serialize(new HeadlessRunConfig
+        {
+            RunId = run.Id,
+            Workspace = new HeadlessWorkspace { Root = "/workspace", Branch = "main" },
+            Limits = new HeadlessLimits { MaxIterations = 4, TimeoutSeconds = 60 },
+        }));
+
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+
+        try
+        {
+            var outcome = await _runner.StartAsync(run, configPath);
+
+            outcome.Status.Should().Be(RunStatus.Succeeded);
+            captured.Should().NotBeNull();
+            const string prefix = "printf %s '";
+            const string suffix = "' | base64 -d";
+            var encodedStart = captured!.IndexOf(prefix, StringComparison.Ordinal) + prefix.Length;
+            var encodedEnd = captured.IndexOf(suffix, encodedStart, StringComparison.Ordinal);
+            encodedStart.Should().BeGreaterThanOrEqualTo(prefix.Length);
+            encodedEnd.Should().BeGreaterThan(encodedStart);
+
+            var stagedJson = System.Text.Encoding.UTF8.GetString(
+                Convert.FromBase64String(captured[encodedStart..encodedEnd]));
+            using var staged = JsonDocument.Parse(stagedJson);
+            staged.RootElement.GetProperty("workspace").GetProperty("branch").GetString()
+                .Should().Be(runtimeBranch);
+
+            using var original = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+            original.RootElement.GetProperty("workspace").GetProperty("branch").GetString()
+                .Should().Be("main", "the launch overlay must not mutate the immutable host config");
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_InjectsTrustedRuntimeIdentityIntoAndyCliProcessOnly()
+    {
+        var run = SeedRun();
+        string? captured = null;
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => captured = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0 });
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Secrets:ProxyUrl"] = "https://proxy.test/path",
+                ["Secrets:McpUrl"] = "https://mcp.test/gateway",
+            }).Build();
+        var runner = new HeadlessRunner(
+            _containers.Object, _db, _cancellation, _tokens.Object,
+            NullLogger<HeadlessRunner>.Instance, configuration: config);
+
+        var outcome = await runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded);
+        captured.Should().NotBeNull();
+        captured.Should().Contain("ANDY_TOKEN='andy-run.test-runtime-token'");
+        captured.Should().Contain("ANDY_PROXY_URL='https://proxy.test/path'");
+        captured.Should().Contain("ANDY_MCP_URL='https://mcp.test/gateway'");
+        captured.Should().MatchRegex(
+            "cd '[^']+' && NUGET_PACKAGES='[^']+' ANDY_TOKEN=.* ANDY_PROXY_URL=.* ANDY_MCP_URL=.* andy-cli run",
+            "runtime identity must prefix only the trusted andy-cli process");
+        _tokens.Verify(t => t.MintAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartAsync_RuntimeTokenMintFailure_FailsBeforeContainerExec()
+    {
+        var run = SeedRun();
+        _tokens
+            .Setup(t => t.MintAsync(run.Id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("issuer unavailable"));
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Failed);
+        outcome.Error.Should().Contain("runtime identity");
+        _containers.Verify(c => c.ExecAsync(
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // conductor MSB1003 / andy-tasks#383. The repo is cloned DIRECTLY into the
@@ -473,9 +603,10 @@ public class HeadlessRunnerTests : IDisposable
         await _runner.StartAsync(run, _configPath);
 
         captured.Should().NotBeNull();
-        // The `cd` must land immediately before the andy-cli invocation so the
-        // agent's process CWD is the checkout root.
-        captured.Should().Contain("cd '/workspace' && andy-cli run --headless",
+        // Runtime identity assignments remain part of the andy-cli invocation
+        // after the workspace `cd`.
+        captured.Should().Contain("cd '/workspace' && NUGET_PACKAGES='");
+        captured.Should().Contain("ANDY_TOKEN='andy-run.test-runtime-token' andy-cli run --headless",
             "the dispatched agent must run with CWD at the checkout root");
     }
 
@@ -503,7 +634,8 @@ public class HeadlessRunnerTests : IDisposable
         await runner.StartAsync(run, configPath);
 
         captured.Should().NotBeNull();
-        captured.Should().Contain("cd '/workspace' && OPENAI_API_KEY='jwt-scoped-to-qwen' andy-cli run --headless",
+        captured.Should().Contain("cd '/workspace' && NUGET_PACKAGES='");
+        captured.Should().Contain("ANDY_TOKEN='andy-run.test-runtime-token' OPENAI_API_KEY='jwt-scoped-to-qwen' andy-cli run --headless",
             "the model-key override and andy-cli must both run under the workspace `cd`");
         File.Delete(configPath);
     }
@@ -1014,6 +1146,281 @@ public class HeadlessRunnerTests : IDisposable
             It.IsAny<Container>(), It.IsAny<IReadOnlyList<HeadlessInput>>(), It.IsAny<CancellationToken>()),
             Times.Never);
         File.Delete(configPath);
+    }
+
+    // ===== conductor#2273: per-task commit (durable artifact handoff) =====
+    // A SUCCESSFUL run must commit the agent's working-tree changes to the
+    // per-run branch so multi-task plan execution accumulates a real commit
+    // chain (and the final PR has something to push) instead of relying on an
+    // uncommitted tree surviving the next task's run-branch checkout.
+
+    [Fact]
+    public async Task StartAsync_Success_CommitsWorkingTreeToPerRunBranch()
+    {
+        var run = SeedRun();
+        var containerId = run.ContainerId!.Value;
+        SeedClonedRepo(containerId, "/workspace");
+        var commands = CaptureExec(exitCode: 0, stdOut: "ok");
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded);
+        var commit = commands.Should()
+            .ContainSingle(c => c.Contains("git -C") && c.Contains("commit")).Subject;
+        commit.Should().Contain("add -A");
+        commit.Should().Contain("/workspace");
+        commit.Should().Contain($"andy run {run.Id}", "the commit message must identify the run");
+        commit.Should().Contain($"andy/run/{run.Id}",
+            "the branch invariant must be checked in the same exec as staging");
+        // Backup-shaped untracked files are left intact but excluded from the
+        // checkpoint index. Broad recursive deletion is forbidden.
+        commit.Should().Contain("*.backup.*");
+        commit.Should().Contain("restore --staged");
+        commit.Should().NotContain("find '/workspace'");
+        commit.Should().NotContain("-delete");
+    }
+
+    [Fact]
+    public async Task StartAsync_Failed_DoesNotCommit()
+    {
+        var run = SeedRun();
+        SeedClonedRepo(run.ContainerId!.Value, "/workspace");
+        var commands = CaptureExec(exitCode: 1, stdErr: "boom");
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Failed);
+        commands.Should().NotContain(c => c.Contains("git -C") && c.Contains("commit"),
+            "a failed run must not commit partial work");
+    }
+
+    [Fact]
+    public async Task StartAsync_Success_NoClonedRepos_DoesNotCommit()
+    {
+        var run = SeedRun();
+        var commands = CaptureExec(exitCode: 0, stdOut: "ok");
+
+        var outcome = await _runner.StartAsync(run, _configPath);
+
+        outcome.Status.Should().Be(RunStatus.Succeeded);
+        commands.Should().NotContain(c => c.Contains("commit"),
+            "with no cloned repos there is nothing to commit");
+    }
+
+    [Fact]
+    public async Task StartAsync_Success_OnlyCommitsClonedRepos()
+    {
+        var run = SeedRun();
+        var containerId = run.ContainerId!.Value;
+        SeedClonedRepo(containerId, "/workspace", GitCloneStatus.Cloned);
+        SeedClonedRepo(containerId, "/pending-repo", GitCloneStatus.Pending);
+        var commands = CaptureExec(exitCode: 0, stdOut: "ok");
+
+        await _runner.StartAsync(run, _configPath);
+
+        var commitCommands = commands.Where(c => c.Contains("git -C") && c.Contains("commit")).ToList();
+        commitCommands.Should().ContainSingle("only the Cloned repo is committed");
+        commitCommands[0].Should().Contain("/workspace");
+        commitCommands[0].Should().NotContain("/pending-repo");
+    }
+
+    [Fact]
+    public void BuildCheckpointCommand_PreservesBackupNamedFiles_AndCommitsTrackedChanges()
+    {
+        var root = Directory.CreateTempSubdirectory("andy-checkpoint-safe-").FullName;
+        try
+        {
+            InitializeGitRepository(root);
+            File.WriteAllText(Path.Combine(root, "fixture.orig"), "tracked baseline\n");
+            File.WriteAllText(Path.Combine(root, "ordinary.txt"), "baseline\n");
+            RunGit(root, "add", "-A").ExitCode.Should().Be(0);
+            RunGit(root, "-c", "user.email=test@andy.local", "-c", "user.name=Test", "commit", "-m", "initial")
+                .ExitCode.Should().Be(0);
+
+            var run = CheckpointRun();
+            var expectedBranch = IRunBranchService.BranchNameFor(run.Id);
+            RunGit(root, "checkout", "-b", expectedBranch).ExitCode.Should().Be(0);
+
+            // A tracked backup-shaped fixture is normal repository content;
+            // an untracked backup-shaped file must remain intact but should
+            // not pollute the automatic checkpoint.
+            File.WriteAllText(Path.Combine(root, "fixture.orig"), "tracked changed\n");
+            File.WriteAllText(Path.Combine(root, "ordinary.txt"), "ordinary changed\n");
+            File.WriteAllText(Path.Combine(root, "notes.bak"), "user-owned untracked\n");
+            Directory.CreateDirectory(Path.Combine(root, ".andy", "inputs"));
+            Directory.CreateDirectory(Path.Combine(root, ".andy", "outputs"));
+            File.WriteAllText(Path.Combine(root, ".andy", "inputs", "sensitive.bin"), "service-staged input\n");
+            File.WriteAllText(Path.Combine(root, ".andy", "outputs", "run-summary.md"), "service-managed output\n");
+
+            var repo = CheckpointRepository(root);
+            var command = HeadlessRunner.BuildCheckpointCommand(run, repo);
+            var result = RunShell(command);
+
+            result.ExitCode.Should().Be(0, result.StdErr);
+            result.StdOut.Should().Contain("__ANDY_CHECKPOINT_EXCLUDED__=1");
+            result.StdOut.Should().Contain("__ANDY_CHECKPOINT_RUNTIME_ARTIFACTS_EXCLUDED__");
+            File.Exists(Path.Combine(root, "fixture.orig")).Should().BeTrue();
+            File.Exists(Path.Combine(root, "notes.bak")).Should().BeTrue();
+            File.Exists(Path.Combine(root, ".andy", "inputs", "sensitive.bin")).Should().BeTrue();
+            File.Exists(Path.Combine(root, ".andy", "outputs", "run-summary.md")).Should().BeTrue();
+            RunGit(root, "show", "HEAD:fixture.orig").StdOut.Should().Be("tracked changed\n");
+            RunGit(root, "show", "HEAD:ordinary.txt").StdOut.Should().Be("ordinary changed\n");
+            RunGit(root, "ls-tree", "-r", "--name-only", "HEAD").StdOut
+                .Should().NotContain("notes.bak");
+            RunGit(root, "ls-tree", "-r", "--name-only", "HEAD").StdOut
+                .Should().NotContain(".andy/");
+            RunGit(root, "status", "--porcelain").StdOut.Should().Contain("?? notes.bak");
+            RunGit(root, "status", "--porcelain").StdOut.Should().Contain("?? .andy/");
+            RunGit(root, "branch", "--show-current").StdOut.Trim().Should().Be(expectedBranch);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void BuildCheckpointCommand_OnBaseBranch_RefusesToStageOrCommit()
+    {
+        var root = Directory.CreateTempSubdirectory("andy-checkpoint-branch-").FullName;
+        try
+        {
+            InitializeGitRepository(root);
+            File.WriteAllText(Path.Combine(root, "tracked.txt"), "baseline\n");
+            RunGit(root, "add", "-A").ExitCode.Should().Be(0);
+            RunGit(root, "-c", "user.email=test@andy.local", "-c", "user.name=Test", "commit", "-m", "initial")
+                .ExitCode.Should().Be(0);
+            var before = RunGit(root, "rev-parse", "HEAD").StdOut.Trim();
+            File.WriteAllText(Path.Combine(root, "tracked.txt"), "must remain uncommitted\n");
+
+            var run = CheckpointRun();
+            var command = HeadlessRunner.BuildCheckpointCommand(run, CheckpointRepository(root));
+            var result = RunShell(command);
+
+            result.ExitCode.Should().Be(42);
+            result.StdErr.Should().Contain("[AC-CHECKPOINT-BRANCH]");
+            RunGit(root, "rev-parse", "HEAD").StdOut.Trim().Should().Be(before);
+            RunGit(root, "branch", "--show-current").StdOut.Trim().Should().Be("main");
+            RunGit(root, "diff", "--cached", "--quiet").ExitCode.Should().Be(0,
+                "the branch guard must run before git add");
+            RunGit(root, "status", "--porcelain").StdOut.Should().Contain(" M tracked.txt");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void BuildCheckpointCommand_OnDetachedHead_RefusesToStageOrCommit()
+    {
+        var root = Directory.CreateTempSubdirectory("andy-checkpoint-detached-").FullName;
+        try
+        {
+            InitializeGitRepository(root);
+            File.WriteAllText(Path.Combine(root, "tracked.txt"), "baseline\n");
+            RunGit(root, "add", "-A").ExitCode.Should().Be(0);
+            RunGit(root, "-c", "user.email=test@andy.local", "-c", "user.name=Test", "commit", "-m", "initial")
+                .ExitCode.Should().Be(0);
+            var before = RunGit(root, "rev-parse", "HEAD").StdOut.Trim();
+            RunGit(root, "checkout", "--detach", before).ExitCode.Should().Be(0);
+            File.WriteAllText(Path.Combine(root, "tracked.txt"), "must remain uncommitted\n");
+
+            var result = RunShell(HeadlessRunner.BuildCheckpointCommand(
+                CheckpointRun(), CheckpointRepository(root)));
+
+            result.ExitCode.Should().Be(42);
+            result.StdErr.Should().Contain("detached HEAD");
+            RunGit(root, "rev-parse", "HEAD").StdOut.Trim().Should().Be(before);
+            RunGit(root, "diff", "--cached", "--quiet").ExitCode.Should().Be(0);
+            RunGit(root, "status", "--porcelain").StdOut.Should().Contain(" M tracked.txt");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static Run CheckpointRun() => new()
+    {
+        Id = Guid.NewGuid(),
+        AgentId = "checkpoint-test",
+        Mode = RunMode.Headless,
+        EnvironmentProfileId = Guid.NewGuid(),
+    };
+
+    private static ContainerGitRepository CheckpointRepository(string root) => new()
+    {
+        Id = Guid.NewGuid(),
+        ContainerId = Guid.NewGuid(),
+        Url = "https://example.com/repo.git",
+        TargetPath = root,
+        CloneStatus = GitCloneStatus.Cloned,
+    };
+
+    private static void InitializeGitRepository(string root)
+    {
+        var init = RunGit(root, "init");
+        init.ExitCode.Should().Be(0, init.StdErr);
+        RunGit(root, "branch", "-M", "main").ExitCode.Should().Be(0);
+    }
+
+    private static ProcessResult RunGit(string root, params string[] arguments)
+    {
+        var allArguments = new List<string> { "-C", root };
+        allArguments.AddRange(arguments);
+        return RunProcess("git", allArguments);
+    }
+
+    private static ProcessResult RunShell(string command) =>
+        RunProcess("sh", new[] { "-c", command });
+
+    private static ProcessResult RunProcess(string fileName, IEnumerable<string> arguments)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Could not start {fileName}.");
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return new ProcessResult(process.ExitCode, stdout, stderr);
+    }
+
+    private sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
+
+    private void SeedClonedRepo(Guid containerId, string targetPath, GitCloneStatus status = GitCloneStatus.Cloned)
+    {
+        _db.ContainerGitRepositories.Add(new ContainerGitRepository
+        {
+            Id = Guid.NewGuid(),
+            ContainerId = containerId,
+            Url = "https://example.com/repo.git",
+            TargetPath = targetPath,
+            CloneStatus = status,
+        });
+        _db.SaveChanges();
+    }
+
+    private List<string> CaptureExec(int exitCode, string? stdOut = null, string? stdErr = null)
+    {
+        var commands = new List<string>();
+        _containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>((_, cmd, _, _) => commands.Add(cmd))
+            .ReturnsAsync(new ExecResult { ExitCode = exitCode, StdOut = stdOut, StdErr = stdErr });
+        return commands;
     }
 
     private static string WriteRealConfigWithInputs(params HeadlessInput[] inputs)

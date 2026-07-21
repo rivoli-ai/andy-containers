@@ -84,7 +84,9 @@ Modes pair with `EnvironmentProfile.Kind` via Epic X. A `HeadlessContainer` prof
 After the dispatcher selects the container (the `Run.ContainerId` assignment
 point, post-clone), `RunBranchService` checks out a deterministic per-run
 branch **`andy/run/{runId}`** in every *cloned* repo of the container, off the
-workspace's `GitBranch` base, via `git checkout -B` through
+workspace's `GitBranch` base. A retry checks out an existing run branch
+without resetting its ref; a first dispatch creates it with `git checkout -b`
+through
 `IInfrastructureProvider.ExecAsync` (the same exec surface `GitCloneService`
 uses — ARCHITECTURE §16, **not** a Docker-Engine verb, decision #17). The
 chosen name is persisted into `Run.WorkspaceRef.Branch` so it survives

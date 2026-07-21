@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
@@ -7,6 +8,7 @@ using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Andy.Containers.Storage;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Andy.Containers.Api.Services;
@@ -70,6 +72,18 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // a defensive default — every well-formed config carries
     // limits.timeout_seconds.
     private static readonly TimeSpan FallbackExecTimeout = TimeSpan.FromMinutes(15);
+
+    // conductor#2273. Ceiling for the post-success per-task commit exec. The
+    // command is branch guard + `git add -A` + exclusions + `git commit`; even a large
+    // working tree stages and commits well within a minute.
+    private static readonly TimeSpan CommitTimeout = TimeSpan.FromSeconds(60);
+
+    // Sentinel echoed by the commit command when `git diff --cached` finds an
+    // empty index, so the runner can distinguish "nothing to commit" (benign)
+    // from "committed" without parsing git's localised output.
+    private const string NoChangesMarker = "__ANDY_NO_CHANGES_TO_COMMIT__";
+    private const string ExcludedArtifactsMarker = "__ANDY_CHECKPOINT_EXCLUDED__=";
+    private const string ExcludedRuntimeArtifactsMarker = "__ANDY_CHECKPOINT_RUNTIME_ARTIFACTS_EXCLUDED__";
 
     public HeadlessRunner(
         IContainerService containers,
@@ -225,11 +239,58 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 CancellationToken.None);
         }
 
+        // The config is created before RunModeDispatcher prepares the isolated
+        // per-run branch. By launch time the detached runner has reloaded the
+        // Run after that checkout, so its WorkspaceRef.Branch is authoritative.
+        // Synchronise the copy staged into the container; otherwise andy-cli's
+        // branch-verification guard correctly rejects the stale base branch
+        // (for example config=main while /workspace is on andy/run/{runId}).
+        try
+        {
+            configJson = AlignWorkspaceBranchForLaunch(configJson, run);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or InvalidOperationException)
+        {
+            sw.Stop();
+            return await TerminateAsync(run, RunEventKind.Failed, RunStatus.Failed,
+                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds,
+                error: $"Headless config workspace branch could not be aligned with the runtime checkout: {ex.Message}",
+                CancellationToken.None);
+        }
+
         // base64 sidesteps every shell-escaping hazard the raw JSON would carry;
         // `base64 -d` is in the coreutils every andy-headless image ships.
         var inContainerConfigPath = $"/tmp/andy-runs/{run.Id}/config.json";
         var stageDir = $"/tmp/andy-runs/{run.Id}";
         var configB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(configJson));
+
+        // andy-cli#180: ANDY_TOKEN / ANDY_PROXY_URL / ANDY_MCP_URL are
+        // container-runtime identity, not run-authored headless env_vars.
+        // Mint the token at the launch boundary and pass all three only to the
+        // andy-cli process. This keeps trusted identity out of config.json and
+        // prevents a run config from redirecting or spoofing its own platform
+        // access. Token mint is mandatory; starting without identity would
+        // merely defer failure to the first authenticated MCP request.
+        RunToken runtimeToken;
+        try
+        {
+            runtimeToken = await _tokens.MintAsync(run.Id, execToken);
+        }
+        catch (OperationCanceledException) when (execToken.IsCancellationRequested)
+        {
+            return await TerminateAsync(run, RunEventKind.Cancelled, RunStatus.Cancelled,
+                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds,
+                error: "Cancelled while preparing runtime identity", CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Could not mint runtime identity for Run {RunId}; headless agent will not start.", run.Id);
+            return await TerminateAsync(run, RunEventKind.Failed, RunStatus.Failed,
+                exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds,
+                error: "Could not mint run-scoped runtime identity.", CancellationToken.None);
+        }
+        var runtimeIdentityPrefix = BuildRuntimeIdentityPrefix(runtimeToken.Token);
 
         // #2231. Mint a proxy token scoped to THIS run's actual model and
         // override OPENAI_API_KEY for the andy-cli process. The container's
@@ -260,20 +321,32 @@ public sealed class HeadlessRunner : IHeadlessRunner
         // steps stay CWD-agnostic (they use absolute /tmp paths).
         var workspaceRoot = ResolveWorkspaceRoot(configJson);
 
+        // Run the launch chain in a group, preserve its exact exit code, then
+        // remove this run's isolated config/NuGet tree before the exec ends.
+        // Keeping cleanup in the same exec covers every normal andy-cli exit
+        // without adding a second container call that could obscure launch
+        // failures. The path is derived solely from the validated run GUID.
         var command =
-            $"mkdir -p {ShellEscape(stageDir)} && "
+            $"(mkdir -p {ShellEscape(stageDir)} && "
+            + $"printf %s \"$$\" > {ShellEscape($"{stageDir}/.owner-pid")} && "
             + $"printf %s {ShellEscape(configB64)} | base64 -d > {ShellEscape(inContainerConfigPath)} && "
             + $"cd {ShellEscape(workspaceRoot)} && "
-            + $"{modelKeyPrefix}andy-cli run --headless --config {ShellEscape(inContainerConfigPath)}";
+            // NuGet package versions used by the CLI can be republished by
+            // internal feeds. Reusing the image-wide global-packages cache
+            // then triggers NU1403 (content hash differs from packages.lock).
+            // Give each run an isolated cache so restore verifies/downloads
+            // the package set for this checkout instead of inheriting stale
+            // bytes from an earlier run.
+            + $"NUGET_PACKAGES={ShellEscape($"{stageDir}/nuget")} "
+            + $"{runtimeIdentityPrefix}{modelKeyPrefix}andy-cli run --headless --config {ShellEscape(inContainerConfigPath)}); "
+            + "andy_run_exit=$?; "
+            + $"if [ -d {ShellEscape(stageDir)} ]; then find {ShellEscape(stageDir)} -depth -delete 2>/dev/null || true; fi; "
+            + "exit $andy_run_exit";
         var execTimeout = await ResolveExecTimeoutAsync(configPath, execToken);
 
-        // F4.1 (#1934). Resolve the literal run-scoped token so the
-        // output redactor can mask it from any echoed line. MintAsync is
-        // idempotent — for a run that already minted (the common path,
-        // via the configurator) this returns the SAME token rather than
-        // a new one. A failure here must never block the run, so we fall
-        // back to redactor's defensive ANDY_TOKEN=<value> regex.
-        var knownToken = await ResolveKnownTokenAsync(run.Id, execToken);
+        // F4.1 (#1934). The launch token is also the exact value the live
+        // output redactor must mask if a shell or child process echoes it.
+        var knownToken = runtimeToken.Token;
 
         ExecResult result;
         try
@@ -304,6 +377,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
             // Cancelled outcome — the runner doesn't distinguish.
             sw.Stop();
             _logger.LogWarning("Headless spawn for Run {RunId} cancelled (caller or registry signal)", run.Id);
+            await TryCleanupRunStageAsync(run.Id, containerId);
             return await TerminateAsync(run, RunEventKind.Cancelled, RunStatus.Cancelled,
                 exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds, error: "Cancelled", CancellationToken.None);
         }
@@ -314,6 +388,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
             sw.Stop();
             _logger.LogError(ex, "Headless spawn for Run {RunId} hit ExecAsync timeout after {Elapsed}s",
                 run.Id, sw.Elapsed.TotalSeconds);
+            await TryCleanupRunStageAsync(run.Id, containerId);
             return await TerminateAsync(run, RunEventKind.Timeout, RunStatus.Timeout,
                 exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds, error: "ExecAsync timeout", CancellationToken.None);
         }
@@ -321,6 +396,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
         {
             sw.Stop();
             _logger.LogError(ex, "Headless spawn for Run {RunId} failed before exit: {Message}", run.Id, ex.Message);
+            await TryCleanupRunStageAsync(run.Id, containerId);
             return await TerminateAsync(run, RunEventKind.Failed, RunStatus.Failed,
                 exitCode: null, durationSeconds: sw.Elapsed.TotalSeconds, error: ex.Message, CancellationToken.None);
         }
@@ -342,6 +418,24 @@ public sealed class HeadlessRunner : IHeadlessRunner
             "Run {RunId} exited with code {ExitCode} → {Kind}/{Status} after {Duration}s",
             run.Id, result.ExitCode, kind, status, durationSeconds);
 
+        // conductor#2273 (robust artifact handoff). On a SUCCESSFUL run,
+        // commit the agent's working-tree changes to the per-run branch
+        // BEFORE we collect artifacts and terminate. Without this the
+        // multi-task plan only "works" because run-branch checkout happens to
+        // preserve an uncommitted working tree from one task to the next —
+        // fragile (a conflicting checkout silently drops work) and it leaves
+        // the final PR branch with ZERO commits, so the PR-author task has
+        // nothing real to push. Committing turns the implicit FS-continuity
+        // into a durable, inspectable chain: each per-run branch is created
+        // at the prior branch's HEAD (RunBranchService creates without resetting), so the
+        // commits accumulate and the PR carries the whole goal's history.
+        // Best-effort: a commit failure must never turn a Succeeded run into
+        // a Failed one (the FS-continuity fallback still holds).
+        if (status == RunStatus.Succeeded && run.ContainerId is { } commitContainerId)
+        {
+            await CommitRunWorkAsync(run, commitContainerId, ct);
+        }
+
         // #2204. A non-zero exec used to surface only the raw stderr (and
         // *nothing* when stderr was empty — e.g. an exit-code-127 "andy-cli:
         // not found" that writes to a swallowed stream), so the user saw a
@@ -356,6 +450,47 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 ? null
                 : BuildExitFailureReason(result),
             ct);
+    }
+
+    /// <summary>
+    /// Best-effort fallback for exec cancellation/timeout paths where the
+    /// launch shell may have been terminated before its inline cleanup ran.
+    /// The GUID-only path is idempotent and cannot touch another run. Cleanup
+    /// errors are logged but never replace the run's real terminal outcome.
+    /// </summary>
+    private async Task TryCleanupRunStageAsync(Guid runId, Guid containerId)
+    {
+        var stageDir = $"/tmp/andy-runs/{runId}";
+        var q = ShellEscape(stageDir);
+        var command =
+            $"if [ -d {q} ]; then "
+            + $"owner=''; [ ! -f {ShellEscape($"{stageDir}/.owner-pid")} ] || owner=$(cat {ShellEscape($"{stageDir}/.owner-pid")} 2>/dev/null); "
+            + "case \"$owner\" in ''|*[!0-9]*) ;; *) if kill -0 \"$owner\" 2>/dev/null; then "
+            + "echo __ANDY_RUN_CACHE_ACTIVE__; exit 0; fi ;; esac; "
+            + $"find {q} -depth -delete; fi";
+        try
+        {
+            var result = await _containers.ExecAsync(
+                containerId, command, TimeSpan.FromSeconds(30), CancellationToken.None);
+            if (result.ExitCode != 0)
+            {
+                _logger.LogWarning(
+                    "Run {RunId}: isolated cache cleanup failed in container {ContainerId} (exit {Exit}): {Error}",
+                    runId, containerId, result.ExitCode, Tail(result.StdErr ?? string.Empty, 5, 400));
+            }
+            else if (result.StdOut?.Contains("__ANDY_RUN_CACHE_ACTIVE__", StringComparison.Ordinal) == true)
+            {
+                _logger.LogInformation(
+                    "Run {RunId}: cache cleanup deferred because the launch process is still alive in container {ContainerId}; the orphan reclaimer will retry.",
+                    runId, containerId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Run {RunId}: isolated cache cleanup could not execute in container {ContainerId}; the orphan reclaimer will retry.",
+                runId, containerId);
+        }
     }
 
     // #2204 / #2232. Compose the actionable failure reason carried on
@@ -651,6 +786,58 @@ public sealed class HeadlessRunner : IHeadlessRunner
         }
     }
 
+    // Trusted runtime identity assignments for the one andy-cli process.
+    // Values are shell-escaped and never logged. Missing optional URLs remain
+    // absent so a half-configured deployment fails as a missing route rather
+    // than receiving an empty or misleading value.
+    private string BuildRuntimeIdentityPrefix(string token)
+    {
+        var assignments = new List<string>
+        {
+            $"{EnvVarNames.AndyToken}={ShellEscape(token)}",
+        };
+
+        var proxyUrl = _configuration?[$"{SecretsOptions.SectionName}:ProxyUrl"];
+        if (!string.IsNullOrWhiteSpace(proxyUrl))
+        {
+            assignments.Add($"{EnvVarNames.AndyProxyUrl}={ShellEscape(proxyUrl.Trim())}");
+        }
+
+        var mcpUrl = _configuration?[$"{SecretsOptions.SectionName}:McpUrl"];
+        if (!string.IsNullOrWhiteSpace(mcpUrl))
+        {
+            assignments.Add($"{EnvVarNames.AndyMcpUrl}={ShellEscape(mcpUrl.Trim())}");
+        }
+
+        return string.Join(' ', assignments) + " ";
+    }
+
+    private string AlignWorkspaceBranchForLaunch(string configJson, Run run)
+    {
+        var runtimeBranch = run.WorkspaceRef?.Branch;
+        if (string.IsNullOrWhiteSpace(runtimeBranch))
+        {
+            return configJson;
+        }
+
+        var root = JsonNode.Parse(configJson) as JsonObject
+            ?? throw new InvalidDataException("config root must be a JSON object.");
+        var workspace = root["workspace"] as JsonObject
+            ?? throw new InvalidDataException("config workspace must be a JSON object.");
+        var configuredBranch = workspace["branch"]?.GetValue<string>();
+
+        if (string.Equals(configuredBranch, runtimeBranch, StringComparison.Ordinal))
+        {
+            return configJson;
+        }
+
+        workspace["branch"] = runtimeBranch;
+        _logger.LogInformation(
+            "Run {RunId}: aligned staged headless config workspace branch from {ConfiguredBranch} to runtime branch {RuntimeBranch}.",
+            run.Id, configuredBranch ?? "<unset>", runtimeBranch);
+        return root.ToJsonString(HeadlessConfigJson.Options);
+    }
+
     // conductor MSB1003 / andy-tasks#383. The directory the dispatched
     // coding-agent run must `cd` into before invoking andy-cli — the repo
     // checkout root. The on-disk headless config carries the authoritative
@@ -691,35 +878,6 @@ public sealed class HeadlessRunner : IHeadlessRunner
         }
         catch (Exception)
         {
-            return null;
-        }
-    }
-
-    // F4.1 (#1934). Best-effort resolution of the literal run-scoped
-    // token for redaction. MintAsync is idempotent, so for an already-
-    // minted run this hands back the existing token without creating a
-    // new one. Any failure (issuer down, swallowed) returns null and the
-    // redactor falls back to its ANDY_TOKEN=<value> env-echo regex.
-    private async Task<string?> ResolveKnownTokenAsync(Guid runId, CancellationToken ct)
-    {
-        if (_outputBus is null)
-        {
-            return null;
-        }
-        try
-        {
-            var token = await _tokens.MintAsync(runId, ct);
-            return token.Token;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "F4.1: could not resolve run-scoped token for Run {RunId} redaction; relying on env-echo regex.",
-                runId);
             return null;
         }
     }
@@ -855,10 +1013,149 @@ public sealed class HeadlessRunner : IHeadlessRunner
         return FallbackExecTimeout;
     }
 
+    // conductor#2273 (robust artifact handoff). Commit the agent's
+    // working-tree changes to the per-run branch after a SUCCESSFUL run.
+    //
+    // Multi-task plan execution shares ONE container per goal and one
+    // `/workspace` working tree; today the only reason task N's output reaches
+    // task N+1 is that RunBranchService's run-branch checkout
+    // happens to preserve an *uncommitted* tree across the per-run-branch
+    // reset. That is fragile (a conflicting checkout silently drops the work)
+    // and leaves the final PR-author branch with ZERO commits to push.
+    // Committing here makes accumulation explicit and durable: because each
+    // new per-run branch is created at the prior HEAD, the commits chain and
+    // the final PR carries the whole goal's history.
+    //
+    // Contract: best-effort and idempotent. No cloned repos, no changes, or a
+    // commit failure all leave the run Succeeded — the worst case degrades to
+    // the prior FS-continuity behaviour, never a false Failed.
+    private async Task CommitRunWorkAsync(Run run, Guid containerId, CancellationToken ct)
+    {
+        List<ContainerGitRepository> repos;
+        try
+        {
+            repos = await _db.ContainerGitRepositories
+                .Where(r => r.ContainerId == containerId && r.CloneStatus == GitCloneStatus.Cloned)
+                .OrderBy(r => r.CreatedAt)
+                .ToListAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Run {RunId}: could not enumerate cloned repos in container {ContainerId} for per-task commit; skipping.",
+                run.Id, containerId);
+            return;
+        }
+
+        if (repos.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var repo in repos)
+        {
+            try
+            {
+                var command = BuildCheckpointCommand(run, repo);
+
+                var result = await _containers.ExecAsync(containerId, command, CommitTimeout, ct);
+
+                if (result.ExitCode != 0)
+                {
+                    _logger.LogWarning(
+                        "Run {RunId}: per-task commit in repo {RepoPath} (container {ContainerId}) failed (exit {Exit}): {Err}",
+                        run.Id, repo.TargetPath, containerId, result.ExitCode, Tail(result.StdErr ?? string.Empty, 5, 400));
+                    continue;
+                }
+
+                var excludedDiagnostic = result.StdOut?
+                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault(line => line.StartsWith(ExcludedArtifactsMarker, StringComparison.Ordinal));
+                if (excludedDiagnostic is not null)
+                {
+                    _logger.LogInformation(
+                        "Run {RunId}: excluded {Count} untracked backup-shaped artifact(s) from checkpoint in repo {RepoPath}; files were preserved.",
+                        run.Id,
+                        excludedDiagnostic[ExcludedArtifactsMarker.Length..],
+                        repo.TargetPath);
+                }
+                if (result.StdOut?.Contains(ExcludedRuntimeArtifactsMarker, StringComparison.Ordinal) == true)
+                {
+                    _logger.LogInformation(
+                        "Run {RunId}: excluded service-managed .andy/inputs and .andy/outputs artifacts from checkpoint in repo {RepoPath}; files were preserved for handoff and collection.",
+                        run.Id, repo.TargetPath);
+                }
+
+                if (result.StdOut?.Contains(NoChangesMarker, StringComparison.Ordinal) == true)
+                {
+                    _logger.LogInformation(
+                        "Run {RunId}: no working-tree changes to commit in repo {RepoPath}.",
+                        run.Id, repo.TargetPath);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Run {RunId}: committed task work to per-run branch in repo {RepoPath} (container {ContainerId}).",
+                        run.Id, repo.TargetPath, containerId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Run {RunId}: error committing task work in repo {RepoPath} (container {ContainerId}); skipping.",
+                    run.Id, repo.TargetPath, containerId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Builds the guarded checkpoint command. The branch check is deliberately
+    /// inside the same exec as staging, closing the time-of-check/time-of-use
+    /// gap after best-effort branch preparation. Untracked backup-shaped files
+    /// are recorded before <c>git add</c> and then unstaged; they remain intact
+    /// in the working tree. Tracked files with the same names are ordinary
+    /// repository content and are never deleted or implicitly excluded.
+    /// </summary>
+    internal static string BuildCheckpointCommand(Run run, ContainerGitRepository repo)
+    {
+        var q = GitCloneService.ShellQuote(repo.TargetPath);
+        var expectedBranch = IRunBranchService.BranchNameFor(run.Id);
+        var expected = ShellEscape(expectedBranch);
+        var excludedTemplate = ShellEscape(
+            $"/tmp/andy-checkpoint-excluded-{run.Id}-{repo.Id}.XXXXXX");
+        var message = $"andy run {run.Id}: task work checkpoint";
+
+        return
+            $"actual_branch=$(git -C {q} symbolic-ref --quiet --short HEAD) || "
+            + $"{{ echo '[AC-CHECKPOINT-BRANCH] detached HEAD; expected {expectedBranch}' >&2; exit 42; }}; "
+            + $"if [ \"$actual_branch\" != {expected} ]; then "
+            + $"echo \"[AC-CHECKPOINT-BRANCH] expected {expectedBranch}, found $actual_branch\" >&2; exit 42; fi; "
+            + $"excluded=$(mktemp {excludedTemplate}) || exit 43; trap 'rm -f \"$excluded\"' EXIT; "
+            + $"git -C {q} ls-files --others --exclude-standard -z -- "
+            + "':(glob)**/*.backup.*' ':(glob)**/*.bak' ':(glob)**/*.orig' ':(glob)**/*.rej' "
+            + "> \"$excluded\" && "
+            + "excluded_count=$(tr -cd '\\000' < \"$excluded\" | wc -c | tr -d ' ') && "
+            + $"git -C {q} add -A && "
+            // Inputs can contain sensitive cross-run material and outputs are
+            // collected through the artifact service. Neither service-owned
+            // tree belongs in the user's branch or eventual PR. Reset only
+            // the index entries, preserving every file in the working tree.
+            + $"if git -C {q} diff --cached --quiet -- ':(top).andy/inputs' ':(top).andy/outputs'; then :; "
+            + $"else git -C {q} reset -q HEAD -- ':(top).andy/inputs' ':(top).andy/outputs' && "
+            + $"echo {ExcludedRuntimeArtifactsMarker}; fi && "
+            + "if [ -s \"$excluded\" ]; then "
+            + $"git -C {q} restore --staged \"--pathspec-from-file=$excluded\" --pathspec-file-nul && "
+            + $"echo {ExcludedArtifactsMarker}$excluded_count; fi && "
+            + "rm -f \"$excluded\" && trap - EXIT && "
+            + $"(git -C {q} diff --cached --quiet "
+            + $"&& echo {ShellEscape(NoChangesMarker)} "
+            + $"|| git -C {q} -c user.email='agent@andy.rivoli.ai' -c user.name='Andy Agent' commit -m {ShellEscape(message)} --no-verify)";
+    }
+
     // POSIX single-quote escape — safe for /bin/sh -c "...". Single quotes
     // close, '\'' inserts a literal quote, single quotes reopen. We don't
-    // bother covering edge cases (NULs etc.) because configPath comes
-    // from HeadlessConfigWriter which mints filesystem-safe paths.
+    // bother covering NUL because all callers use application-controlled
+    // paths, GUIDs, branch names, messages, or encoded values.
     private static string ShellEscape(string value)
         => "'" + value.Replace("'", "'\\''") + "'";
 
