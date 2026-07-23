@@ -130,6 +130,9 @@ public static class RunOutputSse
         HttpResponse response, RunOutputEnvelope envelope, CancellationToken ct)
     {
         var payload = new RunOutputWire(
+            envelope.RunId,
+            envelope.AttemptId,
+            envelope.SequenceNumber,
             envelope.Line.Stream,
             envelope.Line.Line,
             envelope.Line.Timestamp);
@@ -144,8 +147,11 @@ public static class RunOutputSse
     }
 
     // Wire shape consumed by Conductor's LogEventPayload decoder:
-    // { stream: "stdout"|"stderr", line: string, timestamp: ISO-8601 }.
+    // { runId, attemptId, sequence, stream, line, timestamp }.
     private sealed record RunOutputWire(
+        Guid RunId,
+        Guid AttemptId,
+        long Sequence,
         RunOutputStream Stream,
         string Line,
         DateTimeOffset Timestamp);

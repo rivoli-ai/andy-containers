@@ -303,6 +303,34 @@ public class InMemoryRunOutputBusTests
         return lines;
     }
 
+    [Fact]
+    public async Task AttemptCorrelatedOutput_UsesSharedMonotonicSequenceAndReconnectCursor()
+    {
+        using var bus = new InMemoryRunOutputBus();
+        var runId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
+
+        var first = bus.Publish(runId, Line(RunOutputStream.Stdout, "one"), attemptId);
+        var second = bus.Publish(runId, Line(RunOutputStream.Stdout, "two"), attemptId);
+        bus.Complete(runId);
+
+        second.SequenceNumber.Should().BeGreaterThan(first.SequenceNumber);
+        second.AttemptId.Should().Be(attemptId);
+        second.RunId.Should().Be(runId);
+
+        var replay = new List<RunOutputEnvelope>();
+        await foreach (var envelope in bus.SubscribeAsync(
+            runId,
+            first.SequenceNumber,
+            CancellationToken.None))
+        {
+            replay.Add(envelope);
+        }
+
+        replay.Should().ContainSingle()
+            .Which.Line.Line.Should().Be("two");
+    }
+
     private static RunOutputLine Line(RunOutputStream stream, string text)
         => new(stream, text, DateTimeOffset.UtcNow);
 }

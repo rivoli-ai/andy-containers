@@ -35,13 +35,17 @@ public static class RunEventOutbox
         double? durationSeconds = null,
         IReadOnlyList<RunOutputArtifact>? outputArtifacts = null)
     {
+        var occurredAt = DateTimeOffset.UtcNow;
         var payload = new RunEventPayload(
             RunId: container.Id,
             StoryId: container.StoryId,
             Status: container.Status.ToString(),
             ExitCode: exitCode,
             DurationSeconds: durationSeconds,
-            OutputArtifacts: outputArtifacts);
+            OutputArtifacts: outputArtifacts,
+            AttemptId: container.Id,
+            Sequence: RunEventSequence.Next(container.Id),
+            OccurredAt: occurredAt);
 
         var subject = $"andy.containers.events.run.{container.Id}.{kind.ToSubjectKind()}";
 
@@ -56,7 +60,7 @@ public static class RunEventOutbox
             CorrelationId = correlationId,
             CausationId = null,
             Generation = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = occurredAt
         });
     }
 
@@ -111,7 +115,9 @@ public static class RunEventOutbox
         RunEventKind kind,
         int? exitCode = null,
         double? durationSeconds = null,
-        IReadOnlyList<RunOutputArtifact>? outputArtifacts = null)
+        IReadOnlyList<RunOutputArtifact>? outputArtifacts = null,
+        RunProgress? progress = null,
+        RunEventOutput? output = null)
     {
         // Persist onto the Run row first so the payload and the entity
         // agree byte-for-byte (the payload reads `run.OutputArtifacts`
@@ -127,6 +133,9 @@ public static class RunEventOutbox
         // code + stderr tail) instead of a synthesised "ended with Failed."
         // Run.Error is set by the runner before this append on every
         // non-success terminal path; null for a clean success.
+        var occurredAt = DateTimeOffset.UtcNow;
+        var sequence = RunEventSequence.Next(run.Id);
+        var attemptId = run.AttemptId == Guid.Empty ? run.Id : run.AttemptId;
         var payload = new RunEventPayload(
             RunId: run.Id,
             StoryId: null,
@@ -134,7 +143,12 @@ public static class RunEventOutbox
             ExitCode: exitCode,
             DurationSeconds: durationSeconds,
             OutputArtifacts: outputArtifacts,
-            Error: run.Error);
+            Error: run.Error,
+            AttemptId: attemptId,
+            Sequence: sequence,
+            OccurredAt: occurredAt,
+            Progress: progress,
+            Output: output);
 
         var subject = $"andy.containers.events.run.{run.Id}.{kind.ToSubjectKind()}";
 
@@ -149,7 +163,7 @@ public static class RunEventOutbox
             CorrelationId = correlationId,
             CausationId = null,
             Generation = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = occurredAt
         });
     }
 }

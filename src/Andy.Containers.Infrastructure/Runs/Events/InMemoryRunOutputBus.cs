@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using Andy.Containers.Messaging.Events;
 using Andy.Containers.Storage;
 
 namespace Andy.Containers.Infrastructure.Runs.Events;
@@ -29,16 +30,19 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
         _options = options ?? new RunOutputBusOptions();
     }
 
-    public void Publish(Guid runId, RunOutputLine line)
+    public RunOutputEnvelope Publish(
+        Guid runId,
+        RunOutputLine line,
+        Guid? attemptId = null)
     {
         ArgumentNullException.ThrowIfNull(line);
-        var channel = _channels.GetOrAdd(runId, _ => new RunChannel(_options.BufferSize));
-        channel.Publish(line);
+        var channel = _channels.GetOrAdd(runId, _ => new RunChannel(runId, _options.BufferSize));
+        return channel.Publish(line, attemptId);
     }
 
     public void Complete(Guid runId)
     {
-        var channel = _channels.GetOrAdd(runId, _ => new RunChannel(_options.BufferSize));
+        var channel = _channels.GetOrAdd(runId, _ => new RunChannel(runId, _options.BufferSize));
         channel.MarkTerminal();
     }
 
@@ -50,7 +54,7 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
         DateTimeOffset? since = null,
         bool follow = true)
     {
-        var channel = _channels.GetOrAdd(runId, _ => new RunChannel(_options.BufferSize));
+        var channel = _channels.GetOrAdd(runId, _ => new RunChannel(runId, _options.BufferSize));
         var subscription = channel.Subscribe(
             _options.SubscriberQueueSize,
             lastEventId,
@@ -96,19 +100,21 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
     private sealed class RunChannel : IDisposable
     {
         private readonly object _lock = new();
+        private readonly Guid _runId;
         private readonly int _bufferSize;
         private readonly Queue<RunOutputEnvelope> _buffer;
         private readonly List<Subscription> _subscribers = [];
-        private long _nextSequence = 1;
+        private long _nextLegacySequence = 1;
         private bool _terminalSeen;
 
-        public RunChannel(int bufferSize)
+        public RunChannel(Guid runId, int bufferSize)
         {
+            _runId = runId;
             _bufferSize = bufferSize;
             _buffer = new Queue<RunOutputEnvelope>(bufferSize);
         }
 
-        public void Publish(RunOutputLine line)
+        public RunOutputEnvelope Publish(RunOutputLine line, Guid? attemptId)
         {
             RunOutputEnvelope envelope;
             List<Subscription> snapshot;
@@ -120,10 +126,22 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
                 // BuildCompletedEvent.
                 if (_terminalSeen)
                 {
-                    return;
+                    return new RunOutputEnvelope(
+                        attemptId is null
+                            ? _nextLegacySequence++
+                            : RunEventSequence.Next(_runId),
+                        _runId,
+                        attemptId ?? _runId,
+                        line);
                 }
 
-                envelope = new RunOutputEnvelope(_nextSequence++, line);
+                envelope = new RunOutputEnvelope(
+                    attemptId is null
+                        ? _nextLegacySequence++
+                        : RunEventSequence.Next(_runId),
+                    _runId,
+                    attemptId ?? _runId,
+                    line);
                 if (_buffer.Count >= _bufferSize)
                 {
                     _buffer.Dequeue();
@@ -136,6 +154,7 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
             {
                 sub.TryWrite(envelope);
             }
+            return envelope;
         }
 
         public void MarkTerminal()

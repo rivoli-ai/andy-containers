@@ -15,8 +15,12 @@ namespace Andy.Containers.Models;
 public sealed record RunEventDto
 {
     public required Guid RunId { get; init; }
+    // Non-required CLR members preserve tolerant deserialization of v1-v4
+    // NDJSON. New v5 producers always populate both.
+    public Guid AttemptId { get; init; }
+    public long Sequence { get; init; }
     public required string Subject { get; init; }
-    /// <summary>One of <c>finished</c>, <c>failed</c>, <c>cancelled</c>, <c>timeout</c>.</summary>
+    /// <summary>Lifecycle kind encoded by the final NATS subject token.</summary>
     public required string Kind { get; init; }
     /// <summary>Mirrors the run's status at emission (e.g. <c>Cancelled</c>, <c>Succeeded</c>).</summary>
     public required string Status { get; init; }
@@ -24,6 +28,8 @@ public sealed record RunEventDto
     public double? DurationSeconds { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
     public required Guid CorrelationId { get; init; }
+    public RunProgress? Progress { get; init; }
+    public RunEventOutput? Output { get; init; }
 
     /// <summary>
     /// Parse an <see cref="OutboxEntry"/> into a <see cref="RunEventDto"/>.
@@ -54,13 +60,17 @@ public sealed record RunEventDto
         return new RunEventDto
         {
             RunId = payload.RunId,
+            AttemptId = payload.AttemptId ?? payload.RunId,
+            Sequence = payload.Sequence ?? entry.CreatedAt.UtcTicks,
             Subject = entry.Subject,
             Kind = kind,
             Status = payload.Status,
             ExitCode = payload.ExitCode,
             DurationSeconds = payload.DurationSeconds,
-            Timestamp = entry.CreatedAt,
+            Timestamp = payload.OccurredAt ?? entry.CreatedAt,
             CorrelationId = entry.CorrelationId,
+            Progress = payload.Progress,
+            Output = payload.Output,
         };
     }
 }

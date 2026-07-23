@@ -290,11 +290,29 @@ public sealed class ContainersClient
         string id,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        await foreach (var evt in StreamRunEventsAsync(id, null, ct))
+        {
+            yield return evt;
+        }
+    }
+
+    /// <summary>
+    /// Resume a run lifecycle stream after an already-observed sequence.
+    /// </summary>
+    public async IAsyncEnumerable<RunEventDto> StreamRunEventsAsync(
+        string id,
+        long? afterSequence,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
         // HttpCompletionOption.ResponseHeadersRead unblocks Send before
         // the body arrives so we can iterate as bytes land — without it
         // HttpClient buffers the whole response and the streaming UX
         // collapses to one batch at terminal.
         using var request = new HttpRequestMessage(HttpMethod.Get, $"api/runs/{id}/events");
+        if (afterSequence is { } cursor)
+        {
+            request.Headers.TryAddWithoutValidation("Last-Event-ID", cursor.ToString());
+        }
         using var response = await _http.SendAsync(
             request, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessAsync(response, ct);

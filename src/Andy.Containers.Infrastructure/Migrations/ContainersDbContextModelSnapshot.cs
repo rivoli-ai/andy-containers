@@ -999,6 +999,9 @@ namespace Andy.Containers.Infrastructure.Migrations
                     b.Property<int?>("AgentRevision")
                         .HasColumnType("integer");
 
+                    b.Property<Guid>("AttemptId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("ContainerId")
                         .HasColumnType("uuid");
 
@@ -1051,6 +1054,8 @@ namespace Andy.Containers.Infrastructure.Migrations
                     b.HasIndex("AgentId");
 
                     b.HasIndex("CorrelationId");
+
+                    b.HasIndex("CorrelationId", "AttemptId");
 
                     b.HasIndex("Status");
 

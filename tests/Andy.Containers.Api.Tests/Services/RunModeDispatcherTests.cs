@@ -4,6 +4,7 @@ using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -81,6 +82,15 @@ public class RunModeDispatcherTests : IDisposable
         // container assignment.
         run.Status.Should().Be(RunStatus.Provisioning);
         _launcher.Verify(l => l.Launch(run.Id, ConfigPath), Times.Once);
+
+        var activity = (await _db.OutboxEntries.ToListAsync())
+            .Select(RunEventDto.FromOutbox)
+            .Where(e => e is not null)
+            .Cast<RunEventDto>()
+            .OrderBy(e => e.Sequence)
+            .ToList();
+        activity.Select(e => e.Kind).Should().Equal("provisioning", "ready");
+        activity.Select(e => e.Sequence).Should().BeInAscendingOrder();
     }
 
     [Fact]

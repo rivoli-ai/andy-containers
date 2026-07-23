@@ -32,6 +32,12 @@ public class CreateRunRequest
     public Guid? CorrelationId { get; set; }
 
     /// <summary>
+    /// Optional identity for this concrete attempt. Defaults to the generated
+    /// run id when omitted.
+    /// </summary>
+    public Guid? AttemptId { get; set; }
+
+    /// <summary>
     /// The concrete task objective (the andy-tasks TaskNode's
     /// delegation-contract objective). The configurator bakes it into the
     /// headless agent's system prompt so the in-container agent acts on the
@@ -91,6 +97,7 @@ public class RunDto
     public int? ExitCode { get; set; }
     public string? Error { get; set; }
     public Guid CorrelationId { get; set; }
+    public Guid AttemptId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public RunLinks Links { get; set; } = new();
@@ -118,6 +125,7 @@ public class RunDto
             ExitCode = run.ExitCode,
             Error = run.Error,
             CorrelationId = run.CorrelationId,
+            AttemptId = run.AttemptId == Guid.Empty ? run.Id : run.AttemptId,
             CreatedAt = run.CreatedAt,
             UpdatedAt = run.UpdatedAt,
             Links = new RunLinks

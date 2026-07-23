@@ -134,6 +134,25 @@ public class ContainersClientTests
     }
 
     [Fact]
+    public async Task StreamRunEventsAsync_AfterSequence_SendsLastEventId()
+    {
+        var handler = new CannedHandler("", "application/x-ndjson");
+        var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://example.local/"),
+        };
+        var client = new ContainersClient(http);
+
+        await foreach (var _ in client.StreamRunEventsAsync(
+            Guid.NewGuid().ToString(),
+            12345))
+        {
+        }
+
+        handler.LastEventId.Should().Be("12345");
+    }
+
+    [Fact]
     public async Task StreamRunEventsAsync_404Response_ThrowsContainersApiException()
     {
         var http = new HttpClient(new CannedHandler("not found", "text/plain", HttpStatusCode.NotFound))
@@ -211,6 +230,7 @@ public class ContainersClientTests
 
         public Uri? LastRequestUri { get; private set; }
         public HttpMethod? LastMethod { get; private set; }
+        public string? LastEventId { get; private set; }
 
         public CannedHandler(string body, string contentType, HttpStatusCode status = HttpStatusCode.OK)
         {
@@ -223,6 +243,9 @@ public class ContainersClientTests
         {
             LastRequestUri = request.RequestUri;
             LastMethod = request.Method;
+            LastEventId = request.Headers.TryGetValues("Last-Event-ID", out var values)
+                ? values.Single()
+                : null;
             var content = new ByteArrayContent(_body);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_contentType);
             return Task.FromResult(new HttpResponseMessage(_status) { Content = content });

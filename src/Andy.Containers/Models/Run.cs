@@ -49,6 +49,12 @@ public class Run
     /// <summary>Root causation id per ADR-0001 header semantics.</summary>
     public Guid CorrelationId { get; set; }
 
+    /// <summary>
+    /// Identity of this concrete execution attempt. Defaults to the run id
+    /// when the caller does not provide one.
+    /// </summary>
+    public Guid AttemptId { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;

@@ -87,6 +87,32 @@ public class HeadlessRunnerTests : IDisposable
         doc.RootElement.GetProperty("exit_code").GetInt32().Should().Be(0);
     }
 
+    [Fact]
+    public async Task StartAsync_AttemptCorrelatedRun_EmitsRunningProgressAndTerminalInOrder()
+    {
+        var run = SeedRun();
+        run.AttemptId = Guid.NewGuid();
+        await _db.SaveChangesAsync();
+        SetupExec(run.ContainerId!.Value, exitCode: 0, stdOut: "ok");
+
+        await _runner.StartAsync(run, _configPath);
+
+        var events = (await _db.OutboxEntries.ToListAsync())
+            .Select(RunEventDto.FromOutbox)
+            .Where(e => e is not null)
+            .Cast<RunEventDto>()
+            .OrderBy(e => e.Sequence)
+            .ToList();
+
+        events.Select(e => e.Kind)
+            .Should().Equal("provisioning", "running", "progress", "finished");
+        events.Select(e => e.AttemptId)
+            .Should().OnlyContain(id => id == run.AttemptId);
+        events.Select(e => e.Sequence).Should().BeInAscendingOrder();
+        events.Single(e => e.Kind == "progress").Progress
+            .Should().Be(new RunProgress("Agent execution started.", 0));
+    }
+
     [Theory]
     [InlineData(1, RunEventKind.Failed, RunStatus.Failed, "failed")]
     [InlineData(2, RunEventKind.Failed, RunStatus.Failed, "failed")]

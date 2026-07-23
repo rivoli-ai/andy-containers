@@ -5,6 +5,7 @@ using Andy.Containers.Abstractions;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Messaging;
+using Andy.Containers.Messaging;
 using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Andy.Containers.Storage;
@@ -36,6 +37,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // stderr line is published (token-redacted) as it lands, and the
     // run's output stream is marked terminal on every exit path.
     private readonly IRunOutputBus? _outputBus;
+    private readonly IMessageBus? _messageBus;
 
     // #2231. Optional per-run model-scoped proxy-token mint. The container's
     // create-time OPENAI_API_KEY is scoped only to the container-default
@@ -97,7 +99,8 @@ public sealed class HeadlessRunner : IHeadlessRunner
         IProxyTokenService? proxyTokenService = null,
         Microsoft.Extensions.Configuration.IConfiguration? configuration = null,
         IGitCredentialMaterializer? gitCredentialMaterializer = null,
-        IContainerToolProvisioner? toolProvisioner = null)
+        IContainerToolProvisioner? toolProvisioner = null,
+        IMessageBus? messageBus = null)
     {
         _containers = containers;
         _db = db;
@@ -107,6 +110,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
         _artifactCollector = artifactCollector;
         _inputStager = inputStager;
         _outputBus = outputBus;
+        _messageBus = messageBus;
         _proxyTokenService = proxyTokenService;
         _configuration = configuration;
         _gitCredentialMaterializer = gitCredentialMaterializer;
@@ -143,8 +147,20 @@ public sealed class HeadlessRunner : IHeadlessRunner
         // is a no-op if the run isn't actually in Provisioning (e.g. a test
         // hands us a Pending run directly), which keeps the runner usable
         // standalone without forcing every caller through the dispatcher.
-        SafeTransition(run, RunStatus.Provisioning);
-        SafeTransition(run, RunStatus.Running);
+        if (SafeTransition(run, RunStatus.Provisioning)
+            && run.AttemptId != Guid.Empty)
+        {
+            _db.AppendAgentRunEvent(run, RunEventKind.Provisioning);
+        }
+        if (SafeTransition(run, RunStatus.Running)
+            && run.AttemptId != Guid.Empty)
+        {
+            _db.AppendAgentRunEvent(run, RunEventKind.Running);
+            _db.AppendAgentRunEvent(
+                run,
+                RunEventKind.Progress,
+                progress: new RunProgress("Agent execution started.", 0));
+        }
         await _db.SaveChangesAsync(ct);
 
         // AP7 (rivoli-ai/andy-containers#109). Register so the cancel
@@ -361,7 +377,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 // redacted, tagged with its stream kind.
                 result = await _containers.ExecStreamingAsync(
                     containerId, command, execTimeout,
-                    chunk => PublishOutputLine(run.Id, chunk, knownToken),
+                    chunk => PublishOutputLine(run, chunk, knownToken),
                     execToken);
             }
             else
@@ -682,22 +698,24 @@ public sealed class HeadlessRunner : IHeadlessRunner
         };
     }
 
-    private void SafeTransition(Run run, RunStatus next)
+    private bool SafeTransition(Run run, RunStatus next)
     {
         if (!RunStatusTransitions.CanTransition(run.Status, next))
         {
-            return;
+            return false;
         }
 
         try
         {
             run.TransitionTo(next);
+            return true;
         }
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex,
                 "Run {RunId} could not transition {From} → {To}: {Message}",
                 run.Id, run.Status, next, ex.Message);
+            return false;
         }
     }
 
@@ -885,7 +903,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
     // F4.1 (#1934). Publish one streamed exec line to the run-output bus,
     // redacted. Never throws — a publish failure must not interrupt the
     // exec drain loop.
-    private void PublishOutputLine(Guid runId, ExecOutputChunk chunk, string? knownToken)
+    private void PublishOutputLine(Run run, ExecOutputChunk chunk, string? knownToken)
     {
         try
         {
@@ -893,13 +911,59 @@ public sealed class HeadlessRunner : IHeadlessRunner
             var stream = chunk.Stream == ExecStreamKind.Stderr
                 ? RunOutputStream.Stderr
                 : RunOutputStream.Stdout;
-            _outputBus!.Publish(runId, new RunOutputLine(stream, redacted, DateTimeOffset.UtcNow));
+            var timestamp = DateTimeOffset.UtcNow;
+            var envelope = _outputBus!.Publish(
+                run.Id,
+                new RunOutputLine(stream, redacted, timestamp),
+                run.AttemptId == Guid.Empty ? null : run.AttemptId);
+
+            if (_messageBus is not null && run.AttemptId != Guid.Empty)
+            {
+                _ = PublishOutputEventAsync(run, envelope, stream, redacted, timestamp);
+            }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
                 "F4.1: failed to publish run-output line for Run {RunId}: {Message}",
-                runId, ex.Message);
+                run.Id, ex.Message);
+        }
+    }
+
+    private async Task PublishOutputEventAsync(
+        Run run,
+        RunOutputEnvelope envelope,
+        RunOutputStream stream,
+        string line,
+        DateTimeOffset occurredAt)
+    {
+        try
+        {
+            var payload = new RunEventPayload(
+                RunId: run.Id,
+                StoryId: null,
+                Status: run.Status.ToString(),
+                ExitCode: null,
+                DurationSeconds: null,
+                AttemptId: envelope.AttemptId,
+                Sequence: envelope.SequenceNumber,
+                OccurredAt: occurredAt,
+                Output: new RunEventOutput(stream.ToString().ToLowerInvariant(), line));
+            var headers = MessageHeaders.NewRoot(
+                run.CorrelationId == Guid.Empty ? run.Id : run.CorrelationId);
+            await _messageBus!.PublishAsync(
+                $"andy.containers.events.run.{run.Id}.output",
+                payload,
+                headers,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to publish ephemeral output event for Run {RunId}: {Message}",
+                run.Id,
+                ex.Message);
         }
     }
 

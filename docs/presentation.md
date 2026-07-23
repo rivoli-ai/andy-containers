@@ -211,20 +211,26 @@ andy.containers.events.run.{runId}.{kind}
 
 **Kinds** (`Messaging/Events/RunEvents.cs`):
 
+- `.queued` / `.provisioning` / `.ready` / `.running` — durable attempt lifecycle
+- `.progress` — durable structured progress
+- `.output` — live stdout/stderr (ephemeral direct publish)
 - `.finished` — graceful stop
 - `.failed` — provisioning or runtime error
 - `.cancelled` — explicit destroy
+- `.timeout` — watchdog timeout
 
 **Payload** (`RunEventPayload`, snake_case):
 
 ```json
-{ "run_id": "…", "story_id": "…|null",
+{ "run_id": "…", "attempt_id": "…", "sequence": 639204260290755790,
+  "occurred_at": "2026-07-23T17:53:49Z", "story_id": "…|null",
   "status": "Finished|Failed|Cancelled",
   "exit_code": 0, "duration_seconds": 125.5,
-  "schema_version": 1 }
+  "schema_version": 5 }
 ```
 
-Published via an **outbox** → `OutboxDispatcher` → NATS. Andy Issues subscribes via its Story 15.6 consumer.
+Lifecycle events publish via an **outbox** → `OutboxDispatcher` → NATS;
+live `.output` events publish directly and share the attempt sequence.
 
 ---
 

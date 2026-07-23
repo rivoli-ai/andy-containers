@@ -114,6 +114,36 @@ public class RunEventStreamTests : IDisposable
     }
 
     [Fact]
+    public async Task AfterSequence_ReplaysOnlyNewerLifecycleEvents()
+    {
+        var run = SeedRun(RunStatus.Succeeded);
+        _db.AppendAgentRunEvent(run, RunEventKind.Queued);
+        _db.AppendAgentRunEvent(run, RunEventKind.Running);
+        _db.AppendAgentRunEvent(run, RunEventKind.Finished);
+        await _db.SaveChangesAsync();
+
+        var all = (await _db.OutboxEntries.ToListAsync())
+            .Select(RunEventDto.FromOutbox)
+            .Where(e => e is not null)
+            .Cast<RunEventDto>()
+            .OrderBy(e => e.Sequence)
+            .ToList();
+
+        var collected = new List<RunEventDto>();
+        await foreach (var evt in RunEventStream.AsyncEnumerate(
+            _db,
+            run.Id,
+            FastPoll,
+            afterSequence: all[0].Sequence))
+        {
+            collected.Add(evt);
+        }
+
+        collected.Select(e => e.Kind).Should().Equal("running", "finished");
+        collected.Select(e => e.Sequence).Should().BeInAscendingOrder();
+    }
+
+    [Fact]
     public async Task UnknownRun_TerminatesImmediately()
     {
         // Run row not in DB → helper exits cleanly without yielding.

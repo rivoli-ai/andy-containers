@@ -37,6 +37,10 @@ namespace Andy.Containers.Messaging.Events;
 // Nullable + omitted-when-null so pre-v4 consumers deserialise unchanged;
 // consumers that opt in surface it as the task-failure reason instead of
 // the synthesised placeholder.
+//
+// v5 (#380) adds AttemptId, Sequence, OccurredAt, Progress, and Output.
+// Agent lifecycle rows use the transactional outbox; live output uses the
+// same payload on the `.output` subject and the same sequence on SSE frames.
 public sealed record RunEventPayload(
     Guid RunId,
     Guid? StoryId,
@@ -44,13 +48,16 @@ public sealed record RunEventPayload(
     int? ExitCode,
     double? DurationSeconds,
     IReadOnlyList<RunOutputArtifact>? OutputArtifacts = null,
-    string? Error = null)
+    string? Error = null,
+    Guid? AttemptId = null,
+    long? Sequence = null,
+    DateTimeOffset? OccurredAt = null,
+    RunProgress? Progress = null,
+    RunEventOutput? Output = null)
 {
-    // Bumped to 4 when Error landed on the payload (conductor#2204).
-    // Pre-v4 consumers ignore Error cleanly (tolerant-read); v4+ consumers
-    // can gate on schema_version >= 4 to know the actionable reason is
-    // present on a non-success terminal event.
-    public const int SchemaVersion = 4;
+    // v5 adds attempt-correlated monotonic lifecycle/output metadata.
+    // Nullable additions preserve tolerant reads of legacy v1-v4 events.
+    public const int SchemaVersion = 5;
 
     public int Schema_Version => SchemaVersion;
 }
@@ -62,6 +69,12 @@ public sealed record RunEventPayload(
 // already has a Timeout member) don't lose the watchdog signal.
 public enum RunEventKind
 {
+    Queued,
+    Provisioning,
+    Ready,
+    Running,
+    Progress,
+    Output,
     Finished,
     Failed,
     Cancelled,
@@ -72,6 +85,12 @@ public static class RunEventKindExtensions
 {
     public static string ToSubjectKind(this RunEventKind kind) => kind switch
     {
+        RunEventKind.Queued => "queued",
+        RunEventKind.Provisioning => "provisioning",
+        RunEventKind.Ready => "ready",
+        RunEventKind.Running => "running",
+        RunEventKind.Progress => "progress",
+        RunEventKind.Output => "output",
         RunEventKind.Finished => "finished",
         RunEventKind.Failed => "failed",
         RunEventKind.Cancelled => "cancelled",
@@ -79,3 +98,11 @@ public static class RunEventKindExtensions
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }
+
+public sealed record RunProgress(
+    string Message,
+    double? Percent = null);
+
+public sealed record RunEventOutput(
+    string Stream,
+    string Line);
