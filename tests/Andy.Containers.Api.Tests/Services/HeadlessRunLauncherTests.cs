@@ -61,14 +61,31 @@ public class HeadlessRunLauncherTests
         var dbName = Guid.NewGuid().ToString();
         var db = InMemoryDbHelper.CreateContext(dbName);
 
-        var workspace = new Workspace
+        var template = new ContainerTemplate
+        {
+            Code = "headless-launcher-test",
+            Name = "Headless launcher test",
+            Version = "1",
+            BaseImage = "ubuntu:24.04",
+        };
+        var provider = new InfrastructureProvider
+        {
+            Code = "headless-launcher-test",
+            Name = "Headless launcher test",
+            Type = ProviderType.Docker,
+            IsEnabled = true,
+        };
+        var container = new Container
         {
             Id = Guid.NewGuid(),
-            Name = "ws",
+            Name = "headless-launcher-test",
             OwnerId = "u",
-            DefaultContainerId = Guid.NewGuid(),
+            Template = template,
+            Provider = provider,
+            Status = ContainerStatus.Running,
+            ExternalId = "headless-launcher-test",
         };
-        db.Workspaces.Add(workspace);
+        db.Containers.Add(container);
         var run = new Run
         {
             Id = Guid.NewGuid(),
@@ -77,7 +94,7 @@ public class HeadlessRunLauncherTests
             EnvironmentProfileId = Guid.NewGuid(),
             CorrelationId = Guid.NewGuid(),
             Status = RunStatus.Pending,
-            WorkspaceRef = new WorkspaceRef { WorkspaceId = workspace.Id },
+            WorkspaceRef = new WorkspaceRef { WorkspaceId = container.Id },
         };
         db.Runs.Add(run);
         db.SaveChanges();

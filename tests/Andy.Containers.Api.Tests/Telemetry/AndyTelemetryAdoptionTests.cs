@@ -1,6 +1,7 @@
 // Copyright (c) Rivoli AI 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Andy.Containers.Api.Telemetry;
 using FluentAssertions;
@@ -25,24 +26,33 @@ public class AndyTelemetryAdoptionTests
     [Fact]
     public void Provisioning_ActivitySource_IsListenedTo()
     {
-        var captured = new List<Activity>();
+        var operationName = $"ProvisionContainer-{Guid.NewGuid():N}";
+        var captured = new ConcurrentQueue<Activity>();
+        // Materialize the static source before installing the listener.
+        // Referencing ActivitySources.Provisioning from ShouldListenTo while
+        // the ActivitySources type initializer is constructing that same
+        // source recursively observes a null field in standalone test runs.
+        var provisioningSource = ActivitySources.Provisioning;
         using var listener = new ActivityListener
         {
-            ShouldListenTo = source => source.Name == ActivitySources.Provisioning.Name,
+            ShouldListenTo = source => source.Name == provisioningSource.Name,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = activity => captured.Add(activity),
+            ActivityStopped = captured.Enqueue,
         };
         ActivitySource.AddActivityListener(listener);
 
-        using (var activity = ActivitySources.Provisioning.StartActivity("ProvisionContainer"))
+        using (var activity = provisioningSource.StartActivity(operationName))
         {
             activity.Should().NotBeNull("an active listener must materialise the activity");
             activity!.SetTag("container.id", "test-container");
         }
 
-        captured.Should().ContainSingle();
-        captured[0].OperationName.Should().Be("ProvisionContainer");
-        captured[0].GetTagItem("container.id").Should().Be("test-container");
+        // Activity listeners are process-global and other parallel tests may
+        // emit on this source. Snapshot the thread-safe queue and select only
+        // the uniquely named activity created above.
+        var matching = captured.Where(a => a.OperationName == operationName).ToArray();
+        matching.Should().ContainSingle();
+        matching[0].GetTagItem("container.id").Should().Be("test-container");
     }
 
     [Fact]

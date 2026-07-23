@@ -22,6 +22,7 @@ namespace Andy.Containers.Api.Tests.Mcp;
 // what AP7 wired into the HTTP layer.
 public class RunsMcpToolsTests : IDisposable
 {
+    private readonly string _databaseName = Guid.NewGuid().ToString();
     private readonly ContainersDbContext _db;
     private readonly Mock<IRunConfigurator> _configurator;
     private readonly Mock<IRunModeDispatcher> _dispatcher;
@@ -33,7 +34,7 @@ public class RunsMcpToolsTests : IDisposable
 
     public RunsMcpToolsTests()
     {
-        _db = InMemoryDbHelper.CreateContext();
+        _db = InMemoryDbHelper.CreateContext(_databaseName);
 
         _configurator = new Mock<IRunConfigurator>();
         _configurator
@@ -333,9 +334,16 @@ public class RunsMcpToolsTests : IDisposable
         // Wait one poll cycle so the consumer is in the loop.
         await Task.Delay(50);
 
-        run.TransitionTo(RunStatus.Cancelled);
-        _db.AppendAgentRunEvent(run, RunEventKind.Cancelled);
-        await _db.SaveChangesAsync();
+        // The live enumerator is polling through _db. EF DbContext is not
+        // thread-safe, so model the real producer with its own request scope
+        // instead of racing a write through the consumer's context.
+        await using (var writerDb = InMemoryDbHelper.CreateContext(_databaseName))
+        {
+            var writerRun = await writerDb.Runs.SingleAsync(r => r.Id == run.Id);
+            writerRun.TransitionTo(RunStatus.Cancelled);
+            writerDb.AppendAgentRunEvent(writerRun, RunEventKind.Cancelled);
+            await writerDb.SaveChangesAsync();
+        }
 
         var collected = await streamTask;
 
