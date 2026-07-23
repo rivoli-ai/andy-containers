@@ -123,38 +123,62 @@ Either way, exactly one terminal subject lands in the outbox. The 30 s grace is 
 
 ## Event stream
 
-Every terminal observation appends a row to the `OutboxEntries` table in the same EF transaction as the state-machine transition. The `OutboxDispatcher` background service drains pending rows to NATS at-least-once (per ADR 0001). Subjects:
+Every lifecycle observation appends a row to `OutboxEntries` in the same EF
+transaction as its state change. The `OutboxDispatcher` drains rows to NATS
+at-least-once (ADR 0001). Subjects cover the whole attempt:
 
 ```
+andy.containers.events.run.{runId}.queued
+andy.containers.events.run.{runId}.provisioning
+andy.containers.events.run.{runId}.ready
+andy.containers.events.run.{runId}.running
+andy.containers.events.run.{runId}.progress
 andy.containers.events.run.{runId}.finished
 andy.containers.events.run.{runId}.failed
 andy.containers.events.run.{runId}.cancelled
 andy.containers.events.run.{runId}.timeout
 ```
 
+Live stdout/stderr is also published directly (ephemeral, not through the
+transactional outbox) on
+`andy.containers.events.run.{runId}.output`. Its payload uses the same
+`attempt_id` and monotonic `sequence` as the lifecycle and SSE streams; NATS
+durable consumers provide transport replay while the SSE ring provides
+attach-before/after and `Last-Event-ID` replay for HTTP clients.
+
 Payload (`RunEventPayload`):
 
 ```json
 {
   "run_id":           "<uuid>",
+  "attempt_id":       "<uuid>",
+  "sequence":         639204260290755790,
+  "occurred_at":      "2026-07-23T17:53:49Z",
   "story_id":         "<uuid|null>",
   "status":           "Succeeded|Failed|Cancelled|Timeout",
   "exit_code":        12,
-  "duration_seconds": 2.5
+  "duration_seconds": 2.5,
+  "progress":         { "message": "Agent execution started.", "percent": 0 },
+  "output":           { "stream": "stdout", "line": "Iteration 2/4" },
+  "schema_version":   5
 }
 ```
 
 For HTTP / MCP / CLI consumers that want a per-run filtered view of the same stream:
 
-- **HTTP**: `GET /api/runs/{id}/events` returns NDJSON (one `RunEvent` per line, flushed). Closes when the run hits terminal (with a final drain pass).
+- **HTTP**: `GET /api/runs/{id}/events` returns NDJSON (one `RunEvent` per line, flushed). Send `Last-Event-ID: <sequence>` to resume after the last observation. It closes when the run hits terminal (with a final drain pass).
 - **MCP**: `run.events` tool — `IAsyncEnumerable<RunEventDto>`, identical semantics.
 - **CLI**: `andy-containers-cli runs events <id>` colour-codes each line.
 
-The shared implementation lives in `RunEventStream.AsyncEnumerate` so all three surfaces have one polling loop and one terminal-stop policy.
+The shared implementation lives in `RunEventStream.AsyncEnumerate`. Its cursor
+uses the payload sequence, not timestamps, so two events created in one
+transaction cannot hide each other. `attempt_id` identifies a concrete retry;
+`correlation_id` remains the root that groups related attempts.
 
 ### Mid-run output stream (F4.1, rivoli-ai/conductor#1934)
 
-The lifecycle event stream above only surfaces **terminal** observations — nothing arrives until the run is over. For a **live** view of the agent's progress while a headless run is in flight, andy-containers also exposes the agent's stdout/stderr line-by-line as it is produced:
+For a live line-by-line view in addition to the lifecycle/progress stream,
+andy-containers exposes the agent's stdout/stderr as it is produced:
 
 ```
 GET /api/runs/{id}/output      (text/event-stream, run:read)
@@ -166,11 +190,11 @@ Wire format (SSE), one frame per output line, mirroring the build-progress SSE b
 ```
 id: <sequence>
 event: log
-data: {"stream":"stdout","line":"Iteration 2/4","timestamp":"2026-..."}
+data: {"runId":"...","attemptId":"...","sequence":639204260290755800,"stream":"stdout","line":"Iteration 2/4","timestamp":"2026-..."}
 
 ```
 
-- `id:` is a monotonic per-run sequence number. A reconnecting client sends the last id it saw in the `Last-Event-ID` request header; the server replays buffered lines **after** that id (no duplicates, no gaps). If the requested id has aged out of the bounded ring buffer, the stream restarts from the oldest buffered line and the client reconciles via the run status snapshot.
+- `id:` and `data.sequence` are the shared monotonic per-run sequence; `data.attemptId` matches lifecycle NATS/NDJSON events. A reconnecting client sends the last id it saw in `Last-Event-ID`; the server replays buffered lines **after** that id. Sequence gaps are expected when lifecycle events occupy ids. If the requested id has aged out of the bounded ring buffer, replay restarts from the oldest buffered line and the client reconciles via the run snapshot.
 - `stream` distinguishes `stdout` from `stderr`.
 - The container-scoped route accepts `follow`, `tail`, and `since`; an idle
   following connection emits an SSE heartbeat comment every 15 seconds.

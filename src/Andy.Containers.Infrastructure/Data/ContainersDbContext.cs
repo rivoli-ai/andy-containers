@@ -355,6 +355,7 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
             e.Property(r => r.Status).HasConversion<string>().HasMaxLength(16);
             e.HasIndex(r => r.Status);
             e.HasIndex(r => r.CorrelationId);
+            e.HasIndex(r => new { r.CorrelationId, r.AttemptId });
             e.HasIndex(r => r.AgentId);
             // WorkspaceRef as an owned value object — inlined columns prefixed
             // `WorkspaceRef_*` (EF default). Keeps Run self-contained without

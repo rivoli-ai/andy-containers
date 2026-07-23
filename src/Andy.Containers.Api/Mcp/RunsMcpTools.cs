@@ -80,6 +80,7 @@ public class RunsMcpTools
         [Description("Optional branch name.")] string? branch = null,
         [Description("Optional policy id (GUID).")] string? policyId = null,
         [Description("Optional ADR-0001 root causation id (GUID); minted if omitted.")] string? correlationId = null,
+        [Description("Optional concrete attempt id (GUID); defaults to the generated run id.")] string? attemptId = null,
         CancellationToken ct = default)
     {
         if (!await EnsurePermission(Permissions.RunWrite, ct)) return null;
@@ -121,10 +122,18 @@ public class RunsMcpTools
             parsedCorrelationId = cid;
         }
 
+        Guid? parsedAttemptId = null;
+        if (!string.IsNullOrWhiteSpace(attemptId))
+        {
+            if (!Guid.TryParse(attemptId, out var aid) || aid == Guid.Empty) return null;
+            parsedAttemptId = aid;
+        }
+
         var now = DateTimeOffset.UtcNow;
+        var runId = Guid.NewGuid();
         var run = new Run
         {
-            Id = Guid.NewGuid(),
+            Id = runId,
             AgentId = agentId,
             AgentRevision = agentRevision,
             Mode = parsedMode,
@@ -132,12 +141,14 @@ public class RunsMcpTools
             WorkspaceRef = workspaceRef,
             PolicyId = parsedPolicyId,
             CorrelationId = parsedCorrelationId ?? Guid.NewGuid(),
+            AttemptId = parsedAttemptId ?? runId,
             Status = RunStatus.Pending,
             CreatedAt = now,
             UpdatedAt = now,
         };
 
         _db.Runs.Add(run);
+        _db.AppendAgentRunEvent(run, RunEventKind.Queued);
         await _db.SaveChangesAsync(ct);
 
         // Same handoff sequence as RunsController.Create: configurator
@@ -222,12 +233,13 @@ public class RunsMcpTools
     }
 
     [McpServerTool(Name = "run.events"), Description(
-        "Stream lifecycle events for a run on andy.containers.events.run.{id}.* — finished, failed, cancelled, timeout. " +
+        "Stream the complete attempt-correlated lifecycle for a run on andy.containers.events.run.{id}.*. " +
         "Yields any backfill (events that already landed in the outbox) then live events as they commit. " +
-        "Stops when the run reaches a terminal state or the caller cancels. Requires run:read.")]
+        "Optionally resumes after a monotonic sequence. Stops at terminal or cancellation. Requires run:read.")]
     public async IAsyncEnumerable<RunEventDto> Events(
         [Description("Run id (GUID).")] string runId,
-        [EnumeratorCancellation] CancellationToken ct = default)
+        [EnumeratorCancellation] CancellationToken ct = default,
+        [Description("Optional last sequence already observed; only newer events are yielded.")] long? afterSequence = null)
     {
         if (!await EnsurePermission(Permissions.RunRead, ct)) yield break;
         if (!Guid.TryParse(runId, out var id)) yield break;
@@ -235,7 +247,12 @@ public class RunsMcpTools
         // AP9 (rivoli-ai/andy-containers#111). Shared outbox-poll loop —
         // identical semantics to the HTTP NDJSON endpoint and the CLI
         // events command.
-        await foreach (var evt in RunEventStream.AsyncEnumerate(_db, id, EventsPollInterval, ct))
+        await foreach (var evt in RunEventStream.AsyncEnumerate(
+            _db,
+            id,
+            EventsPollInterval,
+            ct,
+            afterSequence))
         {
             yield return evt;
         }
@@ -269,4 +286,3 @@ public class RunsMcpTools
         _db.AppendAgentRunEvent(run, RunEventKind.Cancelled);
     }
 }
-

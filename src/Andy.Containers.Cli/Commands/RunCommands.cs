@@ -151,6 +151,9 @@ public static class RunCommands
             {
                 var color = evt.Kind switch
                 {
+                    "queued" or "provisioning" => "cyan",
+                    "ready" => "blue",
+                    "running" or "progress" or "output" => "deepskyblue1",
                     "finished" => "green",
                     "failed" => "red",
                     "cancelled" => "yellow",
@@ -161,7 +164,7 @@ public static class RunCommands
                 var exit = evt.ExitCode is { } ec ? $" exit={ec}" : "";
                 var dur = evt.DurationSeconds is { } d ? $" dur={d:F1}s" : "";
                 AnsiConsole.MarkupLine(
-                    $"[dim]{ts}[/] [{color}]{evt.Kind}[/] status={Markup.Escape(evt.Status)}{exit}{dur}");
+                    $"[dim]{ts} #{evt.Sequence}[/] [{color}]{evt.Kind}[/] status={Markup.Escape(evt.Status)}{exit}{dur}");
             }
 
             AnsiConsole.MarkupLine("[dim]Stream closed (run reached terminal state).[/]");

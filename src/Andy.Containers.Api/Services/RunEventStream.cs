@@ -33,43 +33,41 @@ public static class RunEventStream
         ContainersDbContext db,
         Guid runId,
         TimeSpan? pollInterval = null,
-        [EnumeratorCancellation] CancellationToken ct = default)
+        [EnumeratorCancellation] CancellationToken ct = default,
+        long? afterSequence = null)
     {
         ArgumentNullException.ThrowIfNull(db);
 
         var interval = pollInterval ?? DefaultPollInterval;
         var subjectPrefix = $"andy.containers.events.run.{runId}.";
-        DateTimeOffset? cursor = null;
+        var cursor = afterSequence;
         var sawTerminal = false;
 
         while (!ct.IsCancellationRequested)
         {
-            // Fetch any new outbox rows for this run, ordered by creation.
-            // SQLite's EF provider can't translate DateTimeOffset operations:
-            // NEITHER the cursor comparison (`CreatedAt > x`) NOR ORDER BY.
-            // The subject-prefix filter IS translatable (→ LIKE), so scope
-            // server-side by prefix, then apply the cursor + ordering + batch
-            // bound CLIENT-side. A single run's outbox event count is small,
-            // so the client-eval is bounded. (Doing the cursor `Where` in the
-            // query throws "could not be translated" once cursor is set, which
-            // silently dropped every post-cursor event — including the
-            // terminal Succeeded/Failed — so the run never completed upstream.)
+            // SQLite cannot order DateTimeOffset reliably, and timestamps are
+            // not unique when several lifecycle rows share one transaction.
+            // Scope by translatable subject prefix, then parse/filter/order by
+            // the authoritative payload sequence on the client. One run's
+            // lifecycle history is small, so this remains bounded.
             var rows = await db.OutboxEntries
                 .AsNoTracking()
                 .Where(e => e.Subject.StartsWith(subjectPrefix))
                 .ToListAsync(ct);
 
             var batch = rows
-                .Where(e => cursor is null || e.CreatedAt > cursor.Value)
-                .OrderBy(e => e.CreatedAt)
+                .Select(e => (Entry: e, Event: RunEventDto.FromOutbox(e)))
+                .Where(x => x.Event is not null
+                    && (cursor is null || x.Event.Sequence > cursor.Value))
+                .OrderBy(x => x.Event!.Sequence)
+                .ThenBy(x => x.Entry.CreatedAt)
                 .Take(BatchSize)
                 .ToList();
 
-            foreach (var entry in batch)
+            foreach (var item in batch)
             {
-                var dto = RunEventDto.FromOutbox(entry);
-                if (dto is null) continue;
-                cursor = entry.CreatedAt;
+                var dto = item.Event!;
+                cursor = dto.Sequence;
                 yield return dto;
             }
 

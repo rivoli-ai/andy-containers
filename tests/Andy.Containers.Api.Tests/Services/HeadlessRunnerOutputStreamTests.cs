@@ -4,6 +4,8 @@ using Andy.Containers.Api.Tests.Helpers;
 using Andy.Containers.Configurator;
 using Andy.Containers.Infrastructure.Data;
 using Andy.Containers.Infrastructure.Runs.Events;
+using Andy.Containers.Messaging;
+using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using Andy.Containers.Storage;
 using FluentAssertions;
@@ -28,6 +30,7 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
     private readonly RunCancellationRegistry _cancellation = new();
     private readonly Mock<ITokenIssuer> _tokens = new();
     private readonly InMemoryRunOutputBus _bus = new();
+    private readonly Mock<IMessageBus> _messageBus = new();
     private readonly HeadlessRunner _runner;
     private readonly string _configPath;
 
@@ -46,11 +49,18 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
         _tokens
             .Setup(t => t.MintAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new RunToken("sk-run-secret-0123456789abcdef", DateTimeOffset.UtcNow.AddHours(1)));
+        _messageBus
+            .Setup(b => b.PublishAsync(
+                It.IsAny<string>(),
+                It.IsAny<object>(),
+                It.IsAny<MessageHeaders>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         _runner = new HeadlessRunner(
             _containers.Object, _db, _cancellation, _tokens.Object,
             NullLogger<HeadlessRunner>.Instance, artifactCollector: null,
-            inputStager: null, outputBus: _bus);
+            inputStager: null, outputBus: _bus, messageBus: _messageBus.Object);
     }
 
     public void Dispose()
@@ -86,6 +96,36 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
             "Iteration 1/4", "Iteration 2/4", "transient retry", "done");
         lines[2].Line.Stream.Should().Be(RunOutputStream.Stderr,
             "stderr lines stay distinguishable from stdout on the bus.");
+    }
+
+    [Fact]
+    public async Task StartAsync_AttemptOutput_PublishesCorrelatedNatsOutputSubjects()
+    {
+        var run = SeedRun();
+        run.AttemptId = Guid.NewGuid();
+        await _db.SaveChangesAsync();
+        SetupStreamingExec(run.ContainerId!.Value, exitCode: 0, lines:
+        [
+            (ExecStreamKind.Stdout, "working"),
+            (ExecStreamKind.Stderr, "retrying"),
+        ]);
+        var published = new List<RunEventPayload>();
+        _messageBus
+            .Setup(b => b.PublishAsync(
+                $"andy.containers.events.run.{run.Id}.output",
+                It.IsAny<object>(),
+                It.IsAny<MessageHeaders>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, object, MessageHeaders, CancellationToken>(
+                (_, payload, _, _) => published.Add((RunEventPayload)payload))
+            .Returns(Task.CompletedTask);
+
+        await _runner.StartAsync(run, _configPath);
+
+        published.Should().HaveCount(2);
+        published.Select(p => p.AttemptId).Should().OnlyContain(id => id == run.AttemptId);
+        published.Select(p => p.Sequence).Should().BeInAscendingOrder();
+        published.Select(p => p.Output!.Line).Should().Equal("working", "retrying");
     }
 
     [Fact]

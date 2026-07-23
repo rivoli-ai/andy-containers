@@ -10,6 +10,7 @@ using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -98,6 +99,34 @@ public class RunsControllerTests : IDisposable
         persisted.Should().NotBeNull();
         persisted!.Status.Should().Be(RunStatus.Pending);
         persisted.AgentRevision.Should().Be(3);
+        persisted.AttemptId.Should().Be(dto.Id);
+
+        var queued = await _db.OutboxEntries.SingleAsync();
+        queued.Subject.Should().Be(
+            $"andy.containers.events.run.{dto.Id}.queued");
+        RunEventDto.FromOutbox(queued)!.AttemptId.Should().Be(dto.Id);
+    }
+
+    [Fact]
+    public async Task Create_CallerAttemptId_IsPersistedAndPublished()
+    {
+        var attemptId = Guid.NewGuid();
+        var result = await _controller.Create(
+            new CreateRunRequest
+            {
+                AgentId = "retry-agent",
+                Mode = RunMode.Headless,
+                EnvironmentProfileId = Guid.NewGuid(),
+                AttemptId = attemptId,
+            },
+            CancellationToken.None);
+
+        var dto = result.Should().BeOfType<CreatedAtActionResult>()
+            .Subject.Value.Should().BeOfType<RunDto>().Subject;
+        dto.AttemptId.Should().Be(attemptId);
+
+        var queued = await _db.OutboxEntries.SingleAsync();
+        RunEventDto.FromOutbox(queued)!.AttemptId.Should().Be(attemptId);
     }
 
     [Fact]
@@ -476,6 +505,43 @@ public class RunsControllerTests : IDisposable
         evt!.RunId.Should().Be(run.Id);
         evt.Kind.Should().Be("finished");
         evt.ExitCode.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Events_LastEventId_ReplaysOnlyNewerSequences()
+    {
+        var run = SeedRun(RunStatus.Succeeded);
+        _db.AppendAgentRunEvent(run, RunEventKind.Queued);
+        _db.AppendAgentRunEvent(run, RunEventKind.Running);
+        _db.AppendAgentRunEvent(run, RunEventKind.Finished);
+        await _db.SaveChangesAsync();
+        var ordered = (await _db.OutboxEntries.ToListAsync())
+            .Select(RunEventDto.FromOutbox)
+            .Where(e => e is not null)
+            .Cast<RunEventDto>()
+            .OrderBy(e => e.Sequence)
+            .ToList();
+
+        var responseStream = new MemoryStream();
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Request.Headers["Last-Event-ID"] = ordered[0].Sequence.ToString();
+        context.Response.Body = responseStream;
+        _controller.ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+        {
+            HttpContext = context,
+        };
+
+        await _controller.Events(run.Id, CancellationToken.None);
+
+        responseStream.Position = 0;
+        var body = await new StreamReader(responseStream).ReadToEndAsync();
+        var events = body
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => System.Text.Json.JsonSerializer.Deserialize<RunEventDto>(
+                line,
+                EventJson.Options)!)
+            .ToList();
+        events.Select(e => e.Kind).Should().Equal("running", "finished");
     }
 
     private Run SeedRun(RunStatus status)

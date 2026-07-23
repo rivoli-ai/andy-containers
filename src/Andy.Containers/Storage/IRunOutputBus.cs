@@ -32,7 +32,10 @@ public interface IRunOutputBus
     /// subscribers don't backpressure the runner; bounded queues drop
     /// old lines when a subscriber falls behind.
     /// </summary>
-    void Publish(Guid runId, RunOutputLine line);
+    RunOutputEnvelope Publish(
+        Guid runId,
+        RunOutputLine line,
+        Guid? attemptId = null);
 
     /// <summary>
     /// Mark a run's output stream terminal. Subscribers drain any
@@ -99,4 +102,6 @@ public sealed record RunOutputLine(
 /// </summary>
 public sealed record RunOutputEnvelope(
     long SequenceNumber,
+    Guid RunId,
+    Guid AttemptId,
     RunOutputLine Line);

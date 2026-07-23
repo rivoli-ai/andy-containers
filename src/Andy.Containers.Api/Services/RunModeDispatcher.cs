@@ -74,6 +74,7 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
         try
         {
             run.TransitionTo(RunStatus.Provisioning);
+            _db.AppendAgentRunEvent(run, RunEventKind.Provisioning);
         }
         catch (InvalidOperationException ex)
         {
@@ -104,6 +105,12 @@ public sealed class RunModeDispatcher : IRunModeDispatcher
                 "Run {RunId}: per-run branch preparation failed for container {ContainerId}; continuing dispatch.",
                 run.Id, containerId);
         }
+
+        // The container and run branch are now prepared. Ready is a distinct
+        // observation from Running: consumers can show that dispatch finished
+        // even while the detached launcher has not started the agent process.
+        _db.AppendAgentRunEvent(run, RunEventKind.Ready);
+        await _db.SaveChangesAsync(ct);
 
         return run.Mode switch
         {

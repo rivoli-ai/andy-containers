@@ -554,6 +554,11 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Resume after this lifecycle sequence number.
+          schema: { type: integer, format: int64 }
       responses:
         '200':
           description: NDJSON event stream
@@ -570,18 +575,19 @@ paths:
       description: |
         F4.1 (rivoli-ai/conductor#1934). A live feed of the headless
         agent's stdout/stderr while the run is in flight — distinct from
-        `/events`, which only surfaces terminal lifecycle events. Each SSE
+        `/events`, which surfaces the complete lifecycle. Each SSE
         frame is:
 
         ```
         id: <sequence>
         event: log
-        data: {"stream":"stdout","line":"...","timestamp":"2026-..."}
+        data: {"runId":"...","attemptId":"...","sequence":123,"stream":"stdout","line":"...","timestamp":"2026-..."}
         ```
 
         `id:` is a monotonic per-run sequence number; reconnect via the
         `Last-Event-ID` request header to resume after the last line seen
-        (no duplicates, no gaps; restarts from the oldest buffered line if
+        (no duplicate output lines; sequence gaps may represent lifecycle
+        observations; replay restarts from the oldest buffered line if
         the id has aged out of the ring buffer). `stream` distinguishes
         stdout from stderr. The stream closes after the run reaches a
         terminal status and a final drain pass (matching the `/events`
@@ -608,7 +614,7 @@ paths:
                 example: |
                   id: 1
                   event: log
-                  data: {"stream":"stdout","line":"Iteration 1/4","timestamp":"2026-05-31T12:00:00Z"}
+                  data: {"runId":"7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b","attemptId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","sequence":639204260290755790,"stream":"stdout","line":"Iteration 1/4","timestamp":"2026-05-31T12:00:00Z"}
         '404':
           description: No run with that id
 
@@ -1518,6 +1524,11 @@ components:
             Optional ADR-0001 root causation id. When omitted the controller
             mints one so every run carries a chain anchor.
           nullable: true
+        attemptId:
+          type: string
+          format: uuid
+          description: Concrete retry-attempt identity; defaults to the generated run id.
+          nullable: true
 
     Run:
       type: object
@@ -1525,7 +1536,7 @@ components:
         Wire shape for agent-run responses (AP2). `links.cancel` is null once
         the run is in a terminal state, signalling to clients that the row
         is observation-only.
-      required: [id, agentId, mode, environmentProfileId, workspaceRef, status, correlationId, createdAt, updatedAt, links]
+      required: [id, agentId, mode, environmentProfileId, workspaceRef, status, correlationId, attemptId, createdAt, updatedAt, links]
       properties:
         id: { type: string, format: uuid }
         agentId: { type: string }
@@ -1555,6 +1566,7 @@ components:
           type: string
           nullable: true
         correlationId: { type: string, format: uuid }
+        attemptId: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         links: { $ref: '#/components/schemas/RunLinks' }
@@ -1597,18 +1609,19 @@ components:
         One outbox row, surfaced as a single line in the
         `GET /api/runs/{id}/events` NDJSON stream and as a single
         `IAsyncEnumerable<RunEventDto>` element via the matching MCP /
-        CLI consumers. Subject suffix (`.finished` / `.failed` /
-        `.cancelled` / `.timeout`) repeats in the `kind` field for
-        consumers that want the discriminator without parsing.
-      required: [runId, subject, kind, status, timestamp, correlationId]
+        CLI consumers. The subject suffix repeats in `kind`; `sequence`
+        provides an authoritative reconnect cursor across an attempt.
+      required: [runId, attemptId, sequence, subject, kind, status, timestamp, correlationId]
       properties:
         runId: { type: string, format: uuid }
+        attemptId: { type: string, format: uuid }
+        sequence: { type: integer, format: int64 }
         subject:
           type: string
           example: andy.containers.events.run.7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b.finished
         kind:
           type: string
-          enum: [finished, failed, cancelled, timeout]
+          enum: [queued, provisioning, ready, running, progress, output, finished, failed, cancelled, timeout]
         status: { $ref: '#/components/schemas/RunStatus' }
         exitCode:
           type: integer
@@ -1619,6 +1632,20 @@ components:
           nullable: true
         timestamp: { type: string, format: date-time }
         correlationId: { type: string, format: uuid }
+        progress:
+          type: object
+          nullable: true
+          properties:
+            message: { type: string }
+            percent: { type: number, format: double, nullable: true }
+        output:
+          type: object
+          nullable: true
+          properties:
+            stream:
+              type: string
+              enum: [stdout, stderr]
+            line: { type: string }
 
     # --- Environment-profile catalog (Epic X) ---
 

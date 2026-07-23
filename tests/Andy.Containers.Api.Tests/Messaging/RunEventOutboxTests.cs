@@ -77,6 +77,12 @@ public class RunEventOutboxTests
     }
 
     [Theory]
+    [InlineData(RunEventKind.Queued, "queued")]
+    [InlineData(RunEventKind.Provisioning, "provisioning")]
+    [InlineData(RunEventKind.Ready, "ready")]
+    [InlineData(RunEventKind.Running, "running")]
+    [InlineData(RunEventKind.Progress, "progress")]
+    [InlineData(RunEventKind.Output, "output")]
     [InlineData(RunEventKind.Finished, "finished")]
     [InlineData(RunEventKind.Failed, "failed")]
     [InlineData(RunEventKind.Cancelled, "cancelled")]
@@ -132,6 +138,46 @@ public class RunEventOutboxTests
         root.GetProperty("status").GetString().Should().Be("Succeeded");
         root.GetProperty("exit_code").GetInt32().Should().Be(0);
         root.GetProperty("duration_seconds").GetDouble().Should().Be(12.3);
+    }
+
+    [Fact]
+    public async Task AppendAgentRunEvent_CarriesAttemptAndStrictlyIncreasingSequence()
+    {
+        using var db = InMemoryDbHelper.CreateContext();
+        var run = new Run
+        {
+            Id = Guid.NewGuid(),
+            AttemptId = Guid.NewGuid(),
+            AgentId = "activity-agent",
+            Mode = RunMode.Headless,
+            EnvironmentProfileId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            Status = RunStatus.Provisioning,
+        };
+        db.Runs.Add(run);
+
+        db.AppendAgentRunEvent(run, RunEventKind.Queued);
+        db.AppendAgentRunEvent(run, RunEventKind.Provisioning);
+        db.AppendAgentRunEvent(
+            run,
+            RunEventKind.Progress,
+            progress: new RunProgress("Preparing agent.", 0.25));
+        await db.SaveChangesAsync();
+
+        var events = (await db.OutboxEntries
+                .Where(e => e.Subject.StartsWith($"andy.containers.events.run.{run.Id}."))
+                .ToListAsync())
+            .Select(RunEventDto.FromOutbox)
+            .Where(e => e is not null)
+            .Cast<RunEventDto>()
+            .OrderBy(e => e.Sequence)
+            .ToList();
+
+        events.Should().HaveCount(3);
+        events.Select(e => e.AttemptId).Should().OnlyContain(id => id == run.AttemptId);
+        events.Select(e => e.Sequence).Should().BeInAscendingOrder();
+        events.Select(e => e.Sequence).Should().OnlyHaveUniqueItems();
+        events[^1].Progress.Should().Be(new RunProgress("Preparing agent.", 0.25));
     }
 
     [Fact]
@@ -196,8 +242,8 @@ public class RunEventOutboxTests
         using var doc = JsonDocument.Parse(entry.PayloadJson);
         var root = doc.RootElement;
         root.GetProperty("schema_version").GetInt32().Should().Be(RunEventPayload.SchemaVersion);
-        root.GetProperty("schema_version").GetInt32().Should().Be(4,
-            "the Error field on RunEventPayload bumped the wire shape to v4 (conductor#2204)");
+        root.GetProperty("schema_version").GetInt32().Should().Be(5,
+            "attempt correlation and monotonic sequence metadata use the v5 wire shape");
 
         var arr = root.GetProperty("output_artifacts");
         arr.GetArrayLength().Should().Be(2);
@@ -455,7 +501,7 @@ public class RunEventOutboxTests
 
         // Schema version reflects the latest bump (v4 added the Error
         // field per conductor#2204; DocsRef still rides on the artifact).
-        doc.RootElement.GetProperty("schema_version").GetInt32().Should().Be(4);
+        doc.RootElement.GetProperty("schema_version").GetInt32().Should().Be(5);
 
         // Persisted Run row also carries the DocsRef (through the
         // EF JSON converter on Run.OutputArtifacts).

@@ -77,10 +77,16 @@ public class RunsController : ControllerBase
             return BadRequest(new { error = "workspaceRef.workspaceId must be a non-empty Guid when workspaceRef is provided." });
         }
 
+        if (request.AttemptId == Guid.Empty)
+        {
+            return BadRequest(new { error = "attemptId must be a non-empty Guid when provided." });
+        }
+
         var now = DateTimeOffset.UtcNow;
+        var runId = Guid.NewGuid();
         var run = new Run
         {
-            Id = Guid.NewGuid(),
+            Id = runId,
             AgentId = request.AgentId,
             AgentRevision = request.AgentRevision,
             Mode = request.Mode,
@@ -94,6 +100,7 @@ public class RunsController : ControllerBase
                 },
             PolicyId = request.PolicyId,
             CorrelationId = request.CorrelationId ?? Guid.NewGuid(),
+            AttemptId = request.AttemptId ?? runId,
             // Transient (NotMapped): consumed by the configurator at create-time
             // to bake the task into the headless agent's system prompt.
             Objective = request.Objective,
@@ -108,6 +115,7 @@ public class RunsController : ControllerBase
         };
 
         _db.Runs.Add(run);
+        _db.AppendAgentRunEvent(run, RunEventKind.Queued);
         await _db.SaveChangesAsync(ct);
 
         // AP3 (rivoli-ai/andy-containers#105). Build + write the andy-cli
@@ -275,7 +283,18 @@ public class RunsController : ControllerBase
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("X-Accel-Buffering", "no");
 
-        await foreach (var evt in RunEventStream.AsyncEnumerate(_db, id, ct: ct))
+        long? afterSequence = null;
+        if (Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
+            && long.TryParse(lastEventId.FirstOrDefault(), out var parsed))
+        {
+            afterSequence = parsed;
+        }
+
+        await foreach (var evt in RunEventStream.AsyncEnumerate(
+            _db,
+            id,
+            ct: ct,
+            afterSequence: afterSequence))
         {
             var json = JsonSerializer.Serialize(evt, EventJson.Options);
             await Response.WriteAsync(json, ct);
@@ -287,9 +306,10 @@ public class RunsController : ControllerBase
     /// <summary>
     /// F4.1 (rivoli-ai/conductor#1934). Server-Sent Events stream of the
     /// run's MID-RUN agent output. Each <c>event: log</c> frame carries a
-    /// <c>{stream, line, timestamp}</c> JSON payload; the <c>id:</c> line
-    /// is the per-run sequence number so a reconnecting client resumes via
-    /// <c>Last-Event-ID</c> with no duplicates and no gaps. The stream
+    /// <c>{runId, attemptId, sequence, stream, line, timestamp}</c> JSON
+    /// payload; the <c>id:</c> line is the shared per-run sequence so a
+    /// reconnecting client resumes via <c>Last-Event-ID</c> without duplicate
+    /// output. Lifecycle observations may occupy sequence gaps. The stream
     /// closes after the run reaches a terminal status and the buffer is
     /// drained (matching <see cref="RunEventStream"/> semantics). Run-scoped
     /// tokens are redacted upstream by the runner before publish.
