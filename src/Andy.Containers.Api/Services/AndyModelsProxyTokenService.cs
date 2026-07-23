@@ -241,7 +241,17 @@ public sealed class AndyModelsProxyTokenService : IProxyTokenService
                         + "sub=andy-containers-api instead of the originating user. Likely cause: the inbound "
                         + "user token is expired or not exchange-eligible. Underlying: {Reason}",
                     AndyModelsApiAudience, ex.Message);
-                return await GetBearerAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    return await GetBearerAsync(ct).ConfigureAwait(false);
+                }
+                catch (ProxyTokenException fallbackEx)
+                {
+                    throw new ProxyTokenException(
+                        "OBO exchange for andy-models failed and the M2M bearer fallback could not be obtained. " +
+                        "Check token-exchange policy, ServiceAuth:* configuration, and the andy-models API scope.",
+                        new AggregateException(ex, fallbackEx));
+                }
             }
         }
 

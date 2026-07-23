@@ -634,7 +634,8 @@ public class ContainerOrchestrationService : IContainerService
                 // codeAssistant routing block above only runs for a configured
                 // assistant; an assistant-less headless run lands here, so
                 // point the OpenAI dialect at the andy-models proxy.
-                if (!string.IsNullOrWhiteSpace(containerFacingProxyUrl))
+                if (!string.IsNullOrWhiteSpace(containerFacingProxyUrl)
+                    && string.IsNullOrWhiteSpace(codeAssistant?.ApiBaseUrl))
                 {
                     // andy-models exposes the OpenAI-compatible chat surface at
                     // `/models/v1/chat/completions` (the OpenAI SDK appends

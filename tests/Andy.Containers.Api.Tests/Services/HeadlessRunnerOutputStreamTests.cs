@@ -29,9 +29,15 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
     private readonly Mock<ITokenIssuer> _tokens = new();
     private readonly InMemoryRunOutputBus _bus = new();
     private readonly HeadlessRunner _runner;
+    private readonly string _configPath;
 
     public HeadlessRunnerOutputStreamTests()
     {
+        _configPath = Path.Combine(
+            Path.GetTempPath(),
+            $"andy-containers-output-stream-{Guid.NewGuid():N}.json");
+        File.WriteAllText(_configPath, "{}");
+
         _db = InMemoryDbHelper.CreateContext();
         _tokens
             .Setup(t => t.RevokeAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -51,6 +57,7 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
     {
         _db.Dispose();
         _bus.Dispose();
+        File.Delete(_configPath);
     }
 
     [Fact]
@@ -68,7 +75,7 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
         // Subscribe BEFORE running is racy in a unit test; instead drive
         // the run, then drain the bus (which replays the buffered lines
         // and closes because the run is terminal).
-        var outcome = await _runner.StartAsync(run, "/tmp/x/config.json");
+        var outcome = await _runner.StartAsync(run, _configPath);
         outcome.Status.Should().Be(RunStatus.Succeeded);
 
         var lines = await DrainAsync(run.Id);
@@ -93,7 +100,7 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
             (ExecStreamKind.Stdout, "curl -H 'Authorization: Bearer sk-run-secret-0123456789abcdef'"),
         ]);
 
-        await _runner.StartAsync(run, "/tmp/x/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         var lines = await DrainAsync(run.Id);
 
@@ -108,7 +115,7 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
         var run = SeedRun();
         SetupStreamingExec(run.ContainerId!.Value, exitCode: 0, lines: []);
 
-        await _runner.StartAsync(run, "/tmp/x/config.json");
+        await _runner.StartAsync(run, _configPath);
 
         // An immediate drain must close (terminal marker present) with no
         // frames — never hang.
@@ -123,8 +130,10 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
         // the exec open until a subscriber has consumed the first batch,
         // then let it finish.
         var run = SeedRun();
-        var firstBatchPublished = new TaskCompletionSource<bool>();
-        var releaseExec = new TaskCompletionSource<bool>();
+        var firstBatchPublished = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseExec = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         _containers
             .Setup(c => c.ExecStreamingAsync(
@@ -141,7 +150,7 @@ public class HeadlessRunnerOutputStreamTests : IDisposable
                     return new ExecResult { ExitCode = 0 };
                 });
 
-        var startTask = _runner.StartAsync(run, "/tmp/x/config.json");
+        var startTask = _runner.StartAsync(run, _configPath);
 
         // Subscribe live and read the first two lines while exec is still
         // running (releaseExec not yet completed → run not terminal).
