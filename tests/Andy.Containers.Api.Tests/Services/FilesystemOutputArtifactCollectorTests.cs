@@ -176,6 +176,8 @@ public class FilesystemOutputArtifactCollectorTests
 
     [Theory]
     [InlineData("foo.txt", "text/plain")]
+    [InlineData("checkpoint.patch", "text/x-diff")]
+    [InlineData("changes.diff", "text/x-diff")]
     [InlineData("foo.json", "application/json")]
     [InlineData("foo.pdf", "application/pdf")]
     [InlineData("foo.png", "image/png")]
@@ -291,6 +293,39 @@ public class FilesystemOutputArtifactCollectorTests
     }
 
     [Fact]
+    public async Task CollectRun_ProbeIncludesOnlyCurrentRunDeliverableBundle()
+    {
+        string? command = null;
+        var containers = new Mock<IContainerService>();
+        containers
+            .Setup(c => c.ExecAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Guid, string, TimeSpan, CancellationToken>(
+                (_, cmd, _, _) => command = cmd)
+            .ReturnsAsync(new ExecResult { ExitCode = 0, StdOut = "" });
+        var collector = new FilesystemOutputArtifactCollector(
+            containers.Object,
+            NullLogger<FilesystemOutputArtifactCollector>.Instance);
+        var container = new Container
+        {
+            Id = Guid.NewGuid(), Name = "c", OwnerId = "u", ExternalId = "ext-1",
+        };
+        var runId = Guid.NewGuid();
+
+        await collector.CollectRunAsync(container, runId);
+
+        command.Should().Contain(
+            $"{Root}/deliverables/{runId}/*");
+        command.Should().Contain("! -path");
+        command.Should().Contain(
+            $"{Root}/deliverables/*",
+            "older attempts must not be attributed to this run");
+    }
+
+    [Fact]
     public async Task Collect_PropagatesCallerCancellation()
     {
         var containers = new Mock<IContainerService>();
@@ -385,7 +420,7 @@ public class FilesystemOutputArtifactCollectorTests
     {
         // Capture the UploadRequest and assert it carries the
         // expected MimeType / Name / Digest / Links shape (Run target,
-        // container id, Output role).
+        // concrete run id, Output role).
         var sha = new string('a', 64);
         var probe = $"3\t{sha}\t{Root}/report.pdf";
         var b64 = Convert.ToBase64String(new byte[] { 1, 2, 3 });
@@ -399,6 +434,7 @@ public class FilesystemOutputArtifactCollectorTests
             .ReturnsAsync(new DocsRef(Guid.NewGuid(), Guid.NewGuid()));
 
         var containerId = Guid.NewGuid();
+        var runId = Guid.NewGuid();
         var collector = new FilesystemOutputArtifactCollector(
             containers.Object,
             NullLogger<FilesystemOutputArtifactCollector>.Instance,
@@ -408,7 +444,7 @@ public class FilesystemOutputArtifactCollectorTests
             Id = containerId, Name = "c", OwnerId = "u", ExternalId = "ext-1",
         };
 
-        var artifacts = await collector.CollectAsync(container);
+        var artifacts = await collector.CollectRunAsync(container, runId);
 
         artifacts.Should().HaveCount(1);
         captured.Should().NotBeNull();
@@ -418,7 +454,7 @@ public class FilesystemOutputArtifactCollectorTests
         captured.Content.ToArray().Should().BeEquivalentTo(new byte[] { 1, 2, 3 });
         captured.Links.Should().HaveCount(1);
         captured.Links[0].TargetType.Should().Be("Run");
-        captured.Links[0].TargetId.Should().Be(containerId.ToString());
+        captured.Links[0].TargetId.Should().Be(runId.ToString());
         captured.Links[0].Role.Should().Be("Output");
     }
 

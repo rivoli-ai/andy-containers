@@ -103,6 +103,37 @@ The run's changes are then retrievable as a unified patch via
 (`git diff <base>` of the run branch + working tree), aggregated across repos or
 scoped to one via `repoId`.
 
+### Commit-derived deliverable artifacts
+
+After a successful headless run, each cloned repository with staged changes is
+checkpointed on `andy/run/{runId}`. The same guarded shell transaction then
+writes a bundle under:
+
+```
+/workspace/.andy/outputs/deliverables/{runId}/{repositoryId}/
+  checkpoint.patch
+  changed-files.tsv
+  manifest.json
+```
+
+`checkpoint.patch` is a binary-capable `git show` of the exact checkpoint
+commit; `changed-files.tsv` records Git status plus every changed source, test,
+documentation, and asset path; `manifest.json` binds the bundle to the run,
+repository, branch, and commit SHA. Deleted files remain represented by the
+patch and manifest. A no-change run does not fabricate a bundle.
+During collection, older run-scoped bundles are excluded so a later no-change
+task cannot inherit stale deliverables merely because they remain on the
+shared container filesystem.
+
+The normal recursive output collector discovers these files alongside
+`run-summary.md`, hashes them, assigns MIME types (`text/x-diff`,
+`text/tab-separated-values`, `application/json`), uploads their bytes to
+andy-docs, and writes their typed `DocsRef`s into `Run.OutputArtifacts` and the
+terminal event. The document link targets the concrete run id—not the hosting
+container id—so downstream `output_doc_refs` and `prior_context.artifact_refs`
+refer to the correct attempt. `.andy/inputs`, pre-existing `.andy/outputs`, and
+untracked backup-shaped files remain excluded from the Git commit itself.
+
 ## Cancellation
 
 ```

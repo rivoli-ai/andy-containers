@@ -86,6 +86,7 @@ public sealed class HeadlessRunner : IHeadlessRunner
     private const string NoChangesMarker = "__ANDY_NO_CHANGES_TO_COMMIT__";
     private const string ExcludedArtifactsMarker = "__ANDY_CHECKPOINT_EXCLUDED__=";
     private const string ExcludedRuntimeArtifactsMarker = "__ANDY_CHECKPOINT_RUNTIME_ARTIFACTS_EXCLUDED__";
+    private const string DeliverablesRegisteredMarker = "__ANDY_DELIVERABLES_REGISTERED__=";
 
     public HeadlessRunner(
         IContainerService containers,
@@ -610,7 +611,10 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 var container = await _db.Containers.FindAsync(new object[] { containerId }, ct);
                 if (container is not null)
                 {
-                    artifacts = await _artifactCollector.CollectAsync(container, ct);
+                    artifacts = await _artifactCollector.CollectRunAsync(
+                        container,
+                        run.Id,
+                        ct);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -1120,7 +1124,10 @@ public sealed class HeadlessRunner : IHeadlessRunner
         {
             try
             {
-                var command = BuildCheckpointCommand(run, repo);
+                var command = BuildCheckpointCommand(
+                    run,
+                    repo,
+                    FilesystemOutputArtifactCollector.OutputsRoot);
 
                 var result = await _containers.ExecAsync(containerId, command, CommitTimeout, ct);
 
@@ -1158,9 +1165,18 @@ public sealed class HeadlessRunner : IHeadlessRunner
                 }
                 else
                 {
+                    var deliverableDiagnostic = result.StdOut?
+                        .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .FirstOrDefault(line => line.StartsWith(
+                            DeliverablesRegisteredMarker,
+                            StringComparison.Ordinal));
                     _logger.LogInformation(
-                        "Run {RunId}: committed task work to per-run branch in repo {RepoPath} (container {ContainerId}).",
-                        run.Id, repo.TargetPath, containerId);
+                        "Run {RunId}: committed task work to per-run branch in repo {RepoPath} (container {ContainerId}); deliverable bundle {DeliverablePath}.",
+                        run.Id,
+                        repo.TargetPath,
+                        containerId,
+                        deliverableDiagnostic?[DeliverablesRegisteredMarker.Length..]
+                            ?? "was not reported");
                 }
             }
             catch (Exception ex)
@@ -1180,7 +1196,10 @@ public sealed class HeadlessRunner : IHeadlessRunner
     /// in the working tree. Tracked files with the same names are ordinary
     /// repository content and are never deleted or implicitly excluded.
     /// </summary>
-    internal static string BuildCheckpointCommand(Run run, ContainerGitRepository repo)
+    internal static string BuildCheckpointCommand(
+        Run run,
+        ContainerGitRepository repo,
+        string? outputsRoot = null)
     {
         var q = GitCloneService.ShellQuote(repo.TargetPath);
         var expectedBranch = IRunBranchService.BranchNameFor(run.Id);
@@ -1188,6 +1207,16 @@ public sealed class HeadlessRunner : IHeadlessRunner
         var excludedTemplate = ShellEscape(
             $"/tmp/andy-checkpoint-excluded-{run.Id}-{repo.Id}.XXXXXX");
         var message = $"andy run {run.Id}: task work checkpoint";
+        // Production explicitly supplies the service-wide outputs root. The
+        // repo-local fallback makes the pure shell contract safely testable in
+        // a temporary repository without touching /workspace.
+        outputsRoot ??= repo.TargetPath.TrimEnd('/') + "/.andy/outputs";
+        var deliverableRelativePath = $"deliverables/{run.Id}/{repo.Id}";
+        var deliverableRoot = outputsRoot.TrimEnd('/') + "/" + deliverableRelativePath;
+        var deliverableRootQuoted = ShellEscape(deliverableRoot);
+        var manifestJson = ShellEscape(
+            $"{{\"schema_version\":1,\"run_id\":\"{run.Id}\",\"repository_id\":\"{repo.Id}\","
+            + $"\"branch\":\"{expectedBranch}\",\"commit\":\"%s\"}}\\n");
 
         return
             $"actual_branch=$(git -C {q} symbolic-ref --quiet --short HEAD) || "
@@ -1213,7 +1242,13 @@ public sealed class HeadlessRunner : IHeadlessRunner
             + "rm -f \"$excluded\" && trap - EXIT && "
             + $"(git -C {q} diff --cached --quiet "
             + $"&& echo {ShellEscape(NoChangesMarker)} "
-            + $"|| git -C {q} -c user.email='agent@andy.rivoli.ai' -c user.name='Andy Agent' commit -m {ShellEscape(message)} --no-verify)";
+            + $"|| (git -C {q} -c user.email='agent@andy.rivoli.ai' -c user.name='Andy Agent' commit -m {ShellEscape(message)} --no-verify && "
+            + $"deliverable_root={deliverableRootQuoted} && mkdir -p \"$deliverable_root\" && "
+            + $"commit_sha=$(git -C {q} rev-parse HEAD) && "
+            + $"git -C {q} show --binary --format=fuller --stat --patch HEAD > \"$deliverable_root/checkpoint.patch\" && "
+            + $"git -C {q} diff-tree --root --no-commit-id --name-status -r HEAD > \"$deliverable_root/changed-files.tsv\" && "
+            + $"printf {manifestJson} \"$commit_sha\" > \"$deliverable_root/manifest.json\" && "
+            + $"echo {DeliverablesRegisteredMarker}{deliverableRelativePath}))";
     }
 
     // POSIX single-quote escape — safe for /bin/sh -c "...". Single quotes
