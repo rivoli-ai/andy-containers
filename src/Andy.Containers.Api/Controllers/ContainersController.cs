@@ -129,13 +129,35 @@ public class ContainersController : ControllerBase
     /// Resume via <c>Last-Event-ID</c>; the bus replays buffered events
     /// from after the supplied id. On buffer miss (id too old) replay
     /// restarts from the oldest buffered event.
-    /// RBAC: <c>container:read</c>. The bus delivers ALL containers; the
-    /// client filters to the containers it owns.
+    /// RBAC: <c>container:read</c>. The bus delivers fleet-wide events
+    /// internally; this endpoint filters every replayed and live event through
+    /// the same owner/admin/service/same-organisation read policy used by
+    /// <c>GET /api/containers/{id}</c>.
     /// </remarks>
     [HttpGet("events")]
     [RequirePermission("container:read")]
     public Task Events(CancellationToken ct)
-        => ContainerLifecycleSse.StreamAsync(Response, Request, _lifecycleBus, ct);
+        => ContainerLifecycleSse.StreamAsync(
+            Response,
+            Request,
+            _lifecycleBus,
+            ct,
+            IsLifecycleEventVisibleAsync);
+
+    private async ValueTask<bool> IsLifecycleEventVisibleAsync(
+        ContainerLifecycleEnvelope envelope,
+        CancellationToken ct)
+    {
+        // Fail closed when a row no longer exists. Lifecycle publishers emit
+        // destroyed before removing state, so legitimate terminal events are
+        // still visible; an unknown id must never become an authorization
+        // bypass. AsNoTracking avoids retaining an unbounded fleet in the
+        // request-scoped context during a long-lived SSE connection.
+        var container = await _db.Containers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == envelope.Event.ContainerId, ct);
+        return container is not null && await CanReadAsync(container, ct);
+    }
 
     /// <summary>
     /// SM.2.6 (rivoli-ai/conductor#2008). Classified GET — returns:
@@ -813,11 +835,47 @@ public class ContainersController : ControllerBase
             Response.Headers.ContentType = "text/event-stream";
             Response.Headers.CacheControl = "no-store";
             Response.Headers["X-Accel-Buffering"] = "no";
+            if (container.Status is ContainerStatus.Stopped
+                or ContainerStatus.Stopping
+                or ContainerStatus.Destroying
+                or ContainerStatus.Destroyed
+                or ContainerStatus.Failed)
+            {
+                await RunOutputSse.WriteTerminalErrorAsync(
+                    Response,
+                    "container-stopped",
+                    $"Container {id} is {container.Status}.",
+                    ct);
+                return;
+            }
             await Response.Body.FlushAsync(ct);
             return;
         }
 
-        await RunOutputSse.StreamAsync(Response, Request, _outputBus, run.Id, ct);
+        await RunOutputSse.StreamAsync(
+            Response,
+            Request,
+            _outputBus,
+            run.Id,
+            ct,
+            honorLogQuery: true);
+
+        if (run.Status is RunStatus.Failed or RunStatus.Timeout)
+        {
+            await RunOutputSse.WriteTerminalErrorAsync(
+                Response,
+                "internal-error",
+                $"Run {run.Id} ended with {run.Status}.",
+                ct);
+        }
+        else if (run.Status == RunStatus.Cancelled)
+        {
+            await RunOutputSse.WriteTerminalErrorAsync(
+                Response,
+                "container-stopped",
+                $"Run {run.Id} was cancelled.",
+                ct);
+        }
     }
 
     /// <summary>

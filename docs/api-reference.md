@@ -19,13 +19,29 @@ All endpoints require authentication (JWT Bearer token) and RBAC permissions via
 | PUT | `/containers/{id}/resources` | container:execute | Live resize CPU/memory |
 | GET | `/containers/{id}/connection` | container:read | Get IDE/VNC/SSH endpoints |
 | GET | `/containers/{id}/screenshot` | container:read | Get terminal thumbnail |
-| GET | `/containers/{id}/events` | container:read | Get lifecycle events |
+| GET | `/containers/events` | container:read | Fleet lifecycle SSE, filtered server-side to visible containers |
+| GET | `/containers/{id}/logs` | container:read | Agent stdout/stderr SSE with replay, follow, and terminal errors |
 | GET | `/containers/{id}/repositories` | container:read | List cloned git repos |
 | POST | `/containers/{id}/repositories` | container:write | Clone a new repository |
 | POST | `/containers/{id}/repositories/{repoId}/pull` | container:execute | Pull latest changes |
 | GET | `/containers/{id}/git/diff` | container:read | Unified git diff of the run branch vs base |
 | GET | `/containers/{id}/ports` | container:read | List the run container's TCP ports (mapped + discovered) for web preview |
 | POST | `/containers/{id}/ports/expose` | container:execute | Publish a container port to a host (loopback) port for preview |
+
+### Container event streams
+
+`GET /api/containers/events` emits fleet lifecycle transitions as SSE
+`event: lifecycle` frames. Event ids are fleet-wide monotonic sequence
+numbers and reconnects resume with `Last-Event-ID`. The server filters both
+buffered replay and live events through the owner/admin/service-account and
+same-organization read policy; clients never receive another tenant's
+container ids or phase data. Idle streams emit `: heartbeat` every 15 seconds.
+
+`GET /api/containers/{id}/logs` emits the selected run's stdout/stderr as SSE
+`event: log` frames. It supports `follow=0|1`, `tail=0..1000`, `since=<ISO-8601>`,
+and `Last-Event-ID`. Idle following connections emit 15-second heartbeats.
+Failed/cancelled runs and stopped containers finish with an
+`event: terminal-error` frame.
 
 ### `GET /api/containers/{id}/git/diff`
 

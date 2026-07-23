@@ -42,7 +42,8 @@ public static class ContainerLifecycleSse
         HttpResponse response,
         HttpRequest request,
         IContainerLifecycleBus bus,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<ContainerLifecycleEnvelope, CancellationToken, ValueTask<bool>>? isVisible = null)
     {
         response.Headers.ContentType = "text/event-stream";
         response.Headers.CacheControl = "no-store";
@@ -58,7 +59,7 @@ public static class ContainerLifecycleSse
 
         // Merge the event stream with a recurring heartbeat timer.
         using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var eventTask = PumpEventsAsync(response, bus, lastEventId, ct);
+        var eventTask = PumpEventsAsync(response, bus, lastEventId, isVisible, ct);
         var heartbeatTask = PumpHeartbeatsAsync(response, heartbeatCts.Token);
 
         await Task.WhenAny(eventTask, heartbeatTask);
@@ -72,10 +73,19 @@ public static class ContainerLifecycleSse
         HttpResponse response,
         IContainerLifecycleBus bus,
         long? lastEventId,
+        Func<ContainerLifecycleEnvelope, CancellationToken, ValueTask<bool>>? isVisible,
         CancellationToken ct)
     {
         await foreach (var envelope in bus.SubscribeAsync(lastEventId, ct))
         {
+            // The bus is intentionally fleet-wide. Authorization belongs at
+            // the HTTP boundary so every connection receives only containers
+            // visible to its principal while publishers remain non-blocking
+            // and unaware of request identity.
+            if (isVisible is not null && !await isVisible(envelope, ct))
+            {
+                continue;
+            }
             await WriteEventFrameAsync(response, envelope, ct);
         }
     }

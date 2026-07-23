@@ -112,6 +112,24 @@ public class ContainersControllerLogsSseTests : IDisposable
     }
 
     [Fact]
+    public async Task Logs_FollowZeroAndTail_ReturnsBoundedSnapshotWithoutTerminalMarker()
+    {
+        var container = CreateContainer();
+        var run = SeedRun(container.Id, RunStatus.Running);
+        _bus.Publish(run.Id, new RunOutputLine(
+            RunOutputStream.Stdout, "old", DateTimeOffset.UtcNow));
+        _bus.Publish(run.Id, new RunOutputLine(
+            RunOutputStream.Stdout, "latest", DateTimeOffset.UtcNow));
+        var responseStream = SetupResponse(queryString: "?follow=0&tail=1");
+
+        await _controller.Logs(container.Id, CancellationToken.None);
+
+        var body = ReadBody(responseStream);
+        body.Should().Contain("\"line\":\"latest\"");
+        body.Should().NotContain("\"line\":\"old\"");
+    }
+
+    [Fact]
     public async Task Logs_NoRunYet_EmptySseStreamNot404()
     {
         var container = CreateContainer();
@@ -124,6 +142,42 @@ public class ContainersControllerLogsSseTests : IDisposable
         _controller.Response.StatusCode.Should().Be(StatusCodes.Status200OK);
         _controller.Response.Headers.ContentType.ToString().Should().Be("text/event-stream");
         ReadBody(responseStream).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Logs_StoppedContainerWithoutRun_EmitsTerminalError()
+    {
+        var container = CreateContainer();
+        container.Status = ContainerStatus.Stopped;
+        var responseStream = SetupResponse();
+
+        await _controller.Logs(container.Id, CancellationToken.None);
+
+        var body = ReadBody(responseStream);
+        body.Should().Contain("event: terminal-error");
+        body.Should().Contain("\"code\":\"container-stopped\"");
+    }
+
+    [Fact]
+    public async Task Logs_FailedRun_ReplaysOutputThenEmitsTerminalError()
+    {
+        var container = CreateContainer();
+        var run = SeedRun(container.Id, RunStatus.Failed);
+        _bus.Publish(
+            run.Id,
+            new RunOutputLine(
+                RunOutputStream.Stderr,
+                "agent failed",
+                DateTimeOffset.UtcNow));
+        _bus.Complete(run.Id);
+        var responseStream = SetupResponse();
+
+        await _controller.Logs(container.Id, CancellationToken.None);
+
+        var body = ReadBody(responseStream);
+        body.Should().Contain("\"line\":\"agent failed\"");
+        body.Should().Contain("event: terminal-error");
+        body.Should().Contain("\"code\":\"internal-error\"");
     }
 
     [Fact]
@@ -153,10 +207,16 @@ public class ContainersControllerLogsSseTests : IDisposable
         _controller.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
     }
 
-    private MemoryStream SetupResponse(string? lastEventId = null)
+    private MemoryStream SetupResponse(
+        string? lastEventId = null,
+        string? queryString = null)
     {
         var responseStream = new MemoryStream();
         var context = new DefaultHttpContext { Response = { Body = responseStream } };
+        if (queryString is not null)
+        {
+            context.Request.QueryString = new QueryString(queryString);
+        }
         if (lastEventId is not null)
         {
             context.Request.Headers["Last-Event-ID"] = lastEventId;

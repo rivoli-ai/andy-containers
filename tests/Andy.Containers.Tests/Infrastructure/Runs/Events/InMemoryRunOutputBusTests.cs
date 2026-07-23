@@ -230,6 +230,63 @@ public class InMemoryRunOutputBusTests
         lines.Select(e => e.SequenceNumber).Should().Equal(3, 4);
     }
 
+    [Fact]
+    public async Task Subscribe_TailAndSince_FilterReplay()
+    {
+        using var bus = new InMemoryRunOutputBus();
+        var runId = Guid.NewGuid();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        bus.Publish(runId, new RunOutputLine(
+            RunOutputStream.Stdout,
+            "too-old",
+            cutoff.AddMinutes(-1)));
+        bus.Publish(runId, new RunOutputLine(
+            RunOutputStream.Stdout,
+            "first-current",
+            cutoff));
+        bus.Publish(runId, new RunOutputLine(
+            RunOutputStream.Stdout,
+            "last-current",
+            cutoff.AddSeconds(1)));
+
+        var lines = new List<RunOutputEnvelope>();
+        await foreach (var envelope in bus.SubscribeAsync(
+            runId,
+            lastEventId: null,
+            CancellationToken.None,
+            tail: 1,
+            since: cutoff,
+            follow: false))
+        {
+            lines.Add(envelope);
+        }
+
+        lines.Should().ContainSingle();
+        lines[0].Line.Line.Should().Be("last-current");
+    }
+
+    [Fact]
+    public async Task Subscribe_FollowFalse_ReplaysAndClosesWithoutTerminalMarker()
+    {
+        using var bus = new InMemoryRunOutputBus();
+        var runId = Guid.NewGuid();
+        bus.Publish(runId, Line(RunOutputStream.Stdout, "snapshot"));
+
+        var lines = new List<RunOutputEnvelope>();
+        await foreach (var envelope in bus.SubscribeAsync(
+            runId,
+            lastEventId: null,
+            CancellationToken.None,
+            follow: false))
+        {
+            lines.Add(envelope);
+        }
+
+        lines.Should().ContainSingle();
+        lines[0].Line.Line.Should().Be("snapshot");
+    }
+
     private static async Task<List<RunOutputEnvelope>> ConsumeAsync(
         IRunOutputBus bus, Guid runId, long? lastEventId, int take)
     {

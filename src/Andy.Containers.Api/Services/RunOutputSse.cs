@@ -28,6 +28,8 @@ namespace Andy.Containers.Api.Services;
 /// </remarks>
 public static class RunOutputSse
 {
+    public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -39,7 +41,9 @@ public static class RunOutputSse
         HttpRequest request,
         IRunOutputBus bus,
         Guid runId,
-        CancellationToken ct)
+        CancellationToken ct,
+        TimeSpan? heartbeatInterval = null,
+        bool honorLogQuery = false)
     {
         response.Headers.ContentType = "text/event-stream";
         response.Headers.CacheControl = "no-store";
@@ -55,10 +59,71 @@ public static class RunOutputSse
             lastEventId = parsed;
         }
 
-        await foreach (var envelope in bus.SubscribeAsync(runId, lastEventId, ct))
+        int? tail = null;
+        DateTimeOffset? since = null;
+        var follow = true;
+        if (honorLogQuery)
         {
-            await WriteFrameAsync(response, envelope, ct);
+            tail = 200;
+            if (int.TryParse(request.Query["tail"], out var requestedTail))
+            {
+                tail = Math.Clamp(requestedTail, 0, 1000);
+            }
+            if (DateTimeOffset.TryParse(request.Query["since"], out var requestedSince))
+            {
+                since = requestedSince;
+            }
+            follow = int.TryParse(request.Query["follow"], out var requestedFollow)
+                && requestedFollow == 1;
         }
+
+        var interval = heartbeatInterval ?? HeartbeatInterval;
+        await using var enumerator = bus
+            .SubscribeAsync(runId, lastEventId, ct, tail, since, follow)
+            .GetAsyncEnumerator(ct);
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+
+        try
+        {
+            while (true)
+            {
+                var heartbeat = Task.Delay(interval, ct);
+                if (await Task.WhenAny(moveNext, heartbeat) == heartbeat)
+                {
+                    await response.WriteAsync(": heartbeat\n\n", ct);
+                    await response.Body.FlushAsync(ct);
+                    continue;
+                }
+
+                if (!await moveNext)
+                {
+                    break;
+                }
+
+                await WriteFrameAsync(response, enumerator.Current, ct);
+                moveNext = enumerator.MoveNextAsync().AsTask();
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Client disconnected. The request-aborted token is the normal
+            // lifetime boundary for a following SSE connection.
+        }
+    }
+
+    public static async Task WriteTerminalErrorAsync(
+        HttpResponse response,
+        string code,
+        string message,
+        CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(
+            new TerminalErrorWire(code, message),
+            JsonOptions);
+        await response.WriteAsync(
+            $"event: terminal-error\ndata: {json}\n\n",
+            ct);
+        await response.Body.FlushAsync(ct);
     }
 
     private static async Task WriteFrameAsync(
@@ -84,4 +149,6 @@ public static class RunOutputSse
         RunOutputStream Stream,
         string Line,
         DateTimeOffset Timestamp);
+
+    private sealed record TerminalErrorWire(string Code, string Message);
 }

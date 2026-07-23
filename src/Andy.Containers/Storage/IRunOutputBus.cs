@@ -54,10 +54,19 @@ public interface IRunOutputBus
     /// restarts from the oldest buffered line (and the caller can
     /// reconcile gaps via the run status snapshot).
     /// </param>
+    /// <param name="tail">Optional maximum number of buffered lines to replay.</param>
+    /// <param name="since">Optional lower timestamp bound for buffered replay.</param>
+    /// <param name="follow">
+    /// When true, replay then follow live output. When false, replay the
+    /// requested snapshot and close immediately.
+    /// </param>
     IAsyncEnumerable<RunOutputEnvelope> SubscribeAsync(
         Guid runId,
         long? lastEventId,
-        CancellationToken ct);
+        CancellationToken ct,
+        int? tail = null,
+        DateTimeOffset? since = null,
+        bool follow = true);
 
     /// <summary>
     /// Drop all buffered lines for a run. Called by the runner once a
