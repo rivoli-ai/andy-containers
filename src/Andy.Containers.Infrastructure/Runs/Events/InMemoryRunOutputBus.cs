@@ -45,10 +45,18 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
     public async IAsyncEnumerable<RunOutputEnvelope> SubscribeAsync(
         Guid runId,
         long? lastEventId,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct,
+        int? tail = null,
+        DateTimeOffset? since = null,
+        bool follow = true)
     {
         var channel = _channels.GetOrAdd(runId, _ => new RunChannel(_options.BufferSize));
-        var subscription = channel.Subscribe(_options.SubscriberQueueSize, lastEventId);
+        var subscription = channel.Subscribe(
+            _options.SubscriberQueueSize,
+            lastEventId,
+            tail,
+            since,
+            follow);
         try
         {
             await foreach (var envelope in subscription.ReadAllAsync(ct))
@@ -153,7 +161,12 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
             }
         }
 
-        public Subscription Subscribe(int queueSize, long? lastEventId)
+        public Subscription Subscribe(
+            int queueSize,
+            long? lastEventId,
+            int? tail,
+            DateTimeOffset? since,
+            bool follow)
         {
             // BoundedChannelFullMode.DropOldest matches the buffer's
             // ring-replace semantics — slow subscribers drop history
@@ -171,8 +184,19 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
             bool terminalAlreadySeen;
             lock (_lock)
             {
-                _subscribers.Add(subscription);
-                replay = [.. _buffer.Where(e => lastEventId is null || e.SequenceNumber > lastEventId.Value)];
+                if (follow)
+                {
+                    _subscribers.Add(subscription);
+                }
+
+                IEnumerable<RunOutputEnvelope> replayQuery = _buffer.Where(e =>
+                    (lastEventId is null || e.SequenceNumber > lastEventId.Value)
+                    && (since is null || e.Line.Timestamp >= since.Value));
+                if (tail is { } tailCount)
+                {
+                    replayQuery = replayQuery.TakeLast(Math.Max(0, tailCount));
+                }
+                replay = [.. replayQuery];
                 terminalAlreadySeen = _terminalSeen;
             }
 
@@ -182,7 +206,7 @@ public sealed class InMemoryRunOutputBus : IRunOutputBus, IDisposable
             {
                 subscription.TryWrite(envelope);
             }
-            if (terminalAlreadySeen)
+            if (terminalAlreadySeen || !follow)
             {
                 subscription.Complete();
             }

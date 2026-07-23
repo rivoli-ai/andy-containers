@@ -158,6 +158,7 @@ The lifecycle event stream above only surfaces **terminal** observations — not
 
 ```
 GET /api/runs/{id}/output      (text/event-stream, run:read)
+GET /api/containers/{id}/logs  (text/event-stream, container:read)
 ```
 
 Wire format (SSE), one frame per output line, mirroring the build-progress SSE bus (IM9 / `InMemoryBuildEventBus`):
@@ -171,6 +172,11 @@ data: {"stream":"stdout","line":"Iteration 2/4","timestamp":"2026-..."}
 
 - `id:` is a monotonic per-run sequence number. A reconnecting client sends the last id it saw in the `Last-Event-ID` request header; the server replays buffered lines **after** that id (no duplicates, no gaps). If the requested id has aged out of the bounded ring buffer, the stream restarts from the oldest buffered line and the client reconciles via the run status snapshot.
 - `stream` distinguishes `stdout` from `stderr`.
+- The container-scoped route accepts `follow`, `tail`, and `since`; an idle
+  following connection emits an SSE heartbeat comment every 15 seconds.
+- Container-log authorization is enforced before streaming. Fleet lifecycle
+  replay from `GET /api/containers/events` is independently filtered
+  server-side to containers visible to the principal.
 - The stream **closes** once the run reaches a terminal status and the buffer is drained — same terminal-stop contract as `RunEventStream`. A subscriber attaching after the run is already terminal replays the buffer then closes immediately (never hangs). Unknown run id → `404`.
 - Run-scoped tokens (`ANDY_TOKEN`, see *Run-scoped credentials* below) are **redacted** (`RunOutputRedactor`) before any line reaches the wire — both the literal bearer (known to the runner via the idempotent `ITokenIssuer.MintAsync`) and the defensive `ANDY_TOKEN=<value>` / `export` / JSON env-echo shapes.
 
