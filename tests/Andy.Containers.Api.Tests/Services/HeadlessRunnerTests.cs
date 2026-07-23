@@ -928,7 +928,10 @@ public class HeadlessRunnerTests : IDisposable
         };
         var collector = new Mock<IOutputArtifactCollector>();
         collector
-            .Setup(c => c.CollectAsync(It.IsAny<Container>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CollectRunAsync(
+                It.IsAny<Container>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(artifacts);
 
         // Seed a real container row so the runner can FindAsync it.
@@ -953,7 +956,9 @@ public class HeadlessRunnerTests : IDisposable
         arr[0].GetProperty("relative_path").GetString().Should().Be("report.pdf");
 
         collector.Verify(
-            c => c.CollectAsync(It.Is<Container>(ct => ct.Id == run.ContainerId.Value),
+            c => c.CollectRunAsync(
+                It.Is<Container>(ct => ct.Id == run.ContainerId.Value),
+                run.Id,
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -966,7 +971,10 @@ public class HeadlessRunnerTests : IDisposable
         // output_artifacts field on the payload).
         var collector = new Mock<IOutputArtifactCollector>();
         collector
-            .Setup(c => c.CollectAsync(It.IsAny<Container>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CollectRunAsync(
+                It.IsAny<Container>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("probe exec died"));
 
         var run = SeedRun();
@@ -1028,7 +1036,10 @@ public class HeadlessRunnerTests : IDisposable
         await runner.StartAsync(run, _configPath);
 
         collector.Verify(
-            c => c.CollectAsync(It.IsAny<Container>(), It.IsAny<CancellationToken>()),
+            c => c.CollectRunAsync(
+                It.IsAny<Container>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -1195,6 +1206,11 @@ public class HeadlessRunnerTests : IDisposable
             .ContainSingle(c => c.Contains("git -C") && c.Contains("commit")).Subject;
         commit.Should().Contain("add -A");
         commit.Should().Contain("/workspace");
+        commit.Should().Contain("/workspace/.andy/outputs/deliverables/");
+        commit.Should().Contain($"/deliverables/{run.Id}/");
+        commit.Should().Contain("checkpoint.patch");
+        commit.Should().Contain("changed-files.tsv");
+        commit.Should().Contain("manifest.json");
         commit.Should().Contain($"andy run {run.Id}", "the commit message must identify the run");
         commit.Should().Contain($"andy/run/{run.Id}",
             "the branch invariant must be checked in the same exec as staging");
@@ -1285,6 +1301,8 @@ public class HeadlessRunnerTests : IDisposable
             result.ExitCode.Should().Be(0, result.StdErr);
             result.StdOut.Should().Contain("__ANDY_CHECKPOINT_EXCLUDED__=1");
             result.StdOut.Should().Contain("__ANDY_CHECKPOINT_RUNTIME_ARTIFACTS_EXCLUDED__");
+            result.StdOut.Should().Contain(
+                $"__ANDY_DELIVERABLES_REGISTERED__=deliverables/{run.Id}/{repo.Id}");
             File.Exists(Path.Combine(root, "fixture.orig")).Should().BeTrue();
             File.Exists(Path.Combine(root, "notes.bak")).Should().BeTrue();
             File.Exists(Path.Combine(root, ".andy", "inputs", "sensitive.bin")).Should().BeTrue();
@@ -1298,6 +1316,36 @@ public class HeadlessRunnerTests : IDisposable
             RunGit(root, "status", "--porcelain").StdOut.Should().Contain("?? notes.bak");
             RunGit(root, "status", "--porcelain").StdOut.Should().Contain("?? .andy/");
             RunGit(root, "branch", "--show-current").StdOut.Trim().Should().Be(expectedBranch);
+
+            var deliverables = Path.Combine(
+                root,
+                ".andy",
+                "outputs",
+                "deliverables",
+                run.Id.ToString(),
+                repo.Id.ToString());
+            var patch = File.ReadAllText(Path.Combine(deliverables, "checkpoint.patch"));
+            patch.Should().Contain("ordinary changed");
+            patch.Should().Contain("fixture.orig");
+            patch.Should().NotContain("notes.bak");
+            patch.Should().NotContain("sensitive.bin");
+
+            var changedFiles = File.ReadAllText(
+                Path.Combine(deliverables, "changed-files.tsv"));
+            changedFiles.Should().Contain("fixture.orig");
+            changedFiles.Should().Contain("ordinary.txt");
+            changedFiles.Should().NotContain(".andy/");
+
+            using var manifest = JsonDocument.Parse(
+                File.ReadAllText(Path.Combine(deliverables, "manifest.json")));
+            manifest.RootElement.GetProperty("run_id").GetString()
+                .Should().Be(run.Id.ToString());
+            manifest.RootElement.GetProperty("repository_id").GetString()
+                .Should().Be(repo.Id.ToString());
+            manifest.RootElement.GetProperty("branch").GetString()
+                .Should().Be(expectedBranch);
+            manifest.RootElement.GetProperty("commit").GetString()
+                .Should().Be(RunGit(root, "rev-parse", "HEAD").StdOut.Trim());
         }
         finally
         {

@@ -9,6 +9,9 @@ namespace Andy.Containers.Abstractions;
 /// Walks the well-known outputs directory inside a container and
 /// produces a structured manifest of artifacts to publish on the
 /// terminal run event.
+/// Successful agent runs may first materialize commit-derived deliverables
+/// beneath the same root; the recursive walk treats those patch/manifest
+/// files exactly like agent-declared outputs.
 ///
 /// Issue rivoli-ai/andy-containers#316. The default contract:
 ///
@@ -36,4 +39,15 @@ public interface IOutputArtifactCollector
     Task<IReadOnlyList<RunOutputArtifact>> CollectAsync(
         Container container,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Collect artifacts for a concrete agent run. Implementations that upload
+    /// bytes can attach document links to <paramref name="runId"/> instead of
+    /// incorrectly treating the hosting container id as the run identity.
+    /// </summary>
+    Task<IReadOnlyList<RunOutputArtifact>> CollectRunAsync(
+        Container container,
+        Guid runId,
+        CancellationToken ct = default)
+        => CollectAsync(container, ct);
 }

@@ -152,6 +152,27 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
     public async Task<IReadOnlyList<RunOutputArtifact>> CollectAsync(
         Container container,
         CancellationToken ct = default)
+        => await CollectCoreAsync(
+            container,
+            docsTargetId: container.Id,
+            deliverableRunId: null,
+            ct);
+
+    public async Task<IReadOnlyList<RunOutputArtifact>> CollectRunAsync(
+        Container container,
+        Guid runId,
+        CancellationToken ct = default)
+        => await CollectCoreAsync(
+            container,
+            docsTargetId: runId,
+            deliverableRunId: runId,
+            ct);
+
+    private async Task<IReadOnlyList<RunOutputArtifact>> CollectCoreAsync(
+        Container container,
+        Guid docsTargetId,
+        Guid? deliverableRunId,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(container);
 
@@ -171,8 +192,17 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
             // permission-denied / vanished-file noise that would
             // otherwise show up on stderr without changing the
             // semantically-empty success case.
+            // Run collection includes generic/agent-declared outputs plus
+            // only this attempt's commit-derived bundle. Older bundles stay
+            // on disk for filesystem continuity but must not be re-registered
+            // as outputs of a later task.
+            var find = deliverableRunId is { } runId
+                ? "find " + OutputsRoot + " -type f " +
+                    "\\( ! -path '" + OutputsRoot + "/deliverables/*' -o " +
+                    "-path '" + OutputsRoot + "/deliverables/" + runId + "/*' \\)"
+                : "find " + OutputsRoot + " -type f";
             var script = $"if [ -d {OutputsRoot} ]; then " +
-                "find " + OutputsRoot + " -type f -print0 2>/dev/null | " +
+                find + " -print0 2>/dev/null | " +
                 "xargs -0 -I{} sh -c 'sz=$(stat -c %s \"{}\" 2>/dev/null); " +
                 "h=$(sha256sum \"{}\" 2>/dev/null | awk \"{print \\$1}\"); " +
                 "[ -n \"$sz\" ] && [ -n \"$h\" ] && printf \"%s\\t%s\\t%s\\n\" \"$sz\" \"$h\" \"{}\"'; " +
@@ -204,7 +234,11 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
                 return parsed;
             }
 
-            return await UploadAndAttachDocsRefsAsync(container, parsed, ct);
+            return await UploadAndAttachDocsRefsAsync(
+                container,
+                docsTargetId,
+                parsed,
+                ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -227,6 +261,7 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
     // or upload error just leaves that one artifact metadata-only.
     private async Task<IReadOnlyList<RunOutputArtifact>> UploadAndAttachDocsRefsAsync(
         Container container,
+        Guid docsTargetId,
         IReadOnlyList<RunOutputArtifact> parsed,
         CancellationToken ct)
     {
@@ -256,7 +291,7 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
                             {
                                 new DocumentLinkDescriptor(
                                     TargetType: "Run",
-                                    TargetId: container.Id.ToString(),
+                                    TargetId: docsTargetId.ToString(),
                                     Role: "Output"),
                             });
                         docsRef = await _andyDocs!.UploadAsync(request, ct);
@@ -445,6 +480,7 @@ public sealed class FilesystemOutputArtifactCollector : IOutputArtifactCollector
         return ext switch
         {
             ".txt" or ".log" => "text/plain",
+            ".patch" or ".diff" => "text/x-diff",
             ".md" => "text/markdown",
             ".json" => "application/json",
             ".yaml" or ".yml" => "application/yaml",
