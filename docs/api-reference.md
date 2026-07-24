@@ -14,7 +14,8 @@ All endpoints require authentication (JWT Bearer token) and RBAC permissions via
 | POST | `/containers/{id}/start` | container:execute | Start a stopped container |
 | POST | `/containers/{id}/stop` | container:execute | Stop a running container |
 | DELETE | `/containers/{id}` | container:delete | Destroy a container |
-| POST | `/containers/{id}/exec` | container:exec | Execute a command |
+| POST | `/containers/{id}/exec` | container:execute | Execute a command |
+| POST | `/containers/{id}/exec/stream` | container:execute | Execute a command and stream stdout/stderr lines over SSE |
 | GET | `/containers/{id}/stats` | container:read | Get CPU/RAM/disk usage |
 | PUT | `/containers/{id}/resources` | container:execute | Live resize CPU/memory |
 | GET | `/containers/{id}/connection` | container:read | Get IDE/VNC/SSH endpoints |
