@@ -697,6 +697,42 @@ paths:
   # untag endpoints below, which expose the digest-anchored
   # BuildArtifact identity introduced in IM3 (#252).
 
+  /api/images/ensure-pull:
+    post:
+      tags: [Images]
+      operationId: ensurePullImage
+      summary: Ensure an upstream image is present in a destination registry
+      description: |
+        Idempotently rehosts an image from an upstream registry into a
+        configured destination registry. If the destination coordinate
+        already exists, no bytes are transferred and `alreadyPresent` is
+        `true`.
+
+        Requires the `image:write` permission. Authentication for private
+        upstream registries is provided by the API host's Docker credential
+        helpers; credentials are not accepted in this request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnsurePullRequest' }
+      responses:
+        '200':
+          description: The image is present in the destination registry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnsurePullResponse' }
+        '400':
+          description: Missing or invalid request fields, or an unknown destination registry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+        '503':
+          description: The image could not be pulled, inspected, tagged, or pushed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManagementError' }
+
   /api/images/{templateId}:
     get:
       tags: [Images]
@@ -1250,6 +1286,60 @@ components:
     # canonical key is the OCI manifest digest; references map a
     # registry coordinate (registryId, repoPath, tag) to a digest.
 
+    EnsurePullRequest:
+      type: object
+      description: |
+        Source and destination coordinates for an idempotent image rehost.
+        `destinationRepository` defaults to the last path segment of
+        `sourceRepository`; `destinationTag` defaults to `sourceTag`.
+      required: [sourceRegistry, sourceRepository, sourceTag, destinationRegistryId]
+      properties:
+        sourceRegistry:
+          type: string
+          description: Upstream registry host, without a repository path (for example `ghcr.io`).
+        sourceRepository:
+          type: string
+          description: Repository path in the upstream registry.
+        sourceTag:
+          type: string
+          description: Tag in the upstream repository.
+        destinationRegistryId:
+          type: string
+          description: Identifier of a destination registry configured on the API host.
+        destinationRepository:
+          type: string
+          nullable: true
+          description: Repository path in the destination registry.
+        destinationTag:
+          type: string
+          nullable: true
+          description: Tag in the destination repository.
+
+    EnsurePullResponse:
+      type: object
+      description: Result of ensuring an upstream image exists in the destination registry.
+      required: [alreadyPresent, registryId, repoPath, tag, digest, sizeBytes]
+      properties:
+        alreadyPresent:
+          type: boolean
+          description: True when the destination already contained the coordinate and no bytes were transferred.
+        registryId:
+          type: string
+          description: Destination registry identifier.
+        repoPath:
+          type: string
+          description: Repository path in the destination registry.
+        tag:
+          type: string
+          description: Tag in the destination repository.
+        digest:
+          type: string
+          description: Authoritative OCI manifest digest after the operation.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Image size reported by the destination registry.
+
     RegisteredTemplate:
       type: object
       description: |
@@ -1378,7 +1468,7 @@ components:
       properties:
         type:
           type: string
-          enum: [step-start, step-stdout, step-error, complete]
+          enum: [step-start, step-stdout, step-error, build-failed, cached, complete]
         timestamp: { type: string, format: date-time }
         stepName:
           type: string
@@ -1394,14 +1484,27 @@ components:
           description: One captured stdout line. Set on `step-stdout`.
         message:
           type: string
-          description: Set on `step-error` (per-step error) and `complete` (failure reason when status != succeeded).
+          description: Set on `step-error` with the per-step error message.
+        failureReason:
+          type: string
+          description: Set on `complete` with the failure reason when outcome is not `Succeeded`.
+        reason:
+          type: string
+          enum: [RegistryUnreachable, EngineUnavailable, PullInterrupted, ManifestUnknown, DigestMismatch, ImagePullFailed, Unknown]
+          description: Stable failure taxonomy. Set on `build-failed`.
+        transient:
+          type: boolean
+          description: Whether retrying may succeed. Set on `build-failed`.
+        detail:
+          type: string
+          description: Optional operator-facing diagnostics. Set on `build-failed`.
         outcome:
           type: string
           enum: [Succeeded, Failed, Cancelled]
           description: Set on `complete`.
         digest:
           type: string
-          description: Set on `complete` when outcome is `Succeeded`.
+          description: Set on `cached`, or on `complete` when outcome is `Succeeded`.
 
     BuildArtifactList:
       type: object
@@ -1579,14 +1682,11 @@ components:
         workspaceRef:
           workspaceId: 11111111-2222-3333-4444-555555555555
           branch: main
-        policyId: null
         containerId: c1c1c1c1-c2c2-c3c3-c4c4-c5c5c5c5c5c5
         status: Running
         startedAt: '2026-04-27T12:00:00Z'
-        endedAt: null
-        exitCode: null
-        error: null
         correlationId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+        attemptId: 7c5d3f5e-3b2a-4d2a-9e9f-2c8d1e0f3a4b
         createdAt: '2026-04-27T11:59:50Z'
         updatedAt: '2026-04-27T12:00:00Z'
         links:
