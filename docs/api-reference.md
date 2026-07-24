@@ -169,12 +169,16 @@ non-owner, `400` when the runtime can't publish post-create.
 
 | Method | Endpoint | Permission | Description |
 |--------|----------|------------|-------------|
-| GET | `/api-keys` | settings:read | List API keys |
-| POST | `/api-keys` | settings:write | Create API key |
-| PUT | `/api-keys/{id}` | settings:write | Update API key |
-| DELETE | `/api-keys/{id}` | settings:write | Delete API key |
-| POST | `/api-keys/{id}/validate` | settings:write | Re-validate key |
-| GET | `/api-keys/{id}/history` | settings:read | Get audit trail |
+| GET | `/apikeys` | settings:read | List the current user's masked API-key metadata |
+| POST | `/apikeys` | settings:write | Store a user-scoped key in andy-settings |
+| PUT | `/apikeys/{id}` | settings:write | Update metadata or rotate the key |
+| DELETE | `/apikeys/{id}` | settings:write | Revoke and delete the key registration |
+| POST | `/apikeys/{id}/validate` | settings:write | Re-validate the stored key |
+| GET | `/apikeys/{id}/history` | settings:read | Get newest-first audit history |
+
+Raw provider keys are encrypted by andy-settings and are never stored in the
+andy-containers database or returned by these endpoints. The local
+`ApiKeyRegistrations` table contains masked display metadata only.
 
 ## Git Credentials
 

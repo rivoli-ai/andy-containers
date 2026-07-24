@@ -246,6 +246,136 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ConnectionInfo' }
 
+  # --- User-scoped provider API keys (#313) ---
+  # Raw values live in andy-settings; these routes expose only masked
+  # metadata and the Conductor-compatible management contract.
+  /api/apikeys:
+    get:
+      tags: [API Keys]
+      summary: List the current user's provider API keys
+      description: Returns masked metadata only; plaintext key values are never returned.
+      operationId: listApiKeys
+      responses:
+        '200':
+          description: User-scoped API-key entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiKeyEntry' }
+    post:
+      tags: [API Keys]
+      summary: Create a user-scoped provider API key
+      description: Stores the plaintext in andy-settings and persists only masked metadata locally.
+      operationId: createApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateApiKeyRequest' }
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeyEntry' }
+        '400':
+          description: Invalid provider, name, value, or base URL
+        '409':
+          description: The user already has a key for this provider
+        '503':
+          description: andy-settings is unavailable or not configured
+
+  /api/apikeys/{id}:
+    put:
+      tags: [API Keys]
+      summary: Update or rotate a provider API key
+      description: Updates display metadata and optionally rotates the user-scoped secret in andy-settings.
+      operationId: updateApiKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateApiKeyRequest' }
+      responses:
+        '200':
+          description: API key updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeyEntry' }
+        '400':
+          description: Invalid update
+        '404':
+          description: API key not found for the current user
+        '503':
+          description: andy-settings is unavailable
+    delete:
+      tags: [API Keys]
+      summary: Delete a provider API key
+      description: Revokes the user-scoped secret and retains the append-only audit history.
+      operationId: deleteApiKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: API key deleted
+        '404':
+          description: API key not found for the current user
+        '503':
+          description: andy-settings is unavailable
+
+  /api/apikeys/{id}/validate:
+    post:
+      tags: [API Keys]
+      summary: Validate a stored key against its provider
+      description: Uses a lightweight provider models/health endpoint and never logs the key.
+      operationId: validateApiKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Validation completed, including invalid-key results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeyValidationResult' }
+        '404':
+          description: API key not found for the current user
+        '503':
+          description: andy-settings is unavailable
+
+  /api/apikeys/{id}/history:
+    get:
+      tags: [API Keys]
+      summary: Get API-key audit history
+      description: Returns newest-first metadata events, including the final deletion event.
+      operationId: getApiKeyHistory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Newest-first audit entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiKeyAuditEntry' }
+        '404':
+          description: No key or retained history exists for the current user
+
   # --- Workspaces ---
   /api/workspaces:
     get:
@@ -1188,6 +1318,73 @@ components:
         exitCode: { type: integer }
         stdout: { type: string }
         stderr: { type: string }
+
+    ApiKeyEntry:
+      type: object
+      required: [id, name, provider, maskedValue]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 128 }
+        provider:
+          type: string
+          enum: [anthropic, openai, google, dashscope, openrouter, ollama, openai-compatible, custom]
+        maskedValue:
+          type: string
+          description: Display-safe value containing at most the provider prefix and final four characters.
+        isValid: { type: boolean, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        lastValidatedAt: { type: string, format: date-time, nullable: true }
+        model: { type: string, nullable: true }
+        baseURL: { type: string, format: uri, nullable: true }
+
+    CreateApiKeyRequest:
+      type: object
+      required: [name, provider, value]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        provider:
+          type: string
+          enum: [anthropic, openai, google, dashscope, openrouter, ollama, openai-compatible, custom]
+        value:
+          type: string
+          format: password
+          minLength: 1
+          writeOnly: true
+        model: { type: string, nullable: true }
+        baseURL: { type: string, format: uri, nullable: true }
+
+    UpdateApiKeyRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        value:
+          type: string
+          format: password
+          minLength: 1
+          writeOnly: true
+        model: { type: string, nullable: true }
+        baseURL: { type: string, format: uri, nullable: true }
+
+    ApiKeyValidationResult:
+      type: object
+      required: [isValid]
+      properties:
+        isValid: { type: boolean }
+        message: { type: string, nullable: true }
+        quotaRemaining: { type: integer, nullable: true }
+
+    ApiKeyAuditEntry:
+      type: object
+      required: [id, keyId, kind, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        keyId: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [created, updated, validated, used, deleted]
+        occurredAt: { type: string, format: date-time }
+        detail: { type: string, nullable: true }
 
     ConnectionInfo:
       type: object

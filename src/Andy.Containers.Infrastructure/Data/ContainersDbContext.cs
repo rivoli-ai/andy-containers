@@ -33,10 +33,12 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<ContainerGitRepository> ContainerGitRepositories => Set<ContainerGitRepository>();
     public DbSet<GitCredential> GitCredentials => Set<GitCredential>();
     // ApiKeyCredentials retired in rivoli-ai/conductor#946 (M1.5.4).
-    // Provider keys now live in andy-settings under
-    // `andy.models.providers.<slug>.apiKey`; per-tool routing in
-    // ContainerOrchestrationService + CodeAssistantProxyRouting (#944)
-    // brings them into the container via the andy-models proxy.
+    // Raw provider keys remain in andy-settings under
+    // `andy.models.providers.<slug>.apiKey`. #313 adds only user-scoped
+    // display metadata and audit rows here; plaintext never returns to this
+    // database.
+    public DbSet<ApiKeyRegistration> ApiKeyRegistrations => Set<ApiKeyRegistration>();
+    public DbSet<ApiKeyAuditRecord> ApiKeyAuditRecords => Set<ApiKeyAuditRecord>();
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<ImageBuildRecord> ImageBuildRecords => Set<ImageBuildRecord>();
@@ -293,7 +295,29 @@ public class ContainersDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(c => new { c.OwnerId, c.Label }).IsUnique();
         });
 
-        // ApiKeyCredential mapping retired with the table — see #946.
+        // API-key metadata only. Raw values live in andy-settings.
+        modelBuilder.Entity<ApiKeyRegistration>(e =>
+        {
+            e.HasKey(k => k.Id);
+            e.Property(k => k.OwnerId).HasMaxLength(256);
+            e.Property(k => k.Name).HasMaxLength(128);
+            e.Property(k => k.Provider).HasMaxLength(64);
+            e.Property(k => k.SecretDefinitionKey).HasMaxLength(256);
+            e.Property(k => k.MaskedValue).HasMaxLength(64);
+            e.Property(k => k.Model).HasMaxLength(256);
+            e.Property(k => k.BaseUrl).HasMaxLength(2048);
+            e.HasIndex(k => k.OwnerId);
+            e.HasIndex(k => new { k.OwnerId, k.Provider }).IsUnique();
+        });
+
+        modelBuilder.Entity<ApiKeyAuditRecord>(e =>
+        {
+            e.HasKey(a => a.Id);
+            e.Property(a => a.OwnerId).HasMaxLength(256);
+            e.Property(a => a.Kind).HasMaxLength(32);
+            e.Property(a => a.Detail).HasMaxLength(1024);
+            e.HasIndex(a => new { a.OwnerId, a.KeyId, a.OccurredAt });
+        });
 
         // Organization
         modelBuilder.Entity<Organization>(e =>

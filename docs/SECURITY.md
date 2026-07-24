@@ -133,7 +133,7 @@ Application code: `containers`
 | WorkspacesController | Delete | `workspace:delete` |
 | ProvidersController | List, Get, Health, CostEstimate | `provider:read` |
 | ProvidersController | Create, Delete | `provider:admin` |
-| ApiKeysController | List, Get, History | `settings:read` |
+| ApiKeysController | List, History | `settings:read` |
 | ApiKeysController | Create, Update, Delete, Validate | `settings:write` |
 
 ### 2.6 Authorization Flow

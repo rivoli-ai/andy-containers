@@ -132,7 +132,7 @@ MCP coverage is solid for the introspection-heavy surfaces agents use. CLI is in
 
 | REST | MCP | CLI |
 |---|---|---|
-| `* /api/api-keys*` (8 routes) | ❌ | — |
+| `* /api/apikeys*` (6 routes) | HTTP-only settings transport | — |
 | `GET /api/git-credentials` | `ListGitCredentials` ✅ | — |
 | `POST /api/git-credentials` | `StoreGitCredential` ✅ | — |
 | `DELETE /api/git-credentials/{id}` | ❌ | — |

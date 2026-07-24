@@ -173,6 +173,18 @@ try
         .SetApplicationName("andy-containers")
         .PersistKeysToDbContext<ContainersDbContext>();
     builder.Services.AddScoped<IGitCredentialService, GitCredentialService>();
+    builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
+    builder.Services.AddSingleton<IApiKeyValidator, ApiKeyValidator>();
+    builder.Services.AddHttpClient(ApiKeyValidator.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            // Provider validation must not follow an attacker-controlled
+            // redirect to a second internal endpoint.
+            AllowAutoRedirect = false,
+        });
     // Shared git-credential materialiser: used by the provisioning worker
     // (create-time) AND the headless runner (run-dispatch) so a
     // sourceControl.github.pat saved after a container exists still reaches it.
@@ -513,10 +525,12 @@ try
             });
         }
         builder.Services.AddSingleton<ISourceControlSecretResolver, AndySettingsHttpClient>();
+        builder.Services.AddSingleton<IApiKeySecretStore, AndySettingsApiKeySecretStore>();
     }
     else
     {
         builder.Services.AddSingleton<ISourceControlSecretResolver, NullSourceControlSecretResolver>();
+        builder.Services.AddSingleton<IApiKeySecretStore, UnavailableApiKeySecretStore>();
     }
 
     builder.Services.AddSingleton<IHeadlessConfigBuilder, HeadlessConfigBuilder>();
