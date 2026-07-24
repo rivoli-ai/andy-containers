@@ -6,10 +6,9 @@ import { ContainersApiService } from '../../../core/services/api.service';
 import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAssistantConfig, CODE_ASSISTANT_TOOLS, ApiKeyCredential } from '../../../core/models';
 
 @Component({
-  selector: 'app-container-create',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
-  template: `
+    selector: 'app-container-create',
+    imports: [CommonModule, FormsModule, RouterLink],
+    template: `
     <div class="max-w-2xl mx-auto space-y-6">
       <div class="flex items-center gap-3">
         <a routerLink="/containers" class="text-surface-400 hover:text-surface-600 dark:hover:text-surface-300">
@@ -209,7 +208,7 @@ import { Template, Provider, GitCredential, Workspace, WorkspaceGitRepo, CodeAss
         </div>
       </form>
     </div>
-  `,
+  `
 })
 export class ContainerCreateComponent implements OnInit {
   name = '';

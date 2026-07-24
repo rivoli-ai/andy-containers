@@ -6,10 +6,9 @@ import { ContainersApiService } from '../../core/services/api.service';
 import { Organization } from '../../core/models';
 
 @Component({
-  selector: 'app-organization-list',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
-  template: `
+    selector: 'app-organization-list',
+    imports: [CommonModule, FormsModule, RouterLink],
+    template: `
     <div class="space-y-6">
       <!-- Header -->
       <div class="flex items-center justify-between">
@@ -103,7 +102,7 @@ import { Organization } from '../../core/models';
         </table>
       </div>
     </div>
-  `,
+  `
 })
 export class OrganizationListComponent implements OnInit {
   loading = true;

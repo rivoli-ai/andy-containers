@@ -13,10 +13,9 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
 @Component({
-  selector: 'app-container-terminal',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
-  template: `
+    selector: 'app-container-terminal',
+    imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe],
+    template: `
     <div class="terminal-page" [class.fullscreen]="isFullscreen">
       <div class="terminal-header">
         <div class="flex items-center gap-3">
@@ -55,7 +54,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
       <div #terminalContainer class="terminal-container"></div>
     </div>
   `,
-  styles: [`
+    styles: [`
     :host {
       display: block;
       /* Break out of parent <main class="p-8"> padding (2rem = 32px each side) */
@@ -122,7 +121,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
       flex: 1 1 auto;
       overflow: hidden;
     }
-  `],
+  `]
 })
 export class ContainerTerminalComponent implements OnInit, AfterViewInit, OnDestroy {
   static readonly THEMES: Record<string, any> = {

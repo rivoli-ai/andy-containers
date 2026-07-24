@@ -11,10 +11,9 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 import { ContainerThumbnailComponent } from '../../../shared/components/container-thumbnail/container-thumbnail.component';
 
 @Component({
-  selector: 'app-container-detail',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe, ContainerThumbnailComponent],
-  template: `
+    selector: 'app-container-detail',
+    imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe, ContainerThumbnailComponent],
+    template: `
     <!-- Loading -->
     <div *ngIf="loading" class="flex items-center justify-center py-12">
       <div class="text-surface-500 dark:text-surface-400">Loading container...</div>
@@ -434,7 +433,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
         </div>
       </div>
     </div>
-  `,
+  `
 })
 export class ContainerDetailComponent implements OnInit, OnDestroy {
   loading = true;

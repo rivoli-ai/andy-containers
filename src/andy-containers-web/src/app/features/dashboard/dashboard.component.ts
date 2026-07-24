@@ -8,10 +8,9 @@ import { UptimePipe } from '../../shared/pipes/uptime.pipe';
 import { ContainerThumbnailComponent } from '../../shared/components/container-thumbnail/container-thumbnail.component';
 
 @Component({
-  selector: 'app-dashboard',
-  standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent, UptimePipe, ContainerThumbnailComponent],
-  template: `
+    selector: 'app-dashboard',
+    imports: [CommonModule, RouterLink, StatusBadgeComponent, UptimePipe, ContainerThumbnailComponent],
+    template: `
     <!-- Loading state -->
     <div *ngIf="loading" class="flex items-center justify-center py-12">
       <div class="text-surface-500 dark:text-surface-400">Loading dashboard...</div>
@@ -159,7 +158,7 @@ import { ContainerThumbnailComponent } from '../../shared/components/container-t
         </div>
       </div>
     </div>
-  `,
+  `
 })
 export class DashboardComponent implements OnInit {
   loading = true;

@@ -6,10 +6,9 @@ import { ApiKeyCredential, ApiKeyChangeEntry, API_KEY_PROVIDERS } from '../../co
 import { ContainerStatsBarComponent } from '../../shared/components/container-stats-bar/container-stats-bar.component';
 
 @Component({
-  selector: 'app-settings',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  template: `
+    selector: 'app-settings',
+    imports: [CommonModule, FormsModule],
+    template: `
     <div class="max-w-3xl mx-auto space-y-6">
       <h1 class="text-2xl font-semibold text-surface-900 dark:text-surface-100">Settings</h1>
 
@@ -196,7 +195,7 @@ import { ContainerStatsBarComponent } from '../../shared/components/container-st
         </div>
       </div>
     </div>
-  `,
+  `
 })
 export class SettingsComponent implements OnInit {
   keys: ApiKeyCredential[] = [];

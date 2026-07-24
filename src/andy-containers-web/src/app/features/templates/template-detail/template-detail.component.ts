@@ -10,10 +10,9 @@ import { YamlEditorComponent } from '../../../shared/components/yaml-editor/yaml
 import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 
 @Component({
-  selector: 'app-template-detail',
-  standalone: true,
-  imports: [CommonModule, RouterLink, FormsModule, YamlEditorComponent, UptimePipe],
-  template: `
+    selector: 'app-template-detail',
+    imports: [CommonModule, RouterLink, FormsModule, YamlEditorComponent, UptimePipe],
+    template: `
     <div class="space-y-6">
       <!-- Header -->
       <div class="flex items-center justify-between">
@@ -342,7 +341,7 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
         </div>
       </div>
     </div>
-  `,
+  `
 })
 export class TemplateDetailComponent implements OnInit, OnDestroy {
   loading = true;

@@ -4,10 +4,9 @@ import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
-  selector: 'app-login',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-login',
+    imports: [CommonModule],
+    template: `
     <div class="login-container">
       <div class="login-card">
         <div class="brand">
@@ -35,7 +34,7 @@ import { AuthService } from '../../core/services/auth.service';
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .login-container {
       display: flex; align-items: center; justify-content: center;
       min-height: 100vh; background: var(--background-alt);

@@ -7,10 +7,9 @@ import { Workspace, WorkspaceGitRepo } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 
 @Component({
-  selector: 'app-workspace-detail',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent],
-  template: `
+    selector: 'app-workspace-detail',
+    imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent],
+    template: `
     <div class="max-w-4xl mx-auto space-y-6">
       <div *ngIf="loading" class="flex items-center justify-center py-12">
         <div class="text-surface-500 dark:text-surface-400">Loading workspace...</div>
@@ -141,7 +140,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
         </div>
       </ng-container>
     </div>
-  `,
+  `
 })
 export class WorkspaceDetailComponent implements OnInit {
   workspace: Workspace | null = null;

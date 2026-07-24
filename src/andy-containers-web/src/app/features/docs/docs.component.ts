@@ -2,10 +2,9 @@ import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
 @Component({
-  selector: 'app-docs',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-docs',
+    imports: [CommonModule],
+    template: `
     <div class="space-y-6">
       <h1 class="text-2xl font-semibold text-surface-900 dark:text-surface-100">Documentation</h1>
 
@@ -88,7 +87,7 @@ import { CommonModule } from '@angular/common';
         </a>
       </div>
     </div>
-  `,
+  `
 })
 export class DocsComponent {
   docs = [

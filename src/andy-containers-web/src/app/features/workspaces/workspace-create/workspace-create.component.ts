@@ -7,10 +7,9 @@ import { ContainersApiService } from '../../../core/services/api.service';
 interface RepoEntry { url: string; branch: string; targetPath: string; }
 
 @Component({
-  selector: 'app-workspace-create',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
-  template: `
+    selector: 'app-workspace-create',
+    imports: [CommonModule, FormsModule, RouterLink],
+    template: `
     <div class="max-w-2xl mx-auto space-y-6">
       <div class="flex items-center gap-3">
         <a routerLink="/workspaces" class="text-surface-400 hover:text-surface-600 dark:hover:text-surface-300">
@@ -70,7 +69,7 @@ interface RepoEntry { url: string; branch: string; targetPath: string; }
         </div>
       </form>
     </div>
-  `,
+  `
 })
 export class WorkspaceCreateComponent {
   name = '';
