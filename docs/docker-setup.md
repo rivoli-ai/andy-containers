@@ -16,7 +16,7 @@ andy-rbac-api     -> localhost:7003   # Andy RBAC API (HTTPS), localhost:7004 (H
 andy-rbac-web     -> localhost:5180   # Andy RBAC Web (HTTPS), localhost:5181 (HTTP)
 ```
 
-For local (non-Docker) `dotnet run` the API and Angular dev server use the canonical local ports `5200/5201/4200` per [`config/registration.json`](../config/registration.json).
+For local (non-Docker) `dotnet run` the API and Angular dev server use the canonical local ports `5200/5201/4200` per [`config/registration.json`](https://github.com/rivoli-ai/andy-containers/blob/main/config/registration.json).
 
 ## Volumes and Mounts
 
