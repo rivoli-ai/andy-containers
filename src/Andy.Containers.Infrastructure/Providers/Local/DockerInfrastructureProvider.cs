@@ -492,9 +492,26 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     /// with its stream kind. The full stdout/stderr is also accumulated so
     /// the returned <see cref="ExecResult"/> matches the buffered shape.
     /// </summary>
-    public async Task<ExecResult> ExecStreamingAsync(
+    public Task<ExecResult> ExecStreamingAsync(
         string externalId, string command, TimeSpan timeout,
         Action<ExecOutputChunk> onLine, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+        return ExecStreamingAsync(
+            externalId,
+            command,
+            timeout,
+            (chunk, _) =>
+            {
+                onLine(chunk);
+                return ValueTask.CompletedTask;
+            },
+            ct);
+    }
+
+    public async Task<ExecResult> ExecStreamingAsync(
+        string externalId, string command, TimeSpan timeout,
+        Func<ExecOutputChunk, CancellationToken, ValueTask> onLine, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(onLine);
 
@@ -531,21 +548,21 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
             if (read.Target == MultiplexedStream.TargetStream.StandardError)
             {
                 stderrAll.Append(text);
-                EmitLines(stderrCarry, text, ExecStreamKind.Stderr, onLine);
+                await EmitLinesAsync(stderrCarry, text, ExecStreamKind.Stderr, onLine, token);
             }
             else
             {
                 stdoutAll.Append(text);
-                EmitLines(stdoutCarry, text, ExecStreamKind.Stdout, onLine);
+                await EmitLinesAsync(stdoutCarry, text, ExecStreamKind.Stdout, onLine, token);
             }
         }
 
         // Flush any unterminated trailing line (output that never ended in
         // a newline still reaches the live stream).
-        FlushCarry(stdoutCarry, ExecStreamKind.Stdout, onLine);
-        FlushCarry(stderrCarry, ExecStreamKind.Stderr, onLine);
+        await FlushCarryAsync(stdoutCarry, ExecStreamKind.Stdout, onLine, token);
+        await FlushCarryAsync(stderrCarry, ExecStreamKind.Stderr, onLine, token);
 
-        var inspect = await _client.Exec.InspectContainerExecAsync(exec.ID, ct);
+        var inspect = await _client.Exec.InspectContainerExecAsync(exec.ID, token);
         return new ExecResult
         {
             ExitCode = (int)inspect.ExitCode,
@@ -557,9 +574,11 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
     // Append `text` to the carry buffer, then emit one callback per
     // complete (newline-terminated) line, leaving any partial tail in the
     // carry for the next read.
-    private static void EmitLines(
+    private static async ValueTask EmitLinesAsync(
         System.Text.StringBuilder carry, string text,
-        ExecStreamKind kind, Action<ExecOutputChunk> onLine)
+        ExecStreamKind kind,
+        Func<ExecOutputChunk, CancellationToken, ValueTask> onLine,
+        CancellationToken ct)
     {
         carry.Append(text);
         var combined = carry.ToString();
@@ -570,7 +589,7 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
         while ((idx = normalized.IndexOf('\n', start)) >= 0)
         {
             var line = normalized.Substring(start, idx - start);
-            onLine(new ExecOutputChunk(kind, line));
+            await onLine(new ExecOutputChunk(kind, line), ct);
             start = idx + 1;
         }
 
@@ -581,12 +600,15 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
         }
     }
 
-    private static void FlushCarry(
-        System.Text.StringBuilder carry, ExecStreamKind kind, Action<ExecOutputChunk> onLine)
+    private static async ValueTask FlushCarryAsync(
+        System.Text.StringBuilder carry,
+        ExecStreamKind kind,
+        Func<ExecOutputChunk, CancellationToken, ValueTask> onLine,
+        CancellationToken ct)
     {
         if (carry.Length > 0)
         {
-            onLine(new ExecOutputChunk(kind, carry.ToString()));
+            await onLine(new ExecOutputChunk(kind, carry.ToString()), ct);
             carry.Clear();
         }
     }

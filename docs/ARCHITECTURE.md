@@ -494,7 +494,7 @@ Container operations are protected by RBAC permissions in the format `andy-conta
 | `container:start` | Start a stopped container |
 | `container:stop` | Stop a running container |
 | `container:destroy` | Destroy a container |
-| `container:exec` | Execute commands in a container |
+| `container:execute` | Execute commands in a container |
 | `container:connect` | Open IDE/VNC/SSH session |
 | `workspace:create` | Create workspaces |
 | `workspace:read` | View workspaces |

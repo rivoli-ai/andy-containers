@@ -89,6 +89,29 @@ public interface IInfrastructureProvider
     }
 
     /// <summary>
+    /// Asynchronous-callback variant of streaming exec. This keeps the
+    /// existing callback contract source-compatible while allowing HTTP
+    /// transports to await each write and apply backpressure.
+    /// Providers with a native streaming implementation should override
+    /// this overload; the default adapts the synchronous callback.
+    /// </summary>
+    Task<ExecResult> ExecStreamingAsync(
+        string externalId,
+        string command,
+        TimeSpan timeout,
+        Func<ExecOutputChunk, CancellationToken, ValueTask> onLine,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+        return ExecStreamingAsync(
+            externalId,
+            command,
+            timeout,
+            chunk => onLine(chunk, ct).AsTask().GetAwaiter().GetResult(),
+            ct);
+    }
+
+    /// <summary>
     /// Returns the set of container externalIds currently known to the
     /// provider, or <c>null</c> if this provider does not support bulk
     /// enumeration. Used by the startup reconciler (conductor #840) to

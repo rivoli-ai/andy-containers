@@ -161,6 +161,75 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ExecResult' }
 
+  /api/containers/{id}/exec/stream:
+    post:
+      tags: [Containers]
+      summary: Execute a command and stream its output
+      description: |
+        Runs a command through the same provider exec surface as the buffered
+        `/exec` endpoint, but returns each complete stdout/stderr line as a
+        Server-Sent Event as soon as it is produced. The final `done` event
+        carries the process exit code and closes the stream.
+
+        Wire format:
+
+        ```
+        event: stdout
+        data: {"line":"first line"}
+
+        event: stderr
+        data: {"line":"warning"}
+
+        event: done
+        data: {"exitCode":0}
+        ```
+
+        JSON payloads keep structured JSONL output unambiguous. Closing the
+        HTTP connection cancels the underlying provider exec. Requires
+        `container:execute` and ownership, service-account, or admin access
+        to the container.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command: { type: string, minLength: 1 }
+                timeoutSeconds:
+                  type: integer
+                  default: 30
+                  minimum: 1
+                  maximum: 86400
+      responses:
+        '200':
+          description: SSE stream of stdout/stderr lines followed by a done event
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: stdout
+                  data: {"line":"first line"}
+
+                  event: stderr
+                  data: {"line":"warning"}
+
+                  event: done
+                  data: {"exitCode":0}
+        '400':
+          description: Command or timeout validation failed
+        '404':
+          description: Container not found
+        '409':
+          description: Container is not executable in its current state
+
   /api/containers/{id}/connection:
     get:
       tags: [Containers]

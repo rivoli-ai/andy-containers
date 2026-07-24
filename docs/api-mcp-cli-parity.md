@@ -33,6 +33,7 @@ Numbers exclude health checks, Swagger, and WebSocket attach surfaces (which don
 | `POST /api/containers/{id}/stop` | ✅ | `andy-containers-cli stop {id}` ✅ |
 | `DELETE /api/containers/{id}` | ✅ | `andy-containers-cli destroy {id}` ✅ |
 | `POST /api/containers/{id}/exec` | ✅ | `andy-containers-cli exec {id} ...` ✅ |
+| `POST /api/containers/{id}/exec/stream` | HTTP-only streaming transport | HTTP-only streaming transport |
 | `GET /api/containers/{id}/connection` | ❌ | ❌ |
 | `PUT /api/containers/{id}/resources` | ❌ | ❌ |
 | `GET /api/containers/{id}/screenshot` | — | — |

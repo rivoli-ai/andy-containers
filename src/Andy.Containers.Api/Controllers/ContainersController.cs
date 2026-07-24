@@ -367,6 +367,61 @@ public class ContainersController : ControllerBase
     }
 
     /// <summary>
+    /// Streams a command's stdout and stderr as line-framed Server-Sent
+    /// Events, followed by one terminal <c>done</c> event containing the
+    /// process exit code. Disconnecting the HTTP client cancels the
+    /// underlying provider exec.
+    /// </summary>
+    [HttpPost("{id:guid}/exec/stream")]
+    [RequirePermission("container:execute")]
+    [Produces("text/event-stream")]
+    public async Task<IActionResult> ExecStream(
+        Guid id,
+        [FromBody] ExecRequest request,
+        CancellationToken ct)
+    {
+        var container = await FindContainerAsync(id, ct);
+        if (container is null) return ContainerNotFound(id);
+        if (!CanAccess(container)) return Forbid();
+
+        if (string.IsNullOrWhiteSpace(request.Command))
+        {
+            return BadRequest(new { message = "Command is required." });
+        }
+
+        if (request.TimeoutSeconds is < 1 or > 86_400)
+        {
+            return BadRequest(new
+            {
+                message = "TimeoutSeconds must be between 1 and 86400.",
+            });
+        }
+
+        if (container.Status is not (ContainerStatus.Running or ContainerStatus.Creating))
+        {
+            return Conflict(new
+            {
+                message = $"Container is {container.Status}, cannot exec.",
+            });
+        }
+
+        if (string.IsNullOrEmpty(container.ExternalId))
+        {
+            return Conflict(new { message = "Container has no external ID yet." });
+        }
+
+        await ContainerExecSse.StreamAsync(
+            Response,
+            _containerService,
+            id,
+            request.Command,
+            TimeSpan.FromSeconds(request.TimeoutSeconds),
+            ct);
+
+        return new EmptyResult();
+    }
+
+    /// <summary>
     /// rivoli-ai/conductor#945 (M1.5.3). Re-run the code-assistant
     /// install for a container that surfaced a Failed or Skipped
     /// status. The container must be Running (the install script

@@ -73,6 +73,26 @@ public interface IContainerService
         }
     }
 
+    /// <summary>
+    /// Asynchronous-callback variant used by streaming transports that need
+    /// to await each output write and apply backpressure.
+    /// </summary>
+    Task<ExecResult> ExecStreamingAsync(
+        Guid containerId,
+        string command,
+        TimeSpan timeout,
+        Func<ExecOutputChunk, CancellationToken, ValueTask> onLine,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+        return ExecStreamingAsync(
+            containerId,
+            command,
+            timeout,
+            chunk => onLine(chunk, ct).AsTask().GetAwaiter().GetResult(),
+            ct);
+    }
+
     Task<ConnectionInfo> GetConnectionInfoAsync(Guid containerId, CancellationToken ct = default);
     Task<ContainerStats> GetContainerStatsAsync(Guid containerId, CancellationToken ct = default);
     Task ResizeContainerAsync(Guid containerId, ResourceSpec resources, CancellationToken ct = default);

@@ -196,6 +196,120 @@ public class AppleContainerProvider : IInfrastructureProvider
         };
     }
 
+    public Task<ExecResult> ExecStreamingAsync(
+        string externalId,
+        string command,
+        TimeSpan timeout,
+        Action<ExecOutputChunk> onLine,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+        return ExecStreamingAsync(
+            externalId,
+            command,
+            timeout,
+            (chunk, _) =>
+            {
+                onLine(chunk);
+                return ValueTask.CompletedTask;
+            },
+            ct);
+    }
+
+    public async Task<ExecResult> ExecStreamingAsync(
+        string externalId,
+        string command,
+        TimeSpan timeout,
+        Func<ExecOutputChunk, CancellationToken, ValueTask> onLine,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onLine);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = _cliPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[] { "exec", externalId, "sh", "-c", command })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi);
+        if (process is null)
+        {
+            throw new InvalidOperationException($"Failed to start {_cliPath}");
+        }
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        using var callbackGate = new SemaphoreSlim(1, 1);
+        var token = linked.Token;
+        var stdout = new System.Text.StringBuilder();
+        var stderr = new System.Text.StringBuilder();
+
+        async Task PumpAsync(
+            StreamReader reader,
+            System.Text.StringBuilder all,
+            ExecStreamKind kind)
+        {
+            while (await reader.ReadLineAsync(token) is { } line)
+            {
+                if (all.Length > 0)
+                {
+                    all.Append('\n');
+                }
+                all.Append(line);
+
+                // stdout and stderr are drained concurrently to prevent
+                // process-pipe deadlocks. Serialise callbacks because an
+                // HttpResponse body does not support concurrent writes.
+                await callbackGate.WaitAsync(token);
+                try
+                {
+                    await onLine(new ExecOutputChunk(kind, line), token);
+                }
+                finally
+                {
+                    callbackGate.Release();
+                }
+            }
+        }
+
+        try
+        {
+            await Task.WhenAll(
+                PumpAsync(process.StandardOutput, stdout, ExecStreamKind.Stdout),
+                PumpAsync(process.StandardError, stderr, ExecStreamKind.Stderr),
+                process.WaitForExitAsync(token));
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // The process exited between HasExited and Kill.
+            }
+            throw;
+        }
+
+        return new ExecResult
+        {
+            ExitCode = process.ExitCode,
+            StdOut = stdout.ToString(),
+            StdErr = stderr.ToString(),
+        };
+    }
+
     /// <summary>
     /// Lists every externalId currently known to the Apple `container`
     /// runtime via <c>container ls -a</c>. Used by the startup
