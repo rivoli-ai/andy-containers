@@ -111,3 +111,17 @@ in step 1.
   andy-settings directly.
 - DbContext: `DbSet<ApiKeyCredential> ApiKeyCredentials` removed.
 - EF migration `20260512173330_DropApiKeyCredentials` drops the table.
+
+## Current management API
+
+Issue #313 later restored the Conductor-facing `/api/apikeys` CRUD and
+validation contract as a thin control-plane facade. It does **not** restore
+`ApiKeyCredentials` or local plaintext/ciphertext storage:
+
+- raw values are written to the user-scoped andy-settings secret
+  `andy.models.providers.<slug>.apiKey`;
+- `ApiKeyRegistrations` contains only the label, provider, model/base URL,
+  masked suffix, and validation timestamps;
+- `ApiKeyAuditRecords` is append-only metadata history and remains queryable
+  after deletion;
+- responses never include the raw value.
