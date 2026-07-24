@@ -7,10 +7,9 @@ const DEFAULT_POLL_INTERVAL = 5000;
 const SETTINGS_KEY = 'andy.statsPollingInterval';
 
 @Component({
-  selector: 'app-container-stats-bar',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-container-stats-bar',
+    imports: [CommonModule],
+    template: `
     <div *ngIf="stats && isRunning" class="stats-bar" [class]="variant">
       <div class="stat" [title]="'CPU: ' + stats.cpuPercent + '%'">
         <span class="stat-label">CPU</span>
@@ -32,7 +31,7 @@ const SETTINGS_KEY = 'andy.statsPollingInterval';
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .stats-bar {
       display: inline-flex; align-items: center; gap: 12px; font-size: inherit;
     }
@@ -50,7 +49,7 @@ const SETTINGS_KEY = 'andy.statsPollingInterval';
     :host-context(.dark) .stat-label, :host-context(.dark) .stat-pct { color: #8b949e; }
     .stats-bar:not(.terminal-overlay) .stat-label { color: #6b7280; }
     .stats-bar:not(.terminal-overlay) .stat-pct { color: #9ca3af; }
-  `],
+  `]
 })
 export class ContainerStatsBarComponent implements OnInit, OnDestroy, OnChanges {
   @Input() containerId = '';

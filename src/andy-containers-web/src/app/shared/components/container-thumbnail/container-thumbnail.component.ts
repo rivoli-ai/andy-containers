@@ -4,10 +4,9 @@ import { Router } from '@angular/router';
 import { ContainersApiService } from '../../../core/services/api.service';
 
 @Component({
-  selector: 'app-container-thumbnail',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-container-thumbnail',
+    imports: [CommonModule],
+    template: `
     <div class="thumbnail-wrapper" [style.width.px]="width" [style.height.px]="height"
       [style.background]="themeBackground" [class.clickable]="isRunning" (click)="openTerminal()">
       <!-- Loading -->
@@ -31,7 +30,7 @@ import { ContainersApiService } from '../../../core/services/api.service';
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .thumbnail-wrapper {
       position: relative;
       overflow: hidden;
@@ -72,7 +71,7 @@ import { ContainersApiService } from '../../../core/services/api.service';
       overflow: hidden;
       background: transparent;
     }
-  `],
+  `]
 })
 export class ContainerThumbnailComponent implements OnInit, OnDestroy, OnChanges {
   @Input() containerId = '';

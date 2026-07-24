@@ -34,17 +34,16 @@ import { lintGutter, setDiagnostics } from '@codemirror/lint';
 import { oneDark } from '@codemirror/theme-one-dark';
 
 @Component({
-  selector: 'app-yaml-editor',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-yaml-editor',
+    imports: [CommonModule],
+    template: `
     <div #editorContainer class="yaml-editor-container" [style.height]="height"></div>
   `,
-  styles: [`
+    styles: [`
     .yaml-editor-container {
       min-height: 200px;
     }
-  `],
+  `]
 })
 export class YamlEditorComponent implements AfterViewInit, OnDestroy, OnChanges {
   @ViewChild('editorContainer') editorContainer!: ElementRef;

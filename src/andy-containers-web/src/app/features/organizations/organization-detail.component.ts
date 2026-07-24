@@ -7,10 +7,9 @@ import { Organization, Team, Container, Template } from '../../core/models';
 import { StatusBadgeComponent } from '../../shared/components/status-badge/status-badge.component';
 
 @Component({
-  selector: 'app-organization-detail',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent],
-  template: `
+    selector: 'app-organization-detail',
+    imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent],
+    template: `
     <div class="max-w-4xl mx-auto space-y-6">
       <div *ngIf="loading" class="flex items-center justify-center py-12">
         <div class="text-surface-500 dark:text-surface-400">Loading organization...</div>
@@ -160,7 +159,7 @@ import { StatusBadgeComponent } from '../../shared/components/status-badge/statu
         </div>
       </ng-container>
     </div>
-  `,
+  `
 })
 export class OrganizationDetailComponent implements OnInit {
   organization: Organization | null = null;

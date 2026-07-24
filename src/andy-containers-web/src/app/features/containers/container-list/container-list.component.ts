@@ -10,10 +10,9 @@ import { UptimePipe } from '../../../shared/pipes/uptime.pipe';
 import { ContainerThumbnailComponent } from '../../../shared/components/container-thumbnail/container-thumbnail.component';
 
 @Component({
-  selector: 'app-container-list',
-  standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe, ContainerThumbnailComponent],
-  template: `
+    selector: 'app-container-list',
+    imports: [CommonModule, FormsModule, RouterLink, StatusBadgeComponent, ContainerStatsBarComponent, UptimePipe, ContainerThumbnailComponent],
+    template: `
     <div class="space-y-6">
       <!-- Header -->
       <div class="flex items-center justify-between">
@@ -135,7 +134,7 @@ import { ContainerThumbnailComponent } from '../../../shared/components/containe
         </table>
       </div>
     </div>
-  `,
+  `
 })
 export class ContainerListComponent implements OnInit {
   loading = true;

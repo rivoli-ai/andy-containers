@@ -4,10 +4,9 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
-  selector: 'app-callback',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-callback',
+    imports: [CommonModule],
+    template: `
     <div style="display:flex;align-items:center;justify-content:center;min-height:100vh">
       <div style="text-align:center">
         <div *ngIf="!error">

@@ -107,7 +107,18 @@ public static class RunOutputSse
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Client disconnected. The request-aborted token is the normal
-            // lifetime boundary for a following SSE connection.
+            // lifetime boundary for a following SSE connection. Ensure the
+            // pending move-next observes that cancellation before the
+            // await-using scope disposes the iterator; async iterators reject
+            // disposal while MoveNextAsync is still in flight.
+            try
+            {
+                await moveNext;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Expected: this is the in-flight subscription read.
+            }
         }
     }
 

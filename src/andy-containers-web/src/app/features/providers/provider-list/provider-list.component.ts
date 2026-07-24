@@ -5,10 +5,9 @@ import { Provider } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 
 @Component({
-  selector: 'app-provider-list',
-  standalone: true,
-  imports: [CommonModule, StatusBadgeComponent],
-  template: `
+    selector: 'app-provider-list',
+    imports: [CommonModule, StatusBadgeComponent],
+    template: `
     <div class="space-y-6">
       <!-- Header -->
       <div class="flex items-center justify-between">
@@ -80,7 +79,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
         </table>
       </div>
     </div>
-  `,
+  `
 })
 export class ProviderListComponent implements OnInit, OnDestroy {
   loading = true;

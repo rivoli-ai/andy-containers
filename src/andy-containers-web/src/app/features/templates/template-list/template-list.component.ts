@@ -5,10 +5,9 @@ import { ContainersApiService } from '../../../core/services/api.service';
 import { Template, ImageBuildRecord, TemplateBuildStatus } from '../../../core/models';
 
 @Component({
-  selector: 'app-template-list',
-  standalone: true,
-  imports: [CommonModule, RouterLink],
-  template: `
+    selector: 'app-template-list',
+    imports: [CommonModule, RouterLink],
+    template: `
     <div class="space-y-6">
       <!-- Header -->
       <div class="flex items-center justify-between">
@@ -102,7 +101,7 @@ import { Template, ImageBuildRecord, TemplateBuildStatus } from '../../../core/m
         No templates found
       </div>
     </div>
-  `,
+  `
 })
 export class TemplateListComponent implements OnInit {
   loading = true;

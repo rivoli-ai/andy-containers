@@ -6,10 +6,9 @@ import { Workspace } from '../../../core/models';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 
 @Component({
-  selector: 'app-workspace-list',
-  standalone: true,
-  imports: [CommonModule, RouterLink, StatusBadgeComponent],
-  template: `
+    selector: 'app-workspace-list',
+    imports: [CommonModule, RouterLink, StatusBadgeComponent],
+    template: `
     <div class="space-y-6">
       <!-- Header -->
       <div class="flex items-center justify-between">
@@ -69,7 +68,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
         </table>
       </div>
     </div>
-  `,
+  `
 })
 export class WorkspaceListComponent implements OnInit {
   loading = true;
