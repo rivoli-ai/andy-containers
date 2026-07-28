@@ -1,0 +1,94 @@
+name: Publish NuGet packages
+
+# Consumers of andy-containers need its client library from nuget.org: a
+# ProjectReference across repositories does not survive CI, which has no
+# sibling checkouts.
+#
+# Both packages are published together. Andy.Containers.Client has a project
+# reference to Andy.Containers, which packs as a package dependency, so
+# publishing the client alone would ship something that cannot be restored.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Andy.Containers/**'
+      - 'src/Andy.Containers.Client/**'
+      - 'proto/**'
+      - '.github/workflows/publish-packages.yml'
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore src/Andy.Containers.Client/Andy.Containers.Client.csproj
+
+      - name: Build
+        run: |
+          dotnet build src/Andy.Containers.Client/Andy.Containers.Client.csproj \
+            --configuration Release --no-restore
+
+      - name: Pack
+        run: |
+          # A tag publishes its own version; main publishes a dated prerelease
+          # so consumers can move forward without waiting for a release.
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=$(date +%Y.%m.%d)-rc.$GITHUB_RUN_NUMBER
+          fi
+
+          echo "Packing $VERSION"
+
+          for project in Andy.Containers Andy.Containers.Client; do
+            dotnet pack "src/$project/$project.csproj" \
+              --configuration Release \
+              --no-build \
+              --output ./artifacts \
+              -p:PackageVersion="$VERSION"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: ./artifacts/*.nupkg
+          retention-days: 7
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: ./artifacts
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publish
+        # --skip-duplicate so re-running the same commit is a no-op rather than
+        # a failure; nuget.org rejects a republished version.
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --source ${{ env.NUGET_SOURCE }} \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --skip-duplicate
