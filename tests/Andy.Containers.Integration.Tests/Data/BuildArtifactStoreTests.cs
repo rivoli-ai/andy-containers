@@ -8,6 +8,7 @@ using Andy.Containers.Storage;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Andy.Containers.Integration.Tests.Data;
@@ -33,7 +34,7 @@ public class BuildArtifactStoreTests : IAsyncLifetime
         await _conn.OpenAsync();
 
         var options = new DbContextOptionsBuilder<ContainersDbContext>()
-            .UseSqlite(_conn)
+            .UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 
         _db = new ContainersDbContext(options);

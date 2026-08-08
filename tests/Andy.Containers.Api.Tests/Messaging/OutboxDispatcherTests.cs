@@ -6,6 +6,7 @@ using Andy.Containers.Infrastructure.Messaging;
 using Andy.Containers.Messaging;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -152,7 +153,7 @@ public class OutboxDispatcherTests
         {
             var services = new ServiceCollection();
             services.AddDbContext<Andy.Containers.Infrastructure.Data.ContainersDbContext>(o =>
-                o.UseSqlite(connection));
+                o.UseSqlite(connection).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)));
             var bus = new RecordingMessageBus();
             services.AddSingleton<IMessageBus>(bus);
             using var provider = services.BuildServiceProvider();

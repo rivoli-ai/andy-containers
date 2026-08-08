@@ -10,6 +10,7 @@ using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -135,7 +136,7 @@ public sealed class AndyCliTemplateProvisioningTests : IAsyncLifetime
         await using var conn = new SqliteConnection("DataSource=:memory:");
         await conn.OpenAsync();
         await using var db = new ContainersDbContext(
-            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(conn).Options);
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options);
         await db.Database.EnsureCreatedAsync();
 
         await DataSeeder.SeedAsync(db);

@@ -6,6 +6,7 @@ using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Andy.Containers.Integration.Tests.Data;
@@ -31,7 +32,7 @@ public class RunRepositoryTests : IAsyncLifetime
         await _conn.OpenAsync();
 
         var options = new DbContextOptionsBuilder<ContainersDbContext>()
-            .UseSqlite(_conn)
+            .UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 
         _db = new ContainersDbContext(options);
@@ -70,7 +71,7 @@ public class RunRepositoryTests : IAsyncLifetime
 
         // New DbContext so we read fresh state, not the tracked entity.
         using var otherDb = new ContainersDbContext(
-            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options);
         var reloaded = await otherDb.Runs.SingleAsync(r => r.Id == runId);
 
         reloaded.Should().BeEquivalentTo(run, options => options
@@ -144,7 +145,7 @@ public class RunRepositoryTests : IAsyncLifetime
 
         // And verify EF round-trips the owned value object end-to-end.
         using var otherDb = new ContainersDbContext(
-            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options);
         var reloaded = await otherDb.Runs.SingleAsync(r => r.Id == run.Id);
         reloaded.WorkspaceRef.WorkspaceId.Should().Be(workspaceId);
         reloaded.WorkspaceRef.Branch.Should().Be("feature/x");
@@ -189,7 +190,7 @@ public class RunRepositoryTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         using var otherDb = new ContainersDbContext(
-            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options);
         var reloaded = await otherDb.Runs.SingleAsync(r => r.Id == run.Id);
 
         reloaded.Status.Should().Be(RunStatus.Running);
@@ -223,7 +224,7 @@ public class RunRepositoryTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         using var otherDb = new ContainersDbContext(
-            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options);
         var reloaded = await otherDb.Runs.SingleAsync(r => r.Id == run.Id);
 
         reloaded.OutputArtifacts.Should().NotBeNull();
@@ -249,7 +250,7 @@ public class RunRepositoryTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         using var otherDb = new ContainersDbContext(
-            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+            new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options);
         var reloaded = await otherDb.Runs.SingleAsync(r => r.Id == run.Id);
 
         reloaded.OutputArtifacts.Should().BeNull();

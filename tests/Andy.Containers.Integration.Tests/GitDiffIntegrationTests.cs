@@ -9,6 +9,7 @@ using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -47,7 +48,7 @@ public class GitDiffIntegrationTests : IAsyncLifetime
     {
         _conn = new SqliteConnection("DataSource=:memory:");
         await _conn.OpenAsync();
-        _db = new ContainersDbContext(new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).Options);
+        _db = new ContainersDbContext(new DbContextOptionsBuilder<ContainersDbContext>().UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options);
         await _db.Database.EnsureCreatedAsync();
 
         // Real container.

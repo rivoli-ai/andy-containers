@@ -3,6 +3,7 @@ using Andy.Containers.Infrastructure.Data;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -237,6 +238,11 @@ public class SqliteAutoMigrationProbeTests : IDisposable
             .UseSqlite(
                 connectionString,
                 sqlite => sqlite.MigrationsAssembly("Andy.Containers.Infrastructure"))
+            // Migrations/snapshot are generated for Npgsql; applying them to SQLite
+            // makes the built model legitimately differ, which EF 10 raises as an
+            // exception. Mirrors the scoped suppression on the production SQLite
+            // branch in DatabaseProviderExtensions.
+            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
         return new ContainersDbContext(options);
     }

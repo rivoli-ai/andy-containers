@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 
 namespace Andy.Containers.Infrastructure.Data;
@@ -69,6 +70,17 @@ public static class DatabaseProviderExtensions
                 {
                     sqlite.MigrationsAssembly(migrationsAssembly);
                 });
+                // The migrations and model snapshot are generated against the
+                // PostgreSQL provider, so the model EF builds for SQLite
+                // legitimately differs from the snapshot (array columns model as
+                // PrimitiveCollection under Npgsql, for instance). EF 9+ promotes
+                // that mismatch from a warning to an exception, which makes
+                // Migrate() throw on the embedded SQLite path -- the migration
+                // entry point started returning exit 1, which the Helm hook reads
+                // as a failed migration. Postgres still matches the snapshot and is
+                // unaffected, so this is scoped to the SQLite branch.
+                options.ConfigureWarnings(w =>
+                    w.Ignore(RelationalEventId.PendingModelChangesWarning));
                 // Embedded SQLite is hit concurrently by a hot reconciliation
                 // read loop and by writes (e.g. ensure-pull bookkeeping). Apply
                 // WAL + busy_timeout on every connection so writers wait for the
