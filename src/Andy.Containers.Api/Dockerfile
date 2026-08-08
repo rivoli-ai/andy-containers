@@ -17,7 +17,7 @@ COPY src/andy-containers-web/ ./
 RUN npm run build
 
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /build
 
 # Trust corporate root CAs from the centralized certs/ directory
@@ -50,7 +50,7 @@ COPY . .
 RUN dotnet publish src/Andy.Containers.Api/Andy.Containers.Api.csproj -c Release -o /app/publish /p:UseAppHost=false
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 
 # Install ca-certificates, curl, openssl, and Docker CLI (needed for image builds and terminal exec)

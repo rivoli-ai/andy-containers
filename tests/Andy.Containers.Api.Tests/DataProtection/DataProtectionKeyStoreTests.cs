@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -57,7 +58,7 @@ public sealed class DataProtectionKeyStoreTests : IDisposable
     private ContainersDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<ContainersDbContext>()
-            .UseSqlite(_connection)
+            .UseSqlite(_connection).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
         return new ContainersDbContext(options);
     }
@@ -70,7 +71,7 @@ public sealed class DataProtectionKeyStoreTests : IDisposable
     private ServiceProvider BuildReplica()
     {
         var services = new ServiceCollection();
-        services.AddDbContext<ContainersDbContext>(opts => opts.UseSqlite(_connection));
+        services.AddDbContext<ContainersDbContext>(opts => opts.UseSqlite(_connection).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)));
         services.AddDataProtection()
             .SetApplicationName("andy-containers")
             .PersistKeysToDbContext<ContainersDbContext>();

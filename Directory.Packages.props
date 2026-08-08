@@ -1,6 +1,10 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Lets the PackageVersion entries below govern transitive dependencies too,
+         so a vulnerable transitive can be lifted centrally instead of adding a
+         placeholder PackageReference to every project that happens to pull it. -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
     <!-- Andy internal packages -->
@@ -11,28 +15,28 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageVersion>
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.AspNetCore.Authorization" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authorization" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
     <!-- Entity Framework Core -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
-    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- gRPC -->
     <PackageVersion Include="Grpc.AspNetCore" Version="2.67.0" />
     <PackageVersion Include="Grpc.Net.Client" Version="2.67.0" />
     <PackageVersion Include="Google.Protobuf" Version="3.28.3" />
     <PackageVersion Include="Grpc.Tools" Version="2.67.0" />
     <!-- Caching -->
-    <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
-    <PackageVersion Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.10" />
     <!-- HTTP Client -->
-    <PackageVersion Include="Microsoft.Extensions.Http" Version="8.0.1" />
-    <PackageVersion Include="Microsoft.Extensions.Http.Polly" Version="8.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Polly" Version="10.0.10" />
     <!-- Docker -->
     <PackageVersion Include="Docker.DotNet" Version="3.125.15" />
     <!-- Azure -->
@@ -55,7 +59,7 @@
     <!-- YAML -->
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
     <!-- Utilities -->
-    <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <PackageVersion Include="Serilog.AspNetCore" Version="8.0.3" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.0.0" />
     <!-- Observability -->
@@ -76,7 +80,13 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageVersion Include="Moq" Version="4.20.72" />
     <PackageVersion Include="FluentAssertions" Version="6.12.2" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.10" />
     <PackageVersion Include="bunit" Version="1.36.0" />
+    <!-- Transitive pin: the SQLite provider resolves 2.1.11 (GHSA-2m69-gcr7-jv3q, high). -->
+    <!-- Pinned transitively: 1.9.0/1.11.1 carry GHSA-4625-4j76-fww9,
+         GHSA-g94r-2vxg-569j and GHSA-8785-wc3w-h8q6. -->
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
   </ItemGroup>
 </Project>

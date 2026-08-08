@@ -12,6 +12,7 @@ using Andy.Containers.Storage;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Andy.Containers.Configuration;
@@ -42,7 +43,7 @@ public class ImageBuildOrchestratorTests : IAsyncLifetime
         _conn = new SqliteConnection("DataSource=:memory:");
         await _conn.OpenAsync();
         var options = new DbContextOptionsBuilder<ContainersDbContext>()
-            .UseSqlite(_conn).Options;
+            .UseSqlite(_conn).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)).Options;
         _db = new ContainersDbContext(options);
         await _db.Database.EnsureCreatedAsync();
         _store = new BuildArtifactStore(_db);

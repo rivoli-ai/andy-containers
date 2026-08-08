@@ -6,6 +6,7 @@ using Andy.Containers.Messaging.Events;
 using Andy.Containers.Models;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Andy.Containers.Api.Tests.Services;
@@ -65,7 +66,7 @@ public class RunEventStreamTests : IDisposable
         await connection.OpenAsync();
 
         var options = new DbContextOptionsBuilder<ContainersDbContext>()
-            .UseSqlite(connection)
+            .UseSqlite(connection).ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
         using var db = new ContainersDbContext(options);
         await db.Database.EnsureCreatedAsync();
