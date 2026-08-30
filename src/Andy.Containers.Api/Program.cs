@@ -219,6 +219,14 @@ try
     // engine detector + LocalBuildBackend; the orchestrator
     // ties the lot together for ImagesController.Build.
     builder.Services.AddImageManagement(builder.Configuration);
+    // Docker Desktop loopback gap (rivoli-ai/andy-containers). Bind the
+    // push-target rewrite policy from `ImageManagement:PushTarget`.
+    // Defaults are safe (Auto: rewrite a loopback registry authority to
+    // host.docker.internal ONLY when the daemon is Docker Desktop), so
+    // an absent section needs no config and Linux is unaffected.
+    builder.Services.Configure<Andy.Containers.Infrastructure.Registries.Local.PushTargetHostOptions>(
+        builder.Configuration.GetSection(
+            Andy.Containers.Infrastructure.Registries.Local.PushTargetHostOptions.SectionName));
     builder.Services.AddLocalZotRegistry();
     builder.Services.AddLocalBuildBackend();
     builder.Services.AddScoped<Andy.Containers.Storage.IImageBuildOrchestrator, Andy.Containers.Infrastructure.Build.ImageBuildOrchestrator>();

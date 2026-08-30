@@ -72,7 +72,14 @@ public static class LocalZotRegistryServiceCollectionExtensions
 
             var uploader = sp.GetRequiredService<IRegistryUploader>();
             var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LocalZotAdapter>>();
-            return new LocalZotAdapter(http, uploader, logger, registryId);
+            // Docker Desktop loopback gap (rivoli-ai/andy-containers).
+            // The push/tag target authority may differ from the HTTP
+            // client's authority — the resolver rewrites loopback →
+            // host.docker.internal on Docker Desktop so `docker push`
+            // from inside the VM can reach the host's zot.
+            var pushTargetOptions = sp.GetService<IOptions<PushTargetHostOptions>>()?.Value
+                ?? new PushTargetHostOptions();
+            return new LocalZotAdapter(http, uploader, logger, registryId, pushTargetOptions);
         });
 
         return services;

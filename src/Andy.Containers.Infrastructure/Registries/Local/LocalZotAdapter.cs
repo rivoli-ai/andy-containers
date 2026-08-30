@@ -29,17 +29,20 @@ public sealed class LocalZotAdapter : IRegistryAdapter
     private readonly HttpClient _http;
     private readonly IRegistryUploader _uploader;
     private readonly ILogger<LocalZotAdapter> _logger;
+    private readonly PushTargetHostOptions _pushTargetOptions;
 
     public LocalZotAdapter(
         HttpClient http,
         IRegistryUploader uploader,
         ILogger<LocalZotAdapter> logger,
-        string registryId = "local-zot")
+        string registryId = "local-zot",
+        PushTargetHostOptions? pushTargetOptions = null)
     {
         _http = http;
         _uploader = uploader;
         _logger = logger;
         RegistryId = registryId;
+        _pushTargetOptions = pushTargetOptions ?? new PushTargetHostOptions();
     }
 
     public string RegistryId { get; }
@@ -58,14 +61,44 @@ public sealed class LocalZotAdapter : IRegistryAdapter
         // talks to — the registry's host:port plus the repo path
         // and tag. zot at localhost:5050 accepts repo paths with
         // slashes (foo/bar/baz) and standard tag syntax.
+        //
+        // Docker Desktop loopback gap: `docker push` runs inside the
+        // Docker Desktop VM, where `localhost` is the VM — not the host
+        // running zot. Rewrite the push/tag authority to a VM-reachable
+        // host (host.docker.internal) on Docker Desktop while the HTTP
+        // client (_http) keeps using the host's localhost for the
+        // post-push HEAD. See PushTargetHostResolver.
         var baseAuthority = ExtractAuthority(_http.BaseAddress);
-        var remoteRef = $"{baseAuthority}/{repoPath}:{tag}";
+        var targetResolution = PushTargetHostResolver.Resolve(baseAuthority, _pushTargetOptions);
+        var remoteRef = $"{targetResolution.TargetAuthority}/{repoPath}:{tag}";
 
         _logger.LogInformation(
-            "LocalZotAdapter.Push.Start registryId={RegistryId} local={Local} remote={Remote}",
-            RegistryId, artifact.LocalReference, remoteRef);
+            "LocalZotAdapter.Push.Start registryId={RegistryId} local={Local} remote={Remote} rewritten={Rewritten}",
+            RegistryId, artifact.LocalReference, remoteRef, targetResolution.WasRewritten);
 
-        await _uploader.PushAsync(artifact.LocalReference, remoteRef, ct);
+        try
+        {
+            await _uploader.PushAsync(artifact.LocalReference, remoteRef, ct);
+        }
+        catch (RegistryUploadException ex)
+        {
+            var hint = RegistryPushFailureDiagnostics.BuildHint(
+                targetResolution.TargetAuthority, ex.CapturedOutput ?? ex.Message, targetResolution.WasRewritten);
+            if (hint is null)
+            {
+                throw;
+            }
+
+            _logger.LogError(
+                "LocalZotAdapter.Push.DockerDesktopMisconfig registryId={RegistryId} remote={Remote}: {Hint}",
+                RegistryId, remoteRef, hint);
+
+            throw new RegistryUploadException(
+                code: "LocalZotAdapter.Push.DockerDesktopUnreachable",
+                message: $"push of '{remoteRef}' to '{RegistryId}' failed: {ex.Message}\n\n{hint}",
+                capturedOutput: ex.CapturedOutput,
+                innerException: ex);
+        }
 
         // Resolve the digest authoritatively from the registry's
         // own HEAD response. Docker-Content-Digest is the contract.
