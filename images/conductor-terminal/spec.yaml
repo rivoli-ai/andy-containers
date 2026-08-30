@@ -45,6 +45,9 @@ files:
   - source: entrypoint.sh
     dest: /opt/conductor/entrypoint.sh
     mode: "0755"
+  - source: install-assistants.sh
+    dest: /opt/conductor/install-assistants.sh
+    mode: "0755"
   - source: conductor.bashrc
     dest: /home/conductor/.bashrc
     mode: "0644"

@@ -62,6 +62,7 @@ public class ConductorTerminalSpecTests
         var requiredFiles = new[]
         {
             "/opt/conductor/entrypoint.sh",
+            "/opt/conductor/install-assistants.sh",
             "/home/conductor/.bashrc",
             "/home/conductor/.tmux.conf",
         };

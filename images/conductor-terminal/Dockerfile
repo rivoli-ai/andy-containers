@@ -76,10 +76,12 @@ RUN mkdir -p /workspace \
 RUN mkdir -p /opt/conductor \
     && chmod 0755 /opt/conductor
 
-# install-assistants.sh ships in M1.9.3 (#1030) — when present, the
-# entrypoint runs it conditional on $CONDUCTOR_INSTALL_ASSISTANTS.
+# Entrypoint + assistants installer. The entrypoint conditionally
+# runs install-assistants.sh when `$CONDUCTOR_INSTALL_ASSISTANTS`
+# is set — see M1.9.3 (#1030) for the contract.
 COPY entrypoint.sh /opt/conductor/entrypoint.sh
-RUN chmod 0755 /opt/conductor/entrypoint.sh
+COPY install-assistants.sh /opt/conductor/install-assistants.sh
+RUN chmod 0755 /opt/conductor/entrypoint.sh /opt/conductor/install-assistants.sh
 
 # Sensible shell defaults so the prompt looks reasonable in a fresh
 # terminal session and the user isn't dropped into a POSIX-only env.
