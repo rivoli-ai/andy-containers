@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Andy.Containers.Abstractions;
 using Andy.Containers.Api.Data;
 using Andy.Containers.Api.Services;
+// HostEnvironmentExtensions.IsEmbedded / IsLocalOrEmbedded live here
 using Andy.Containers.Configurator;
 using Andy.Containers.DependencyInjection;
 using Andy.Containers.Infrastructure.Audit;
@@ -307,7 +308,12 @@ try
             {
                 options.Authority = authority;
                 options.Audience = builder.Configuration["AndyAuth:Audience"];
-                options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+                // HTTPS metadata off in every non-production mode.
+                // Conductor's embedded mode talks to andy-auth over HTTP
+                // via the unified proxy on port 9100 — without
+                // IsLocalOrEmbedded() the JWT bearer middleware would
+                // refuse the discovery document.
+                options.RequireHttpsMetadata = !builder.Environment.IsLocalOrEmbedded();
                 if (builder.Environment.IsDevelopment())
                 {
                     options.BackchannelHttpHandler = new HttpClientHandler
@@ -712,7 +718,13 @@ try
         await ThemeSeeder.SeedAsync(db, app.Environment, themeSeederLogger);
     }
 
-    app.UseHttpsRedirection();
+    // Conductor's embedded mode terminates HTTPS at the unified proxy
+    // on port 9100; the in-process Kestrel only ever binds to HTTP.
+    // Forcing a redirect would trap every request in a redirect loop.
+    if (!app.Environment.IsEmbedded())
+    {
+        app.UseHttpsRedirection();
+    }
 
     // HC.8.1 of rivoli-ai/conductor#1245: expose the OpenAPI
     // document in every environment so Conductor's in-app Help Center
