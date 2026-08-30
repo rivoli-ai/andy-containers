@@ -329,7 +329,26 @@ public class DockerInfrastructureProvider : IInfrastructureProvider
 
     public async Task<ContainerRuntimeInfo> GetContainerInfoAsync(string externalId, CancellationToken ct)
     {
-        var inspect = await _client.Containers.InspectContainerAsync(externalId, ct);
+        ContainerInspectResponse inspect;
+        try
+        {
+            inspect = await _client.Containers.InspectContainerAsync(externalId, ct);
+        }
+        catch (DockerContainerNotFoundException ex)
+        {
+            // The docker daemon has no such container — it was removed
+            // out-of-band (e.g. a later create reused the container name and
+            // removed this one, host reboot, prune). Surface a PROVIDER-NEUTRAL
+            // "not found" so reconcilers (ContainerStatusSyncWorker) flip the
+            // stale DB row to Destroyed instead of busy-looping on the phantom
+            // forever. Docker.DotNet throws DockerContainerNotFoundException
+            // (a DockerApiException, NOT an InvalidOperationException), which
+            // the sync worker's message-based catch never matched — this
+            // translation is what makes that catch fire. rivoli-ai/conductor
+            // dead-container poll loop fix.
+            throw new InvalidOperationException(
+                $"Container {externalId} not found on the docker daemon", ex);
+        }
         return new ContainerRuntimeInfo
         {
             ExternalId = externalId,
